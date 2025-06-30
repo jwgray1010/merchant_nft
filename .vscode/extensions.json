@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "Dart-Code.flutter",
+    "Dart-Code.dart-code",
+    "firebase.flutterfire-cli",
+    "ms-vsliveshare.vsliveshare",
+    "esbenp.prettier-vscode",
+    "eamodio.gitlens"
+  ]
+}
