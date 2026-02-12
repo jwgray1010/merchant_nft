@@ -1,29 +1,45 @@
 import { Router } from "express";
 import { brandIdSchema } from "../schemas/brandSchema";
-import { emailDigestSendSchema } from "../schemas/emailDigestSchema";
-import { processDueOutbox } from "../jobs/outboxProcessor";
+import {
+  emailSubscriptionUpdateSchema,
+  emailSubscriptionUpsertSchema,
+} from "../schemas/emailSubscriptionSchema";
+import {
+  emailDigestPreviewRequestSchema,
+  emailDigestSendRequestSchema,
+} from "../schemas/emailSendSchema";
 import { buildDigestPreview } from "../services/digestService";
 import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
-router.post("/digest/preview", async (req, res, next) => {
-  const rawBrandId = req.query.brandId;
-  if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
+function parseBrandId(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.trim() === "") {
+    return null;
+  }
+  const parsed = brandIdSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseLimit(raw: unknown, fallback = 50): number {
+  if (typeof raw !== "string") {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.min(parsed, 500);
+}
+
+router.get("/subscriptions", async (req, res, next) => {
+  const brandId = parseBrandId(req.query.brandId);
+  if (!brandId) {
     return res.status(400).json({
-      error: "Missing brandId query parameter. Example: /email/digest/preview?brandId=main-street-nutrition",
+      error:
+        "Missing or invalid brandId query parameter. Example: /api/email/subscriptions?brandId=main-street-nutrition",
     });
   }
-
-  const parsedBrandId = brandIdSchema.safeParse(rawBrandId);
-  if (!parsedBrandId.success) {
-    return res.status(400).json({
-      error: "Invalid brandId query parameter",
-      details: parsedBrandId.error.flatten(),
-    });
-  }
-
-  const cadence = req.query.cadence === "daily" ? "daily" : "weekly";
 
   try {
     const userId = req.user?.id;
@@ -31,35 +47,198 @@ router.post("/digest/preview", async (req, res, next) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const adapter = getAdapter();
-    const brand = await adapter.getBrand(userId, parsedBrandId.data);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
-      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+      return res.status(404).json({ error: `Brand '${brandId}' was not found` });
     }
 
-    const preview = await buildDigestPreview(userId, parsedBrandId.data, cadence);
-    return res.json(preview);
+    const subscriptions = await adapter.listEmailSubscriptions(
+      userId,
+      brandId,
+      parseLimit(req.query.limit, 100),
+    );
+    return res.json(subscriptions);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/subscriptions", async (req, res, next) => {
+  const brandId = parseBrandId(req.query.brandId);
+  if (!brandId) {
+    return res.status(400).json({
+      error:
+        "Missing or invalid brandId query parameter. Example: /api/email/subscriptions?brandId=main-street-nutrition",
+    });
+  }
+
+  const parsedBody = emailSubscriptionUpsertSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid email subscription payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, brandId);
+    if (!brand) {
+      return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+
+    const subscription = await adapter.upsertEmailSubscription(userId, brandId, parsedBody.data);
+    return res.status(201).json(subscription);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.put("/subscriptions/:id", async (req, res, next) => {
+  const brandId = parseBrandId(req.query.brandId);
+  if (!brandId) {
+    return res.status(400).json({
+      error:
+        "Missing or invalid brandId query parameter. Example: /api/email/subscriptions/:id?brandId=main-street-nutrition",
+    });
+  }
+  const subscriptionId = req.params.id?.trim();
+  if (!subscriptionId) {
+    return res.status(400).json({ error: "Missing subscription id route parameter" });
+  }
+
+  const parsedBody = emailSubscriptionUpdateSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid email subscription update payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, brandId);
+    if (!brand) {
+      return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+
+    const updated = await adapter.updateEmailSubscription(
+      userId,
+      brandId,
+      subscriptionId,
+      parsedBody.data,
+    );
+    if (!updated) {
+      return res.status(404).json({ error: `Email subscription '${subscriptionId}' was not found` });
+    }
+    return res.json(updated);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/subscriptions/:id", async (req, res, next) => {
+  const brandId = parseBrandId(req.query.brandId);
+  if (!brandId) {
+    return res.status(400).json({
+      error:
+        "Missing or invalid brandId query parameter. Example: /api/email/subscriptions/:id?brandId=main-street-nutrition",
+    });
+  }
+  const subscriptionId = req.params.id?.trim();
+  if (!subscriptionId) {
+    return res.status(400).json({ error: "Missing subscription id route parameter" });
+  }
+
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, brandId);
+    if (!brand) {
+      return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+
+    const deleted = await adapter.deleteEmailSubscription(userId, brandId, subscriptionId);
+    if (!deleted) {
+      return res.status(404).json({ error: `Email subscription '${subscriptionId}' was not found` });
+    }
+    return res.status(204).send();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/digest/preview", async (req, res, next) => {
+  const brandId = parseBrandId(req.query.brandId);
+  if (!brandId) {
+    return res.status(400).json({
+      error: "Missing brandId query parameter. Example: /api/email/digest/preview?brandId=main-street-nutrition",
+    });
+  }
+
+  const parsedBody = emailDigestPreviewRequestSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid digest preview payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, brandId);
+    if (!brand) {
+      return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+
+    const preview = await buildDigestPreview(userId, brandId, {
+      cadence: req.query.cadence === "daily" ? "daily" : "weekly",
+      rangeDays: parsedBody.data.rangeDays,
+      includeNextWeekPlan: parsedBody.data.includeNextWeekPlan,
+      notes: parsedBody.data.notes,
+    });
+    return res.json({
+      subject: preview.subject,
+      html: preview.html,
+      textSummary: preview.textSummary,
+    });
   } catch (error) {
     return next(error);
   }
 });
 
 router.post("/digest/send", async (req, res, next) => {
-  const rawBrandId = req.query.brandId;
-  if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
+  const brandId = parseBrandId(req.query.brandId);
+  if (!brandId) {
     return res.status(400).json({
-      error: "Missing brandId query parameter. Example: /email/digest/send?brandId=main-street-nutrition",
+      error: "Missing brandId query parameter. Example: /api/email/digest/send?brandId=main-street-nutrition",
     });
   }
 
-  const parsedBrandId = brandIdSchema.safeParse(rawBrandId);
-  if (!parsedBrandId.success) {
-    return res.status(400).json({
-      error: "Invalid brandId query parameter",
-      details: parsedBrandId.error.flatten(),
-    });
-  }
-
-  const parsedBody = emailDigestSendSchema.safeParse(req.body);
+  const parsedBody = emailDigestSendRequestSchema.safeParse({
+    ...req.body,
+    toEmail:
+      typeof (req.body as Record<string, unknown> | undefined)?.toEmail === "string"
+        ? (req.body as Record<string, unknown>).toEmail
+        : typeof (req.body as Record<string, unknown> | undefined)?.to === "string"
+          ? (req.body as Record<string, unknown>).to
+          : undefined,
+  });
   if (!parsedBody.success) {
     return res.status(400).json({
       error: "Invalid email digest payload",
@@ -73,30 +252,121 @@ router.post("/digest/send", async (req, res, next) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const adapter = getAdapter();
-    const brand = await adapter.getBrand(userId, parsedBrandId.data);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
-      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+      return res.status(404).json({ error: `Brand '${brandId}' was not found` });
     }
 
-    const outbox = await adapter.enqueueOutbox(userId, parsedBrandId.data, "email_send", {
-      template: "digest",
-      cadence: parsedBody.data.cadence,
-      to: parsedBody.data.to,
-    });
+    const subscriptions = await adapter.listEmailSubscriptions(userId, brandId, 500);
+    const enabledSubscriptions = subscriptions.filter((entry) => entry.enabled);
+    const recipients =
+      parsedBody.data.toEmail !== undefined
+        ? [
+            {
+              toEmail: parsedBody.data.toEmail.trim().toLowerCase(),
+              cadence:
+                enabledSubscriptions.find(
+                  (entry) =>
+                    entry.toEmail.toLowerCase() === parsedBody.data.toEmail!.trim().toLowerCase(),
+                )?.cadence ?? "weekly",
+              subscriptionId: enabledSubscriptions.find(
+                (entry) =>
+                  entry.toEmail.toLowerCase() === parsedBody.data.toEmail!.trim().toLowerCase(),
+              )?.id,
+            },
+          ]
+        : enabledSubscriptions.map((entry) => ({
+            toEmail: entry.toEmail,
+            cadence: entry.cadence,
+            subscriptionId: entry.id,
+          }));
 
-    await processDueOutbox({ limit: 25 });
-    const refreshed = await adapter.getOutboxById(userId, parsedBrandId.data, outbox.id);
+    if (recipients.length === 0) {
+      const fallbackTo = process.env.DEFAULT_DIGEST_TO?.trim().toLowerCase();
+      if (!fallbackTo) {
+        return res.status(400).json({
+          error:
+            "No enabled subscriptions found. Provide toEmail in request or add an enabled subscription first.",
+        });
+      }
+      recipients.push({
+        toEmail: fallbackTo,
+        cadence: "weekly",
+        subscriptionId: undefined,
+      });
+    }
+
+    const queued = await Promise.all(
+      recipients.map(async (recipient) => {
+        const preview = await buildDigestPreview(userId, brandId, {
+          cadence: recipient.cadence,
+          rangeDays: parsedBody.data.rangeDays ?? 14,
+          includeNextWeekPlan: parsedBody.data.includeNextWeekPlan ?? true,
+          notes: parsedBody.data.notes,
+        });
+
+        const log = await adapter.addEmailLog(userId, brandId, {
+          toEmail: recipient.toEmail,
+          subject: preview.subject,
+          status: "queued",
+          subscriptionId: recipient.subscriptionId,
+        });
+
+        const outbox = await adapter.enqueueOutbox(
+          userId,
+          brandId,
+          "email_send",
+          {
+            toEmail: recipient.toEmail,
+            subject: preview.subject,
+            html: preview.html,
+            textSummary: preview.textSummary,
+            cadence: recipient.cadence,
+            emailLogId: log.id,
+            subscriptionId: recipient.subscriptionId,
+          },
+          new Date().toISOString(),
+        );
+
+        return {
+          toEmail: recipient.toEmail,
+          cadence: recipient.cadence,
+          outboxId: outbox.id,
+          emailLogId: log.id,
+        };
+      }),
+    );
 
     return res.status(202).json({
-      outboxId: outbox.id,
-      status: refreshed?.status ?? outbox.status,
-      attempts: refreshed?.attempts ?? outbox.attempts,
-      lastError: refreshed?.lastError,
-      warning:
-        parsedBody.data.cadence === "weekly"
-          ? "Weekly cadence selected. Schedule recurring calls to this endpoint from cron."
-          : "Daily cadence selected. Schedule recurring calls to this endpoint from cron.",
+      queued: queued.length,
+      items: queued,
+      warning: "Digest emails are queued in outbox and sent by the cron outbox processor.",
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/log", async (req, res, next) => {
+  const brandId = parseBrandId(req.query.brandId);
+  if (!brandId) {
+    return res.status(400).json({
+      error: "Missing or invalid brandId query parameter. Example: /api/email/log?brandId=main-street-nutrition",
+    });
+  }
+
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, brandId);
+    if (!brand) {
+      return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+    const logs = await adapter.listEmailLogs(userId, brandId, parseLimit(req.query.limit, 100));
+    return res.json(logs);
   } catch (error) {
     return next(error);
   }

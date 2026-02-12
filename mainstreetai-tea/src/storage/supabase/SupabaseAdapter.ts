@@ -16,6 +16,22 @@ import {
 } from "../../schemas/outboxSchema";
 import { postRequestSchema, storedPostSchema, type PostRequest, type StoredPost } from "../../schemas/postSchema";
 import {
+  emailSubscriptionSchema,
+  emailSubscriptionUpdateSchema,
+  emailSubscriptionUpsertSchema,
+  type EmailSubscription,
+  type EmailSubscriptionUpdate,
+  type EmailSubscriptionUpsert,
+} from "../../schemas/emailSubscriptionSchema";
+import {
+  emailLogCreateSchema,
+  emailLogSchema,
+  emailLogUpdateSchema,
+  type EmailLog,
+  type EmailLogCreate,
+  type EmailLogUpdate,
+} from "../../schemas/emailSendSchema";
+import {
   smsContactSchema,
   smsContactUpdateSchema,
   smsContactUpsertSchema,
@@ -121,6 +137,32 @@ type SmsMessageRow = {
   provider_message_id: string | null;
   error: string | null;
   purpose: string | null;
+  created_at: string;
+  sent_at: string | null;
+};
+
+type EmailSubscriptionRow = {
+  id: string;
+  owner_id: string;
+  brand_ref: string;
+  to_email: string;
+  cadence: string;
+  day_of_week: number | null;
+  hour: number | null;
+  enabled: boolean;
+  created_at: string;
+};
+
+type EmailLogRow = {
+  id: string;
+  owner_id: string;
+  brand_ref: string;
+  to_email: string;
+  subject: string;
+  status: string;
+  provider_id: string | null;
+  error: string | null;
+  subscription_id: string | null;
   created_at: string;
   sent_at: string | null;
 };
@@ -233,6 +275,36 @@ function toSmsMessage(brandId: string, row: SmsMessageRow): SmsMessage {
     providerMessageId: row.provider_message_id ?? undefined,
     error: row.error ?? undefined,
     purpose: row.purpose ?? undefined,
+    createdAt: row.created_at,
+    sentAt: row.sent_at ?? undefined,
+  });
+}
+
+function toEmailSubscription(brandId: string, row: EmailSubscriptionRow): EmailSubscription {
+  return emailSubscriptionSchema.parse({
+    id: row.id,
+    ownerId: row.owner_id,
+    brandId,
+    toEmail: row.to_email,
+    cadence: row.cadence,
+    dayOfWeek: row.day_of_week ?? undefined,
+    hour: row.hour ?? undefined,
+    enabled: row.enabled,
+    createdAt: row.created_at,
+  });
+}
+
+function toEmailLog(brandId: string, row: EmailLogRow): EmailLog {
+  return emailLogSchema.parse({
+    id: row.id,
+    ownerId: row.owner_id,
+    brandId,
+    toEmail: row.to_email,
+    subject: row.subject,
+    status: row.status,
+    providerId: row.provider_id ?? undefined,
+    error: row.error ?? undefined,
+    subscriptionId: row.subscription_id ?? undefined,
     createdAt: row.created_at,
     sentAt: row.sent_at ?? undefined,
   });
@@ -1243,5 +1315,252 @@ export class SupabaseAdapter implements StorageAdapter {
       return null;
     }
     return toSmsMessage(brandId, data as SmsMessageRow);
+  }
+
+  async listEmailSubscriptions(
+    userId: string,
+    brandId: string,
+    limit: number,
+  ): Promise<EmailSubscription[]> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("email_subscriptions")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .order("created_at", { ascending: false })
+      .limit(Math.max(0, limit));
+    if (error) {
+      throw error;
+    }
+    return ((data ?? []) as EmailSubscriptionRow[]).map((row) =>
+      toEmailSubscription(brandId, row),
+    );
+  }
+
+  async upsertEmailSubscription(
+    userId: string,
+    brandId: string,
+    input: EmailSubscriptionUpsert,
+  ): Promise<EmailSubscription> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = emailSubscriptionUpsertSchema.parse(input);
+    const normalizedEmail = parsed.toEmail.trim().toLowerCase();
+    const nowDay = new Date().getUTCDay();
+
+    const { data: existing, error: existingError } = await this.table(
+      "email_subscriptions",
+    )
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("to_email", normalizedEmail)
+      .maybeSingle();
+    if (existingError) {
+      throw existingError;
+    }
+
+    const existingRow = existing as EmailSubscriptionRow | null;
+    const payload = {
+      owner_id: userId,
+      brand_ref: brandRow.id,
+      to_email: normalizedEmail,
+      cadence: parsed.cadence,
+      day_of_week:
+        parsed.cadence === "weekly"
+          ? parsed.dayOfWeek ?? existingRow?.day_of_week ?? nowDay
+          : null,
+      hour: parsed.hour ?? existingRow?.hour ?? 9,
+      enabled: parsed.enabled ?? existingRow?.enabled ?? true,
+    };
+
+    if (existing) {
+      const { data, error } = await this.table("email_subscriptions")
+        .update({
+          cadence: payload.cadence,
+          day_of_week: payload.day_of_week,
+          hour: payload.hour,
+          enabled: payload.enabled,
+        })
+        .eq("id", (existing as { id: string }).id)
+        .select("*")
+        .single();
+      if (error) {
+        throw error;
+      }
+      return toEmailSubscription(brandId, data as EmailSubscriptionRow);
+    }
+
+    const { data, error } = await this.table("email_subscriptions")
+      .insert(payload)
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    return toEmailSubscription(brandId, data as EmailSubscriptionRow);
+  }
+
+  async updateEmailSubscription(
+    userId: string,
+    brandId: string,
+    subscriptionId: string,
+    updates: EmailSubscriptionUpdate,
+  ): Promise<EmailSubscription | null> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = emailSubscriptionUpdateSchema.parse(updates);
+    const payload: Record<string, unknown> = {};
+    if (parsed.toEmail !== undefined) payload.to_email = parsed.toEmail.trim().toLowerCase();
+    if (parsed.cadence !== undefined) payload.cadence = parsed.cadence;
+    if (parsed.dayOfWeek !== undefined) payload.day_of_week = parsed.dayOfWeek;
+    if (parsed.hour !== undefined) payload.hour = parsed.hour;
+    if (parsed.enabled !== undefined) payload.enabled = parsed.enabled;
+
+    if (parsed.cadence === "daily" && parsed.dayOfWeek === undefined) {
+      payload.day_of_week = null;
+    }
+
+    const { data, error } = await this.table("email_subscriptions")
+      .update(payload)
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("id", subscriptionId)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toEmailSubscription(brandId, data as EmailSubscriptionRow);
+  }
+
+  async deleteEmailSubscription(
+    userId: string,
+    brandId: string,
+    subscriptionId: string,
+  ): Promise<boolean> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("email_subscriptions")
+      .delete()
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("id", subscriptionId)
+      .select("id")
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    return Boolean(data);
+  }
+
+  async listDueEmailSubscriptions(nowIso: string, limit: number): Promise<EmailSubscription[]> {
+    const now = new Date(nowIso);
+    const hour = now.getUTCHours();
+    const dayOfWeek = now.getUTCDay();
+
+    const { data, error } = await this.table("email_subscriptions")
+      .select("*, brands!inner(brand_id)")
+      .eq("enabled", true)
+      .or(
+        `and(cadence.eq.daily,hour.eq.${hour}),and(cadence.eq.weekly,day_of_week.eq.${dayOfWeek},hour.eq.${hour})`,
+      )
+      .order("created_at", { ascending: true })
+      .limit(Math.max(0, limit));
+    if (error) {
+      throw error;
+    }
+
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const mapped: EmailSubscription[] = [];
+    for (const row of rows) {
+      const brands = row.brands as { brand_id?: unknown } | null;
+      if (!brands || typeof brands.brand_id !== "string") {
+        continue;
+      }
+      const parsed = emailSubscriptionSchema.safeParse({
+        id: row.id,
+        ownerId: row.owner_id,
+        brandId: brands.brand_id,
+        toEmail: row.to_email,
+        cadence: row.cadence,
+        dayOfWeek: row.day_of_week ?? undefined,
+        hour: row.hour ?? undefined,
+        enabled: row.enabled,
+        createdAt: row.created_at,
+      });
+      if (parsed.success) {
+        mapped.push(parsed.data);
+      }
+    }
+    return mapped;
+  }
+
+  async addEmailLog(userId: string, brandId: string, input: EmailLogCreate): Promise<EmailLog> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = emailLogCreateSchema.parse(input);
+
+    const { data, error } = await this.table("email_log")
+      .insert({
+        owner_id: userId,
+        brand_ref: brandRow.id,
+        to_email: parsed.toEmail.trim().toLowerCase(),
+        subject: parsed.subject,
+        status: parsed.status,
+        provider_id: parsed.providerId ?? null,
+        error: parsed.error ?? null,
+        subscription_id: parsed.subscriptionId ?? null,
+        sent_at: parsed.sentAt ?? null,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    return toEmailLog(brandId, data as EmailLogRow);
+  }
+
+  async listEmailLogs(userId: string, brandId: string, limit: number): Promise<EmailLog[]> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("email_log")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .order("created_at", { ascending: false })
+      .limit(Math.max(0, limit));
+    if (error) {
+      throw error;
+    }
+    return ((data ?? []) as EmailLogRow[]).map((row) => toEmailLog(brandId, row));
+  }
+
+  async updateEmailLog(
+    userId: string,
+    brandId: string,
+    logId: string,
+    updates: EmailLogUpdate,
+  ): Promise<EmailLog | null> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = emailLogUpdateSchema.parse(updates);
+    const payload: Record<string, unknown> = {};
+    if (parsed.status !== undefined) payload.status = parsed.status;
+    if (parsed.providerId !== undefined) payload.provider_id = parsed.providerId;
+    if (parsed.error !== undefined) payload.error = parsed.error;
+    if (parsed.sentAt !== undefined) payload.sent_at = parsed.sentAt;
+
+    const { data, error } = await this.table("email_log")
+      .update(payload)
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("id", logId)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toEmailLog(brandId, data as EmailLogRow);
   }
 }

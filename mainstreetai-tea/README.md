@@ -105,6 +105,8 @@ BUFFER_WEBHOOK_SECRET=
 
 SENDGRID_API_KEY=
 DIGEST_FROM_EMAIL=
+DIGEST_REPLY_TO_EMAIL=
+DEFAULT_DIGEST_TO=
 
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
@@ -552,6 +554,7 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `GET /api/integrations/buffer/callback`
 - `POST /api/publish?brandId=...`
 - `POST /api/jobs/outbox` (cron; requires `x-cron-secret`)
+- `GET /api/jobs/digests` (cron; requires `x-cron-secret`)
 - `GET /api/sms/contacts?brandId=...`
 - `POST /api/sms/contacts?brandId=...`
 - `PUT /api/sms/contacts/:contactId?brandId=...`
@@ -559,7 +562,13 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `POST /api/sms/send?brandId=...`
 - `POST /api/sms/campaign?brandId=...`
 - `GET /api/sms/log?brandId=...`
-- `POST /integrations/buffer/connect?brandId=...`
+- `GET /api/email/subscriptions?brandId=...`
+- `POST /api/email/subscriptions?brandId=...`
+- `PUT /api/email/subscriptions/:id?brandId=...`
+- `DELETE /api/email/subscriptions/:id?brandId=...`
+- `POST /api/email/digest/preview?brandId=...`
+- `POST /api/email/digest/send?brandId=...`
+- `GET /api/email/log?brandId=...`
 - `POST /integrations/gbp/connect?brandId=...`
 - `GET /integrations/gbp/callback`
 - `POST /publish?brandId=...`
@@ -587,6 +596,7 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - Email digest (SendGrid):
   - enable `ENABLE_EMAIL_INTEGRATION=true`
   - set `SENDGRID_API_KEY`, `DIGEST_FROM_EMAIL`
+  - optional: `DIGEST_REPLY_TO_EMAIL`, `DEFAULT_DIGEST_TO`
 
 ### Outbox runner / scheduling
 
@@ -601,6 +611,8 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 Vercel Cron example target:
 
 - `POST https://yourapp.vercel.app/api/jobs/outbox`
+- header: `x-cron-secret: <CRON_SECRET>`
+- `GET https://yourapp.vercel.app/api/jobs/digests`
 - header: `x-cron-secret: <CRON_SECRET>`
 
 ### SMS examples (Twilio)
@@ -683,20 +695,47 @@ curl -X POST "http://localhost:3001/gbp/post?brandId=main-street-nutrition" \
 
 ### Email digest examples
 
+Create subscription:
+
+```bash
+curl -X POST "http://localhost:3001/api/email/subscriptions?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"toEmail":"owner@example.com","cadence":"weekly","dayOfWeek":1,"hour":9,"enabled":true}'
+```
+
 Preview:
 
 ```bash
-curl -X POST "http://localhost:3001/email/digest/preview?brandId=main-street-nutrition" \
-  -H "$AUTH_HEADER"
-```
-
-Queue/send:
-
-```bash
-curl -X POST "http://localhost:3001/email/digest/send?brandId=main-street-nutrition" \
+curl -X POST "http://localhost:3001/api/email/digest/preview?brandId=main-street-nutrition" \
   -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
-  -d '{"to":"owner@example.com","cadence":"weekly"}'
+  -d '{"rangeDays":14,"includeNextWeekPlan":true}'
+```
+
+Queue/send (explicit recipient):
+
+```bash
+curl -X POST "http://localhost:3001/api/email/digest/send?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"toEmail":"owner@example.com","rangeDays":14}'
+```
+
+Queue/send (subscription defaults):
+
+```bash
+curl -X POST "http://localhost:3001/api/email/digest/send?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+View email log:
+
+```bash
+curl "http://localhost:3001/api/email/log?brandId=main-street-nutrition&limit=100" \
+  -H "$AUTH_HEADER"
 ```
 
 ## Admin UI (no frontend framework)
@@ -738,7 +777,7 @@ From admin you can:
 11. Publish through Buffer with `/publish` or `/admin/integrations/buffer`.
 12. Send opt-in SMS via `/admin/sms`.
 13. Post to Google Business from `/admin/gbp`.
-14. Queue digest emails and monitor `/admin/outbox`.
+14. Manage digest subscriptions in `/admin/email`, queue/send digests, and monitor `/admin/outbox`.
 
 ## Notes
 

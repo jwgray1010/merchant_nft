@@ -13,6 +13,7 @@ import gbpRouter from "./routes/gbp";
 import historyRouter from "./routes/history";
 import integrationsRouter from "./routes/integrations";
 import insightsRouter from "./routes/insights";
+import jobsDigestsRouter from "./routes/jobsDigests";
 import jobsOutboxRouter from "./routes/jobsOutbox";
 import localEventsRouter from "./routes/localEvents";
 import metricsRouter from "./routes/metrics";
@@ -75,7 +76,9 @@ app.use("/api/publish", verifyAuth, publishRouter);
 app.use("/api/posts", verifyAuth, postsRouter);
 app.use("/api/history", verifyAuth, historyRouter);
 app.use("/api/sms", verifyAuth, smsRouter);
+app.use("/api/email", verifyAuth, emailDigestRouter);
 app.use("/api/jobs/outbox", jobsOutboxRouter);
+app.use("/api/jobs/digests", jobsDigestsRouter);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Not found" });

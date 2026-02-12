@@ -401,11 +401,13 @@ export async function getEmailProvider(userId: string, brandId: string): Promise
   }
   const apiKey = requiredEnv("SENDGRID_API_KEY");
   const fromEmail = requiredEnv("DIGEST_FROM_EMAIL");
+  const replyToEmail = process.env.DIGEST_REPLY_TO_EMAIL?.trim() || undefined;
 
   const adapter = getAdapter();
   await adapter.upsertIntegration(userId, brandId, "sendgrid", "connected", {
     fromEmail,
+    replyToEmail,
   });
 
-  return new SendgridProvider({ apiKey, fromEmail });
+  return new SendgridProvider({ apiKey, fromEmail, replyToEmail });
 }

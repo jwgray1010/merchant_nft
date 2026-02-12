@@ -14,7 +14,13 @@ import {
 import { AVAILABLE_TEMPLATE_NAMES, buildBrandFromTemplate } from "../data/templateStore";
 import { processDueOutbox } from "../jobs/outboxProcessor";
 import { brandProfileSchema, type BrandProfile, type BrandRegistryItem } from "../schemas/brandSchema";
-import { emailDigestSendSchema } from "../schemas/emailDigestSchema";
+import {
+  emailSubscriptionUpdateSchema,
+  emailSubscriptionUpsertSchema,
+} from "../schemas/emailSubscriptionSchema";
+import {
+  emailDigestSendRequestSchema,
+} from "../schemas/emailSendSchema";
 import { gbpPostSchema } from "../schemas/gbpSchema";
 import { historyRecordSchema, type HistoryRecord } from "../schemas/historySchema";
 import { metricsRequestSchema, storedMetricsSchema, type StoredMetrics } from "../schemas/metricsSchema";
@@ -182,6 +188,7 @@ function renderLayout(
         <a class="button secondary small" href="/admin/brands">Brands</a>
         <a class="button secondary small" href="/admin/integrations">Integrations</a>
         <a class="button secondary small" href="/admin/sms">SMS</a>
+        <a class="button secondary small" href="/admin/email">Email</a>
         <a class="button secondary small" href="/admin/schedule">Schedule</a>
         <a class="button secondary small" href="/admin/outbox">Outbox</a>
         <a class="button secondary small" href="/admin/local-events">Local Events</a>
@@ -863,6 +870,7 @@ router.get("/", async (req, res, next) => {
         <a class="button secondary" href="/admin/metrics?brandId=${encodeURIComponent(selectedBrandId)}">Metrics Log</a>
         <a class="button secondary" href="/admin/integrations?brandId=${encodeURIComponent(selectedBrandId)}">Integrations</a>
         <a class="button secondary" href="/admin/sms?brandId=${encodeURIComponent(selectedBrandId)}">SMS</a>
+        <a class="button secondary" href="/admin/email?brandId=${encodeURIComponent(selectedBrandId)}">Email</a>
         <a class="button secondary" href="/admin/gbp?brandId=${encodeURIComponent(selectedBrandId)}">GBP Post</a>
         <a class="button secondary" href="/admin/outbox?brandId=${encodeURIComponent(selectedBrandId)}">Outbox</a>
         <a class="button secondary" href="/admin/schedule?brandId=${encodeURIComponent(selectedBrandId)}">Schedule</a>
@@ -2091,7 +2099,7 @@ router.get("/integrations", async (req, res, next) => {
         { name: "buffer", enabled: isBufferEnabled(), href: `/admin/integrations/buffer?brandId=${encodeURIComponent(selectedBrandId)}` },
         { name: "twilio", enabled: isTwilioEnabled(), href: `/admin/sms?brandId=${encodeURIComponent(selectedBrandId)}` },
         { name: "google_business", enabled: isGoogleBusinessEnabled(), href: `/admin/integrations/gbp?brandId=${encodeURIComponent(selectedBrandId)}` },
-        { name: "sendgrid", enabled: isEmailEnabled(), href: `/admin/email-digest?brandId=${encodeURIComponent(selectedBrandId)}` },
+        { name: "sendgrid", enabled: isEmailEnabled(), href: `/admin/email?brandId=${encodeURIComponent(selectedBrandId)}` },
       ];
 
       rows = providers
@@ -2818,7 +2826,18 @@ router.post("/gbp/post", async (req, res, next) => {
   }
 });
 
-router.get("/email-digest", async (req, res, next) => {
+router.get("/email-digest", async (req, res) => {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(req.query)) {
+    if (typeof value === "string") {
+      query.set(key, value);
+    }
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return res.redirect(`/admin/email${suffix}`);
+});
+
+router.get("/email", async (req, res, next) => {
   try {
     const userId = req.user?.id ?? "local-dev-user";
     const adapter = getAdapter();
@@ -2827,32 +2846,131 @@ router.get("/email-digest", async (req, res, next) => {
     const status = optionalText(req.query.status);
 
     let previewHtml = `<p class="muted">Select a business and generate a preview.</p>`;
-    if (selectedBrandId && status === "preview") {
-      const preview = await buildDigestPreview(userId, selectedBrandId, "weekly");
+    const previewRequested = req.query.preview === "1";
+    const previewRangeDays = Number.parseInt(String(req.query.rangeDays ?? "14"), 10);
+    const previewIncludeNextWeekPlan = req.query.includeNextWeekPlan !== "0";
+    const previewNotes = optionalText(req.query.notes);
+
+    let subscriptionRows = `<tr><td colspan="7" class="muted">Select a business to manage subscriptions.</td></tr>`;
+    let logRows = `<tr><td colspan="7" class="muted">Select a business to view email logs.</td></tr>`;
+
+    if (selectedBrandId) {
+      const [subscriptions, logs] = await Promise.all([
+        adapter.listEmailSubscriptions(userId, selectedBrandId, 200),
+        adapter.listEmailLogs(userId, selectedBrandId, 100),
+      ]);
+
+      subscriptionRows =
+        subscriptions.length > 0
+          ? subscriptions
+              .map(
+                (entry) => `<tr>
+                <td><code>${escapeHtml(entry.id)}</code></td>
+                <td>${escapeHtml(entry.toEmail)}</td>
+                <td>${escapeHtml(entry.cadence)}</td>
+                <td>${entry.dayOfWeek ?? "-"}</td>
+                <td>${entry.hour ?? "-"}</td>
+                <td>${entry.enabled ? "yes" : "no"}</td>
+                <td>
+                  <form method="POST" action="/admin/email/subscriptions/${encodeURIComponent(entry.id)}/toggle?brandId=${encodeURIComponent(selectedBrandId)}" style="display:inline-block;">
+                    <input type="hidden" name="enabled" value="${entry.enabled ? "false" : "true"}" />
+                    <button class="button small secondary" type="submit">${entry.enabled ? "Disable" : "Enable"}</button>
+                  </form>
+                  <form method="POST" action="/admin/email/subscriptions/${encodeURIComponent(entry.id)}/delete?brandId=${encodeURIComponent(selectedBrandId)}" style="display:inline-block; margin-left:6px;">
+                    <button class="button small secondary" type="submit">Delete</button>
+                  </form>
+                </td>
+              </tr>`,
+              )
+              .join("")
+          : `<tr><td colspan="7" class="muted">No subscriptions yet.</td></tr>`;
+
+      logRows =
+        logs.length > 0
+          ? logs
+              .map(
+                (entry) => `<tr>
+                <td><code>${escapeHtml(entry.id)}</code></td>
+                <td>${escapeHtml(entry.toEmail)}</td>
+                <td>${escapeHtml(entry.subject)}</td>
+                <td>${escapeHtml(entry.status)}</td>
+                <td>${escapeHtml(entry.providerId ?? "-")}</td>
+                <td>${escapeHtml(entry.error ?? "-")}</td>
+                <td>${escapeHtml(formatDateTime(entry.sentAt ?? entry.createdAt))}</td>
+              </tr>`,
+              )
+              .join("")
+          : `<tr><td colspan="7" class="muted">No email log entries yet.</td></tr>`;
+    }
+
+    if (selectedBrandId && previewRequested) {
+      const preview = await buildDigestPreview(userId, selectedBrandId, {
+        cadence: req.query.cadence === "daily" ? "daily" : "weekly",
+        rangeDays:
+          Number.isNaN(previewRangeDays) || previewRangeDays <= 0 ? 14 : Math.min(previewRangeDays, 90),
+        includeNextWeekPlan: previewIncludeNextWeekPlan,
+        notes: previewNotes,
+      });
       previewHtml = `<div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px;">${preview.html}</div>`;
     }
 
     const notice =
       status === "queued"
-        ? { type: "success" as const, text: "Digest job queued and processed." }
+        ? { type: "success" as const, text: "Digest job queued." }
+        : status === "subscription-saved"
+          ? { type: "success" as const, text: "Subscription saved." }
+          : status === "subscription-updated"
+            ? { type: "success" as const, text: "Subscription updated." }
+            : status === "subscription-deleted"
+              ? { type: "success" as const, text: "Subscription deleted." }
         : undefined;
 
     const html = renderLayout(
-      "Email Digest",
+      "Email",
       `
       <div class="card">
         <h1>Email Digests</h1>
         <p class="muted">Flag: ${isEmailEnabled() ? "enabled" : "disabled"}</p>
-        ${renderBrandSelector(brands, selectedBrandId, "/admin/email-digest")}
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/email")}
       </div>
 
       <div class="card">
-        <h2>Preview</h2>
+        <h2>Subscriptions</h2>
         ${
           selectedBrandId
-            ? `<form method="GET" action="/admin/email-digest">
+            ? `<form method="POST" action="/admin/email/subscriptions?brandId=${encodeURIComponent(selectedBrandId)}">
+                <div class="grid">
+                  <div class="field"><label>To Email</label><input type="email" name="toEmail" required /></div>
+                  <div class="field"><label>Cadence</label><select name="cadence"><option value="weekly">weekly</option><option value="daily">daily</option></select></div>
+                  <div class="field"><label>Day Of Week (0-6, weekly)</label><input type="number" min="0" max="6" name="dayOfWeek" /></div>
+                  <div class="field"><label>Hour (UTC, 0-23)</label><input type="number" min="0" max="23" name="hour" value="9" /></div>
+                </div>
+                <label><input type="checkbox" name="enabled" checked /> Enabled</label>
+                <div style="margin-top:10px;"><button type="submit">Save Subscription</button></div>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+        <div style="margin-top:12px;">
+          <table>
+            <thead><tr><th>ID</th><th>Email</th><th>Cadence</th><th>DOW</th><th>Hour (UTC)</th><th>Enabled</th><th>Actions</th></tr></thead>
+            <tbody>${subscriptionRows}</tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Preview Digest</h2>
+        ${
+          selectedBrandId
+            ? `<form method="GET" action="/admin/email">
                 <input type="hidden" name="brandId" value="${escapeHtml(selectedBrandId)}" />
-                <input type="hidden" name="status" value="preview" />
+                <input type="hidden" name="preview" value="1" />
+                <div class="grid">
+                  <div class="field"><label>Cadence</label><select name="cadence"><option value="weekly">weekly</option><option value="daily">daily</option></select></div>
+                  <div class="field"><label>Range Days</label><input type="number" min="1" max="90" name="rangeDays" value="14" /></div>
+                </div>
+                <label><input type="checkbox" name="includeNextWeekPlan" value="1" checked /> Include next week plan</label>
+                <div class="field"><label>Notes (optional)</label><textarea name="notes"></textarea></div>
                 <button type="submit">Generate Preview</button>
               </form>`
             : "<p>Select a brand first.</p>"
@@ -2861,18 +2979,29 @@ router.get("/email-digest", async (req, res, next) => {
       </div>
 
       <div class="card">
-        <h2>Send Digest</h2>
+        <h2>Send Test Digest</h2>
         ${
           selectedBrandId
-            ? `<form method="POST" action="/admin/email-digest/send?brandId=${encodeURIComponent(selectedBrandId)}">
+            ? `<form method="POST" action="/admin/email/send?brandId=${encodeURIComponent(selectedBrandId)}">
                 <div class="grid">
-                  <div class="field"><label>To Email</label><input type="email" name="to" required /></div>
-                  <div class="field"><label>Cadence</label><select name="cadence"><option>weekly</option><option>daily</option></select></div>
+                  <div class="field"><label>To Email (optional)</label><input type="email" name="toEmail" /></div>
+                  <div class="field"><label>Range Days</label><input type="number" min="1" max="90" name="rangeDays" value="14" /></div>
                 </div>
-                <button type="submit">Queue + Send Digest</button>
+                <label><input type="checkbox" name="includeNextWeekPlan" value="1" checked /> Include next week plan</label><br />
+                <label><input type="checkbox" name="sendNow" checked /> Attempt immediate outbox processing</label>
+                <div class="field"><label>Notes (optional)</label><textarea name="notes"></textarea></div>
+                <button type="submit">Queue Digest Email</button>
               </form>`
             : "<p>Select a brand first.</p>"
         }
+      </div>
+
+      <div class="card">
+        <h2>Recent Email Log</h2>
+        <table>
+          <thead><tr><th>ID</th><th>To</th><th>Subject</th><th>Status</th><th>Provider ID</th><th>Error</th><th>Time</th></tr></thead>
+          <tbody>${logRows}</tbody>
+        </table>
       </div>
       `,
       notice,
@@ -2884,27 +3013,160 @@ router.get("/email-digest", async (req, res, next) => {
   }
 });
 
-router.post("/email-digest/send", async (req, res, next) => {
+router.post("/email/subscriptions", async (req, res, next) => {
   try {
     const userId = req.user?.id ?? "local-dev-user";
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
-      return res.status(400).type("html").send(renderLayout("Email Digest", "<h1>Missing brandId query parameter.</h1>"));
+      return res.status(400).type("html").send(renderLayout("Email", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const parsed = emailDigestSendSchema.parse({
-      to: String((req.body as Record<string, unknown> | undefined)?.to ?? ""),
-      cadence: String((req.body as Record<string, unknown> | undefined)?.cadence ?? ""),
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = emailSubscriptionUpsertSchema.parse({
+      toEmail: String(body.toEmail ?? ""),
+      cadence: String(body.cadence ?? ""),
+      dayOfWeek: optionalText(body.dayOfWeek) ? Number(body.dayOfWeek) : undefined,
+      hour: optionalText(body.hour) ? Number(body.hour) : undefined,
+      enabled: checkbox(body.enabled),
+    });
+    await getAdapter().upsertEmailSubscription(userId, brandId, parsed);
+    return res.redirect(`/admin/email?brandId=${encodeURIComponent(brandId)}&status=subscription-saved`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/email/subscriptions/:id/toggle", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Email", "<h1>Missing brandId query parameter.</h1>"));
+    }
+    const subscriptionId = req.params.id?.trim();
+    if (!subscriptionId) {
+      return res.status(400).type("html").send(renderLayout("Email", "<h1>Missing subscription id.</h1>"));
+    }
+    const parsed = emailSubscriptionUpdateSchema.parse({
+      enabled: checkbox((req.body as Record<string, unknown> | undefined)?.enabled),
+    });
+    await getAdapter().updateEmailSubscription(userId, brandId, subscriptionId, parsed);
+    return res.redirect(`/admin/email?brandId=${encodeURIComponent(brandId)}&status=subscription-updated`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/email/subscriptions/:id/delete", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Email", "<h1>Missing brandId query parameter.</h1>"));
+    }
+    const subscriptionId = req.params.id?.trim();
+    if (!subscriptionId) {
+      return res.status(400).type("html").send(renderLayout("Email", "<h1>Missing subscription id.</h1>"));
+    }
+    await getAdapter().deleteEmailSubscription(userId, brandId, subscriptionId);
+    return res.redirect(`/admin/email?brandId=${encodeURIComponent(brandId)}&status=subscription-deleted`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/email/send", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Email", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = emailDigestSendRequestSchema.parse({
+      toEmail: optionalText(body.toEmail),
+      rangeDays: optionalText(body.rangeDays) ? Number(body.rangeDays) : undefined,
+      includeNextWeekPlan: checkbox(body.includeNextWeekPlan),
+      notes: optionalText(body.notes),
     });
 
-    const outbox = await getAdapter().enqueueOutbox(userId, brandId, "email_send", {
-      template: "digest",
-      cadence: parsed.cadence,
-      to: parsed.to,
-    });
-    await processDueOutbox({ limit: 25 });
+    const adapter = getAdapter();
+    const subscriptions = await adapter.listEmailSubscriptions(userId, brandId, 500);
+    const enabledSubscriptions = subscriptions.filter((entry) => entry.enabled);
+    const recipients =
+      parsed.toEmail !== undefined
+        ? [
+            {
+              toEmail: parsed.toEmail.trim().toLowerCase(),
+              cadence:
+                enabledSubscriptions.find(
+                  (entry) =>
+                    entry.toEmail.toLowerCase() === parsed.toEmail!.trim().toLowerCase(),
+                )?.cadence ?? "weekly",
+              subscriptionId: enabledSubscriptions.find(
+                (entry) =>
+                  entry.toEmail.toLowerCase() === parsed.toEmail!.trim().toLowerCase(),
+              )?.id,
+            },
+          ]
+        : enabledSubscriptions.map((entry) => ({
+            toEmail: entry.toEmail,
+            cadence: entry.cadence,
+            subscriptionId: entry.id,
+          }));
 
-    return res.redirect(`/admin/email-digest?brandId=${encodeURIComponent(brandId)}&status=queued&outboxId=${encodeURIComponent(outbox.id)}`);
+    if (recipients.length === 0) {
+      const fallbackTo = process.env.DEFAULT_DIGEST_TO?.trim().toLowerCase();
+      if (!fallbackTo) {
+        return res
+          .status(400)
+          .type("html")
+          .send(
+            renderLayout(
+              "Email",
+              "<h1>No enabled subscriptions found. Add one or set DEFAULT_DIGEST_TO.</h1>",
+            ),
+          );
+      }
+      recipients.push({ toEmail: fallbackTo, cadence: "weekly", subscriptionId: undefined });
+    }
+
+    for (const recipient of recipients) {
+      const preview = await buildDigestPreview(userId, brandId, {
+        cadence: recipient.cadence,
+        rangeDays: parsed.rangeDays ?? 14,
+        includeNextWeekPlan: parsed.includeNextWeekPlan ?? true,
+        notes: parsed.notes,
+      });
+      const log = await adapter.addEmailLog(userId, brandId, {
+        toEmail: recipient.toEmail,
+        subject: preview.subject,
+        status: "queued",
+        subscriptionId: recipient.subscriptionId,
+      });
+      await adapter.enqueueOutbox(
+        userId,
+        brandId,
+        "email_send",
+        {
+          toEmail: recipient.toEmail,
+          subject: preview.subject,
+          html: preview.html,
+          textSummary: preview.textSummary,
+          cadence: recipient.cadence,
+          emailLogId: log.id,
+          subscriptionId: recipient.subscriptionId,
+        },
+        new Date().toISOString(),
+      );
+    }
+
+    if (checkbox(body.sendNow)) {
+      await processDueOutbox({ limit: 25, types: ["email_send"] });
+    }
+
+    return res.redirect(`/admin/email?brandId=${encodeURIComponent(brandId)}&status=queued`);
   } catch (error) {
     return next(error);
   }

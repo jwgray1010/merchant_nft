@@ -287,6 +287,16 @@ export async function processDueOutbox(options: ProcessDueOutboxOptions = {}): P
           });
         }
       }
+      if (record.type === "email_send") {
+        const emailLogId =
+          typeof record.payload.emailLogId === "string" ? record.payload.emailLogId : undefined;
+        if (emailLogId) {
+          await adapter.updateEmailLog(record.ownerId, record.brandId, emailLogId, {
+            status: shouldFail ? "failed" : "queued",
+            error: message.slice(0, 1000),
+          });
+        }
+      }
       failed += 1;
     }
   }

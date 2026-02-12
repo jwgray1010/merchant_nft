@@ -115,7 +115,7 @@ export async function dispatchOutboxRecord(record: OutboxRecord): Promise<unknow
 
   if (record.type === "email_send") {
     const payload = record.payload;
-    const to = String(payload.to ?? "").trim();
+    const to = String(payload.toEmail ?? payload.to ?? "").trim();
     if (!to) {
       throw new Error("Outbox email_send payload missing recipient");
     }
@@ -123,14 +123,25 @@ export async function dispatchOutboxRecord(record: OutboxRecord): Promise<unknow
     const template = typeof payload.template === "string" ? payload.template : "";
     let subject = String(payload.subject ?? "").trim();
     let html = String(payload.html ?? "");
-    let text = typeof payload.text === "string" ? payload.text : undefined;
+    let text =
+      typeof payload.textSummary === "string"
+        ? payload.textSummary
+        : typeof payload.text === "string"
+          ? payload.text
+          : undefined;
+    const emailLogId =
+      typeof payload.emailLogId === "string" && payload.emailLogId.trim() !== ""
+        ? payload.emailLogId
+        : undefined;
 
     if (template === "digest") {
       const cadence = payload.cadence === "daily" ? "daily" : "weekly";
-      const preview = await buildDigestPreview(record.ownerId, record.brandId, cadence);
+      const preview = await buildDigestPreview(record.ownerId, record.brandId, {
+        cadence,
+      });
       subject = preview.subject;
       html = preview.html;
-      text = preview.text;
+      text = preview.textSummary;
     }
 
     if (!subject || !html) {
@@ -144,6 +155,14 @@ export async function dispatchOutboxRecord(record: OutboxRecord): Promise<unknow
       html,
       text,
     });
+    if (emailLogId) {
+      await adapter.updateEmailLog(record.ownerId, record.brandId, emailLogId, {
+        status: "sent",
+        providerId: result.providerMessageId,
+        error: null,
+        sentAt: new Date().toISOString(),
+      });
+    }
     await adapter.addHistory(record.ownerId, record.brandId, "email-digest", payload, result);
     return result;
   }

@@ -2,6 +2,22 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { brandProfileSchema, type BrandProfile } from "../../schemas/brandSchema";
+import {
+  emailSubscriptionSchema,
+  emailSubscriptionUpdateSchema,
+  emailSubscriptionUpsertSchema,
+  type EmailSubscription,
+  type EmailSubscriptionUpdate,
+  type EmailSubscriptionUpsert,
+} from "../../schemas/emailSubscriptionSchema";
+import {
+  emailLogCreateSchema,
+  emailLogSchema,
+  emailLogUpdateSchema,
+  type EmailLog,
+  type EmailLogCreate,
+  type EmailLogUpdate,
+} from "../../schemas/emailSendSchema";
 import { historyRecordSchema, type HistoryRecord } from "../../schemas/historySchema";
 import {
   integrationRecordSchema,
@@ -135,6 +151,22 @@ export class LocalAdapter implements StorageAdapter {
     return path.join(this.smsMessagesDir(userId, brandId), `${messageId}.json`);
   }
 
+  private emailSubscriptionsDir(userId: string, brandId: string): string {
+    return path.join(this.userDir(userId), "email_subscriptions", brandId);
+  }
+
+  private emailSubscriptionPath(userId: string, brandId: string, subscriptionId: string): string {
+    return path.join(this.emailSubscriptionsDir(userId, brandId), `${subscriptionId}.json`);
+  }
+
+  private emailLogsDir(userId: string, brandId: string): string {
+    return path.join(this.userDir(userId), "email_logs", brandId);
+  }
+
+  private emailLogPath(userId: string, brandId: string, logId: string): string {
+    return path.join(this.emailLogsDir(userId, brandId), `${logId}.json`);
+  }
+
   private async ensureDir(dirPath: string): Promise<void> {
     await mkdir(dirPath, { recursive: true });
   }
@@ -264,6 +296,8 @@ export class LocalAdapter implements StorageAdapter {
       rm(this.integrationsDir(userId, brandId), { recursive: true, force: true }),
       rm(this.smsContactsDir(userId, brandId), { recursive: true, force: true }),
       rm(this.smsMessagesDir(userId, brandId), { recursive: true, force: true }),
+      rm(this.emailSubscriptionsDir(userId, brandId), { recursive: true, force: true }),
+      rm(this.emailLogsDir(userId, brandId), { recursive: true, force: true }),
     ]);
 
     const outboxRecords = await this.listOutbox(userId, brandId, 1000);
@@ -982,6 +1016,245 @@ export class LocalAdapter implements StorageAdapter {
     }
     const current = smsMessageSchema.parse(existing);
     const next = smsMessageSchema.parse({
+      ...current,
+      ...parsedUpdates,
+      error:
+        parsedUpdates.error === null
+          ? undefined
+          : parsedUpdates.error ?? current.error,
+    });
+    await this.atomicWriteJson(filePath, next);
+    return next;
+  }
+
+  async listEmailSubscriptions(
+    userId: string,
+    brandId: string,
+    limit: number,
+  ): Promise<EmailSubscription[]> {
+    const dir = this.emailSubscriptionsDir(userId, brandId);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const items = await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map(async (entry) => {
+          const raw = await readFile(path.join(dir, entry), "utf8");
+          return emailSubscriptionSchema.parse(JSON.parse(raw));
+        }),
+    );
+
+    return items
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, Math.max(0, limit));
+  }
+
+  async upsertEmailSubscription(
+    userId: string,
+    brandId: string,
+    input: EmailSubscriptionUpsert,
+  ): Promise<EmailSubscription> {
+    const parsed = emailSubscriptionUpsertSchema.parse(input);
+    const normalizedEmail = parsed.toEmail.trim().toLowerCase();
+    const nowIso = new Date().toISOString();
+    const existing = (await this.listEmailSubscriptions(userId, brandId, 5000)).find(
+      (entry) => entry.toEmail.toLowerCase() === normalizedEmail,
+    );
+
+    const record = emailSubscriptionSchema.parse({
+      id: existing?.id ?? randomUUID(),
+      ownerId: userId,
+      brandId,
+      toEmail: normalizedEmail,
+      cadence: parsed.cadence,
+      dayOfWeek:
+        parsed.cadence === "weekly"
+          ? parsed.dayOfWeek ?? existing?.dayOfWeek ?? new Date().getUTCDay()
+          : undefined,
+      hour: parsed.hour ?? existing?.hour ?? 9,
+      enabled: parsed.enabled ?? existing?.enabled ?? true,
+      createdAt: existing?.createdAt ?? nowIso,
+    });
+
+    await this.ensureDir(this.emailSubscriptionsDir(userId, brandId));
+    await this.atomicWriteJson(
+      this.emailSubscriptionPath(userId, brandId, record.id),
+      record,
+    );
+    return record;
+  }
+
+  async updateEmailSubscription(
+    userId: string,
+    brandId: string,
+    subscriptionId: string,
+    updates: EmailSubscriptionUpdate,
+  ): Promise<EmailSubscription | null> {
+    const parsedUpdates = emailSubscriptionUpdateSchema.parse(updates);
+    const filePath = this.emailSubscriptionPath(userId, brandId, subscriptionId);
+    const existing = await this.readJson<unknown>(filePath);
+    if (!existing) {
+      return null;
+    }
+    const current = emailSubscriptionSchema.parse(existing);
+    const nextCadence = parsedUpdates.cadence ?? current.cadence;
+    const next = emailSubscriptionSchema.parse({
+      ...current,
+      ...parsedUpdates,
+      toEmail:
+        parsedUpdates.toEmail !== undefined
+          ? parsedUpdates.toEmail.trim().toLowerCase()
+          : current.toEmail,
+      cadence: nextCadence,
+      dayOfWeek:
+        parsedUpdates.dayOfWeek !== undefined
+          ? parsedUpdates.dayOfWeek
+          : nextCadence === "weekly"
+            ? current.dayOfWeek ?? new Date().getUTCDay()
+            : undefined,
+    });
+    await this.atomicWriteJson(filePath, next);
+    return next;
+  }
+
+  async deleteEmailSubscription(
+    userId: string,
+    brandId: string,
+    subscriptionId: string,
+  ): Promise<boolean> {
+    try {
+      await rm(this.emailSubscriptionPath(userId, brandId, subscriptionId));
+      return true;
+    } catch (error) {
+      if (isNotFound(error)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async listDueEmailSubscriptions(nowIso: string, limit: number): Promise<EmailSubscription[]> {
+    const now = new Date(nowIso);
+    const nowHour = now.getUTCHours();
+    const nowDay = now.getUTCDay();
+    const userDirs = await this.listUserDirectories();
+    const due: EmailSubscription[] = [];
+
+    for (const userDirName of userDirs) {
+      const subscriptionsRoot = path.join(this.rootDir, userDirName, "email_subscriptions");
+      let brandDirs: Array<{ name: string; isDirectory(): boolean }>;
+      try {
+        brandDirs = await readdir(subscriptionsRoot, { withFileTypes: true });
+      } catch (error) {
+        if (isNotFound(error)) {
+          continue;
+        }
+        throw error;
+      }
+
+      for (const brandDir of brandDirs.filter((entry) => entry.isDirectory())) {
+        const brandId = brandDir.name;
+        const dir = path.join(subscriptionsRoot, brandId);
+        const entries = await readdir(dir);
+        for (const entry of entries.filter((name) => name.endsWith(".json"))) {
+          const raw = await readFile(path.join(dir, entry), "utf8");
+          const parsed = emailSubscriptionSchema.safeParse(JSON.parse(raw));
+          if (!parsed.success) {
+            continue;
+          }
+          const subscription = parsed.data;
+          if (!subscription.enabled) {
+            continue;
+          }
+          const hour = subscription.hour ?? 9;
+          if (hour !== nowHour) {
+            continue;
+          }
+          if (
+            subscription.cadence === "weekly" &&
+            (subscription.dayOfWeek ?? nowDay) !== nowDay
+          ) {
+            continue;
+          }
+          due.push(subscription);
+        }
+      }
+    }
+
+    return due
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, Math.max(0, limit));
+  }
+
+  async addEmailLog(userId: string, brandId: string, input: EmailLogCreate): Promise<EmailLog> {
+    const parsed = emailLogCreateSchema.parse(input);
+    const nowIso = new Date().toISOString();
+    const record = emailLogSchema.parse({
+      id: randomUUID(),
+      ownerId: userId,
+      brandId,
+      toEmail: parsed.toEmail.trim().toLowerCase(),
+      subject: parsed.subject,
+      status: parsed.status,
+      providerId: parsed.providerId,
+      error: parsed.error,
+      subscriptionId: parsed.subscriptionId,
+      createdAt: nowIso,
+      sentAt: parsed.sentAt,
+    });
+    await this.ensureDir(this.emailLogsDir(userId, brandId));
+    await this.atomicWriteJson(this.emailLogPath(userId, brandId, record.id), record);
+    return record;
+  }
+
+  async listEmailLogs(userId: string, brandId: string, limit: number): Promise<EmailLog[]> {
+    const dir = this.emailLogsDir(userId, brandId);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const items = await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map(async (entry) => {
+          const raw = await readFile(path.join(dir, entry), "utf8");
+          return emailLogSchema.parse(JSON.parse(raw));
+        }),
+    );
+
+    return items
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, Math.max(0, limit));
+  }
+
+  async updateEmailLog(
+    userId: string,
+    brandId: string,
+    logId: string,
+    updates: EmailLogUpdate,
+  ): Promise<EmailLog | null> {
+    const parsedUpdates = emailLogUpdateSchema.parse(updates);
+    const filePath = this.emailLogPath(userId, brandId, logId);
+    const existing = await this.readJson<unknown>(filePath);
+    if (!existing) {
+      return null;
+    }
+    const current = emailLogSchema.parse(existing);
+    const next = emailLogSchema.parse({
       ...current,
       ...parsedUpdates,
       error:

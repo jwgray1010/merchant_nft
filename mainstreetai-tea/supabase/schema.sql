@@ -145,6 +145,32 @@ create table if not exists public.sms_messages (
   sent_at timestamptz
 );
 
+create table if not exists public.email_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  to_email text not null,
+  cadence text not null check (cadence in ('daily','weekly')),
+  day_of_week int check (day_of_week between 0 and 6),
+  hour int check (hour between 0 and 23),
+  enabled boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.email_log (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  to_email text not null,
+  subject text not null,
+  status text not null default 'queued' check (status in ('queued','sent','failed')),
+  provider_id text,
+  error text,
+  subscription_id uuid references public.email_subscriptions(id) on delete set null,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz
+);
+
 alter table public.posts add column if not exists status text not null default 'posted';
 alter table public.posts add column if not exists provider_meta jsonb;
 
@@ -171,6 +197,15 @@ create unique index if not exists sms_contacts_owner_brand_phone_unique
 
 create index if not exists sms_messages_owner_brand_created_idx
   on public.sms_messages(owner_id, brand_ref, created_at desc);
+
+create unique index if not exists email_subscriptions_owner_brand_to_email_unique
+  on public.email_subscriptions(owner_id, brand_ref, to_email);
+
+create index if not exists email_subscriptions_due_idx
+  on public.email_subscriptions(owner_id, cadence, day_of_week, hour, enabled);
+
+create index if not exists email_log_owner_brand_created_idx
+  on public.email_log(owner_id, brand_ref, created_at desc);
 
 -- Keep updated_at fresh on brands updates.
 create or replace function public.set_updated_at()
@@ -209,6 +244,8 @@ alter table public.integrations enable row level security;
 alter table public.outbox enable row level security;
 alter table public.sms_contacts enable row level security;
 alter table public.sms_messages enable row level security;
+alter table public.email_subscriptions enable row level security;
+alter table public.email_log enable row level security;
 
 drop policy if exists brands_owner_select on public.brands;
 create policy brands_owner_select on public.brands
@@ -276,6 +313,18 @@ with check (owner_id = auth.uid());
 
 drop policy if exists sms_messages_owner_all on public.sms_messages;
 create policy sms_messages_owner_all on public.sms_messages
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists email_subscriptions_owner_all on public.email_subscriptions;
+create policy email_subscriptions_owner_all on public.email_subscriptions
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists email_log_owner_all on public.email_log;
+create policy email_log_owner_all on public.email_log
 for all
 using (owner_id = auth.uid())
 with check (owner_id = auth.uid());

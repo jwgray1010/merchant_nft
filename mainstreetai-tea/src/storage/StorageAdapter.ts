@@ -1,4 +1,14 @@
 import type { BrandProfile } from "../schemas/brandSchema";
+import type {
+  EmailSubscription,
+  EmailSubscriptionUpdate,
+  EmailSubscriptionUpsert,
+} from "../schemas/emailSubscriptionSchema";
+import type {
+  EmailLog,
+  EmailLogCreate,
+  EmailLogUpdate,
+} from "../schemas/emailSendSchema";
 import type { HistoryRecord } from "../schemas/historySchema";
 import type {
   IntegrationProvider,
@@ -139,4 +149,36 @@ export interface StorageAdapter {
     messageId: string,
     updates: SmsMessageUpdate,
   ): Promise<SmsMessage | null>;
+
+  listEmailSubscriptions(
+    userId: string,
+    brandId: string,
+    limit: number,
+  ): Promise<EmailSubscription[]>;
+  upsertEmailSubscription(
+    userId: string,
+    brandId: string,
+    input: EmailSubscriptionUpsert,
+  ): Promise<EmailSubscription>;
+  updateEmailSubscription(
+    userId: string,
+    brandId: string,
+    subscriptionId: string,
+    updates: EmailSubscriptionUpdate,
+  ): Promise<EmailSubscription | null>;
+  deleteEmailSubscription(
+    userId: string,
+    brandId: string,
+    subscriptionId: string,
+  ): Promise<boolean>;
+  listDueEmailSubscriptions(nowIso: string, limit: number): Promise<EmailSubscription[]>;
+
+  addEmailLog(userId: string, brandId: string, input: EmailLogCreate): Promise<EmailLog>;
+  listEmailLogs(userId: string, brandId: string, limit: number): Promise<EmailLog[]>;
+  updateEmailLog(
+    userId: string,
+    brandId: string,
+    logId: string,
+    updates: EmailLogUpdate,
+  ): Promise<EmailLog | null>;
 }
