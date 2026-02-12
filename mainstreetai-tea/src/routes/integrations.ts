@@ -60,7 +60,12 @@ router.get("/", async (req, res, next) => {
     }
 
     const integrations = await adapter.listIntegrations(userId, parsed.brandId);
-    return res.json(integrations);
+    return res.json(
+      integrations.map(({ secretsEnc: _secretsEnc, ...rest }) => ({
+        ...rest,
+        secretsStored: Boolean(_secretsEnc),
+      })),
+    );
   } catch (error) {
     return next(error);
   }

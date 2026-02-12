@@ -533,6 +533,32 @@ If schedule time is in the future, it is queued in outbox.
 - `GET /outbox?brandId=...`
 - `POST /outbox/:id/retry?brandId=...`
 
+### Provider setup checklist
+
+- Buffer:
+  - enable `ENABLE_BUFFER_INTEGRATION=true`
+  - connect per brand with `POST /integrations/buffer/connect`
+- Twilio:
+  - enable `ENABLE_TWILIO_INTEGRATION=true`
+  - set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
+- Google Business Profile:
+  - enable `ENABLE_GBP_INTEGRATION=true`
+  - set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+  - connect per brand with `POST /integrations/gbp/connect`
+- Email digest (SendGrid):
+  - enable `ENABLE_EMAIL_INTEGRATION=true`
+  - set `SENDGRID_API_KEY`, `DIGEST_FROM_EMAIL`
+
+### Outbox runner / scheduling
+
+- Local dev:
+  - job runner starts automatically and checks queue every ~30s.
+  - controlled by `OUTBOX_RUNNER_ENABLED=true|false`
+- Production:
+  - keep the Node process running with runner enabled **or**
+  - trigger queue processing from external cron / scheduled function.
+  - Supabase Scheduled Functions or host-level cron are both valid patterns.
+
 ### SMS examples (Twilio)
 
 ```bash
