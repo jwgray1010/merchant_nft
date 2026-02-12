@@ -349,11 +349,11 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
 
 function renderBottomNav(context: EasyContext, active: "home" | "create" | "analyze" | "schedule" | "settings"): string {
   const baseEntries = [
-    { key: "home", icon: "🏠", href: withSelection("/app", context), label: "Home" },
-    { key: "create", icon: "✨", href: withSelection("/app/create", context), label: "Create" },
-    { key: "analyze", icon: "🔎", href: withSelection("/app/analyze", context), label: "Analyze" },
-    { key: "schedule", icon: "📅", href: withSelection("/app/schedule", context), label: "Schedule" },
-    { key: "settings", icon: "⚙️", href: withSelection("/app/settings", context), label: "Settings" },
+    { key: "home", icon: "✦", href: withSelection("/app", context), label: "Home" },
+    { key: "create", icon: "📷", href: withSelection("/app/create", context), label: "Create" },
+    { key: "analyze", icon: "📈", href: withSelection("/app/analyze", context), label: "Insights" },
+    { key: "schedule", icon: "🕒", href: withSelection("/app/schedule", context), label: "Schedule" },
+    { key: "settings", icon: "📍", href: withSelection("/app/settings", context), label: "Settings" },
   ] as const;
   const entries =
     context.role === "member"
@@ -365,7 +365,9 @@ function renderBottomNav(context: EasyContext, active: "home" | "create" | "anal
         const activeClass = entry.key === active ? "active" : "";
         return `<a class="nav-item ${activeClass}" href="${escapeHtml(entry.href)}" aria-label="${escapeHtml(
           entry.label,
-        )}" title="${escapeHtml(entry.label)}"><span>${entry.icon}</span></a>`;
+        )}" title="${escapeHtml(entry.label)}"><span class="nav-icon">${entry.icon}</span><span class="nav-label">${escapeHtml(
+          entry.label,
+        )}</span></a>`;
       })
       .join("")}
   </nav>`;
@@ -398,8 +400,8 @@ function renderHeader(context: EasyContext, currentPath: string): string {
     }),
   ].join("");
   return `<header class="rounded-2xl p-6 shadow-sm bg-white">
-    <p class="muted">${escapeHtml(greeting)}, ${escapeHtml(context.selectedBrand.businessName)}</p>
-    <h1 class="text-xl">${escapeHtml(context.selectedBrand.businessName)}</h1>
+    <p class="section-title">MainStreetAI Easy Mode</p>
+    <h1 class="text-xl">${escapeHtml(greeting)}, ${escapeHtml(context.selectedBrand.businessName)}</h1>
     <p class="muted">${escapeHtml(context.selectedBrand.location)}</p>
     <form method="GET" action="${escapeHtml(currentPath)}" class="selector-grid">
       ${
@@ -445,45 +447,172 @@ function easyLayout(input: {
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>${escapeHtml(input.title)} · MainStreetAI Easy Mode</title>
     <style>
-      body { margin: 0; font-family: Arial, sans-serif; background: #f3f4f6; color: #111827; padding-bottom: 92px; }
-      .app-wrap { max-width: 760px; margin: 0 auto; padding: 14px; display: grid; gap: 12px; }
+      :root {
+        --background: #F8F9FB;
+        --card: #FFFFFF;
+        --primary: #1F7AE0;
+        --accent: #22C55E;
+        --text: #111827;
+        --subtext: #6B7280;
+        --border: #E5E7EB;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: var(--background);
+        color: var(--text);
+        padding-bottom: 98px;
+        -webkit-font-smoothing: antialiased;
+      }
+      h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+      .app-shell { min-height: 100vh; display: flex; justify-content: center; }
+      .app-wrap { width: min(100%, 28rem); margin: 0 auto; padding: 16px 14px 18px; display: grid; gap: 12px; box-sizing: border-box; }
       .rounded-2xl { border-radius: 1rem; }
       .rounded-xl { border-radius: 0.8rem; }
       .p-6 { padding: 1.5rem; }
       .py-4 { padding-top: 1rem; padding-bottom: 1rem; }
-      .shadow-sm { box-shadow: 0 1px 3px rgba(15,23,42,0.08); }
-      .bg-white { background: #fff; }
+      .shadow-sm { box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07); }
+      .bg-white { background: var(--card); }
       .text-lg { font-size: 1.1rem; }
-      .text-xl { font-size: 1.35rem; margin: 0 0 2px 0; }
+      .text-xl { font-size: 1.35rem; margin: 0 0 2px 0; letter-spacing: -0.01em; }
       .font-semibold { font-weight: 600; }
       .w-full { width: 100%; box-sizing: border-box; }
-      .muted { color: #6b7280; font-size: 0.9rem; margin: 0; }
-      .grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .action-card { text-decoration: none; color: inherit; border: 1px solid #e5e7eb; display: block; min-height: 120px; }
-      .action-card .emoji { font-size: 1.6rem; display: block; margin-bottom: 8px; }
+      .muted { color: var(--subtext); font-size: 0.9rem; margin: 0; }
+      .section-title {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--subtext);
+        margin: 0 0 8px 0;
+      }
+      .grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .action-grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .action-card {
+        text-decoration: none;
+        color: inherit;
+        border: 1px solid var(--border);
+        display: block;
+        min-height: 118px;
+        transition: all 150ms ease-out;
+      }
+      .action-card:hover { transform: translateY(-1px); border-color: #d5dbe3; }
+      .action-card .emoji { font-size: 1.15rem; display: block; margin-bottom: 8px; color: var(--subtext); }
       .selector-grid { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; margin-top: 12px; }
-      .field-label { display: grid; gap: 6px; font-size: 0.9rem; color: #374151; }
-      input, textarea, select { border: 1px solid #d1d5db; border-radius: 0.8rem; padding: 0.75rem; font-size: 1rem; width: 100%; box-sizing: border-box; background: #fff; }
+      .field-label { display: grid; gap: 6px; font-size: 0.88rem; color: #4b5563; }
+      input, textarea, select {
+        border: 1px solid var(--border);
+        border-radius: 0.8rem;
+        padding: 0.75rem;
+        font-size: 1rem;
+        width: 100%;
+        box-sizing: border-box;
+        background: var(--card);
+        color: var(--text);
+      }
       textarea { min-height: 108px; resize: vertical; }
-      .primary-button { display: inline-block; text-align: center; background: #2563eb; color: white; text-decoration: none; border: none; cursor: pointer; }
-      .secondary-button { display: inline-block; text-align: center; background: #fff; color: #1f2937; border: 1px solid #d1d5db; text-decoration: none; cursor: pointer; }
-      .primary-button, .secondary-button { width: 100%; font-size: 1.06rem; padding: 1rem; border-radius: 0.8rem; font-weight: 600; box-sizing: border-box; }
-      .output-card { border: 1px solid #e5e7eb; border-radius: 0.9rem; padding: 12px; margin-top: 10px; background: #fff; }
-      .output-label { font-size: 0.86rem; color: #6b7280; margin-bottom: 6px; }
+      .primary-button {
+        display: inline-block;
+        text-align: center;
+        background: var(--primary);
+        color: white;
+        text-decoration: none;
+        border: none;
+        cursor: pointer;
+      }
+      .secondary-button {
+        display: inline-block;
+        text-align: center;
+        background: var(--card);
+        color: var(--text);
+        border: 1px solid var(--border);
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .primary-button, .secondary-button {
+        width: 100%;
+        font-size: 1.02rem;
+        padding: 1rem;
+        border-radius: 0.8rem;
+        font-weight: 600;
+        box-sizing: border-box;
+        transition: all 150ms ease-out;
+      }
+      .primary-button:active, .secondary-button:active { transform: scale(0.98); }
+      .hero-button { padding-top: 1.5rem; padding-bottom: 1.5rem; font-size: 1.24rem; border-radius: 1rem; }
+      .output-card {
+        border: 1px solid var(--border);
+        border-radius: 1rem;
+        padding: 14px;
+        background: var(--card);
+        margin-top: 10px;
+      }
+      .result-stack { display: grid; gap: 12px; margin-top: 12px; }
+      .result-card {
+        border: 1px solid var(--border);
+        border-radius: 1rem;
+        padding: 14px;
+        background: var(--card);
+      }
+      .divider { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+      .button-stack { display: grid; gap: 8px; margin-top: 12px; }
+      .output-label { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--subtext); margin: 0 0 8px 0; }
       .output-value { white-space: pre-wrap; font-size: 1rem; margin: 0 0 8px 0; }
-      .copy-button { border: 1px solid #d1d5db; background: #fff; border-radius: 10px; padding: 8px 10px; }
+      .copy-button { border: 1px solid var(--border); background: var(--card); border-radius: 10px; padding: 8px 10px; }
       .list { margin: 0; padding-left: 18px; }
       .status-good { color: #166534; font-weight: 700; }
       .status-wait { color: #92400e; font-weight: 700; }
-      .bottom-nav { position: fixed; left: 50%; transform: translateX(-50%); bottom: 0; width: min(760px, 100%); background: #fff; border-top: 1px solid #e5e7eb; display: grid; grid-template-columns: repeat(5, 1fr); padding: 8px 0; z-index: 40; }
-      .nav-item { text-decoration: none; color: #6b7280; font-size: 1.7rem; display: grid; place-items: center; min-height: 52px; }
-      .nav-item.active { color: #2563eb; }
-      .coach-fab { position: fixed; right: 16px; bottom: 84px; border: none; background: #111827; color: #fff; width: 58px; height: 58px; border-radius: 999px; font-size: 1.4rem; box-shadow: 0 5px 16px rgba(0,0,0,0.25); z-index: 45; }
+      .bottom-nav {
+        position: fixed;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 0;
+        width: min(28rem, calc(100% - 16px));
+        background: rgba(255, 255, 255, 0.96);
+        border: 1px solid var(--border);
+        border-bottom: none;
+        border-radius: 1rem 1rem 0 0;
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        padding: 6px 4px;
+        z-index: 40;
+        backdrop-filter: blur(6px);
+      }
+      .nav-item {
+        text-decoration: none;
+        color: var(--subtext);
+        display: grid;
+        place-items: center;
+        gap: 2px;
+        min-height: 56px;
+        transition: all 150ms ease-out;
+      }
+      .nav-item.active { color: var(--primary); }
+      .nav-icon { font-size: 1rem; line-height: 1; }
+      .nav-label { font-size: 0.66rem; letter-spacing: 0.01em; }
+      .coach-fab {
+        position: fixed;
+        right: 16px;
+        bottom: 86px;
+        border: none;
+        background: #111827;
+        color: #fff;
+        width: 52px;
+        height: 52px;
+        border-radius: 999px;
+        font-size: 1.2rem;
+        box-shadow: 0 5px 16px rgba(0,0,0,0.2);
+        z-index: 45;
+        transition: all 150ms ease-out;
+      }
+      .coach-fab:active { transform: scale(0.98); }
       .coach-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: grid; place-items: end center; padding: 14px; z-index: 50; }
       .coach-modal.hidden { display: none; }
       .coach-card { width: min(520px, 100%); display: grid; gap: 8px; }
       .notice { border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 0.9rem; padding: 10px; color: #1e3a8a; }
       .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      @media (max-width: 420px) {
+        .action-grid { grid-template-columns: 1fr; }
+      }
       @media (max-width: 560px) {
         .grid { grid-template-columns: 1fr; }
         .selector-grid { grid-template-columns: 1fr; }
@@ -492,11 +621,13 @@ function easyLayout(input: {
     </style>
   </head>
   <body>
-    <main class="app-wrap">
-      ${renderHeader(input.context, input.currentPath)}
-      ${input.notice ? `<div class="notice">${escapeHtml(input.notice)}</div>` : ""}
-      ${input.body}
-    </main>
+    <div class="app-shell">
+      <main class="app-wrap">
+        ${renderHeader(input.context, input.currentPath)}
+        ${input.notice ? `<div class="notice">${escapeHtml(input.notice)}</div>` : ""}
+        ${input.body}
+      </main>
+    </div>
     ${renderBottomNav(input.context, input.active)}
     ${renderCoachBubble(input.context)}
     <script>
@@ -565,7 +696,7 @@ function easyLayout(input: {
 function cardLink(href: string, emoji: string, title: string, subtitle: string): string {
   return `<a class="action-card rounded-2xl p-6 shadow-sm bg-white" href="${escapeHtml(href)}">
     <span class="emoji">${emoji}</span>
-    <strong>${escapeHtml(title)}</strong>
+    <strong style="display:block;">${escapeHtml(title)}</strong>
     <p class="muted" style="margin-top:8px;">${escapeHtml(subtitle)}</p>
   </a>`;
 }
@@ -619,95 +750,111 @@ async function smsSuggestion(ownerUserId: string, brandId: string): Promise<stri
 
 function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
   const localBoostSection = pack.localBoost
-    ? `<details class="output-card">
-        <summary><strong>Local Boost</strong></summary>
-        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.localBoost.line)}</strong></p>
-        <p id="daily-local-caption-addon" class="output-value">${escapeHtml(pack.localBoost.captionAddOn)}</p>
-        <p id="daily-local-staff-line" class="output-value">${escapeHtml(pack.localBoost.staffScript)}</p>
-      </details>`
+    ? `<article class="result-card">
+        <p class="section-title">Local Boost</p>
+        <h2 class="text-lg">${escapeHtml(pack.localBoost.line)}</h2>
+        <div class="divider">
+          <p id="daily-local-caption-addon" class="output-value">${escapeHtml(pack.localBoost.captionAddOn)}</p>
+          <p id="daily-local-staff-line" class="output-value">${escapeHtml(pack.localBoost.staffScript)}</p>
+        </div>
+      </article>`
     : "";
   const townBoostSection = pack.townBoost
-    ? `<details class="output-card">
-        <summary><strong>Town Boost</strong></summary>
-        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townBoost.line)}</strong></p>
-        <p id="daily-town-caption-addon" class="output-value">${escapeHtml(pack.townBoost.captionAddOn)}</p>
-        <p id="daily-town-staff-line" class="output-value">${escapeHtml(pack.townBoost.staffScript)}</p>
-      </details>`
+    ? `<article class="result-card">
+        <p class="section-title">Town Boost</p>
+        <h2 class="text-lg">${escapeHtml(pack.townBoost.line)}</h2>
+        <div class="divider">
+          <p id="daily-town-caption-addon" class="output-value">${escapeHtml(pack.townBoost.captionAddOn)}</p>
+          <p id="daily-town-staff-line" class="output-value">${escapeHtml(pack.townBoost.staffScript)}</p>
+        </div>
+      </article>`
     : "";
   const townStorySection = pack.townStory
-    ? `<details class="output-card">
-        <summary><strong>Town Story (optional)</strong></summary>
-        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townStory.headline)}</strong></p>
-        <p id="daily-town-story-caption" class="output-value">${escapeHtml(pack.townStory.captionAddOn)}</p>
-        <p id="daily-town-story-staff-line" class="output-value">${escapeHtml(pack.townStory.staffLine)}</p>
-      </details>`
+    ? `<article class="result-card">
+        <p class="section-title">Town Story</p>
+        <h2 class="text-lg">${escapeHtml(pack.townStory.headline)}</h2>
+        <div class="divider">
+          <p id="daily-town-story-caption" class="output-value">${escapeHtml(pack.townStory.captionAddOn)}</p>
+          <p id="daily-town-story-staff-line" class="output-value">${escapeHtml(pack.townStory.staffLine)}</p>
+        </div>
+      </article>`
     : "";
   const townGraphSection = pack.townGraphBoost
-    ? `<details class="output-card">
-        <summary><strong>Town Graph Boost (optional)</strong></summary>
-        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townGraphBoost.nextStopIdea)}</strong></p>
-        <p id="daily-town-graph-caption" class="output-value">${escapeHtml(pack.townGraphBoost.captionAddOn)}</p>
-        <p id="daily-town-graph-staff-line" class="output-value">${escapeHtml(pack.townGraphBoost.staffLine)}</p>
-      </details>`
+    ? `<article class="result-card">
+        <p class="section-title">Town Graph Boost</p>
+        <h2 class="text-lg">${escapeHtml(pack.townGraphBoost.nextStopIdea)}</h2>
+        <div class="divider">
+          <p id="daily-town-graph-caption" class="output-value">${escapeHtml(pack.townGraphBoost.captionAddOn)}</p>
+          <p id="daily-town-graph-staff-line" class="output-value">${escapeHtml(pack.townGraphBoost.staffLine)}</p>
+        </div>
+      </article>`
     : "";
   const townMicroRouteSection = pack.townMicroRoute
-    ? `<details class="output-card">
-        <summary><strong>Town Route Tip (${escapeHtml(townWindowLabel(pack.townMicroRoute.window))})</strong></summary>
-        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townMicroRoute.line)}</strong></p>
-        <p id="daily-town-micro-route-caption" class="output-value">${escapeHtml(pack.townMicroRoute.captionAddOn)}</p>
-        <p id="daily-town-micro-route-staff-line" class="output-value">${escapeHtml(pack.townMicroRoute.staffScript)}</p>
-      </details>`
+    ? `<article class="result-card">
+        <p class="section-title">Town Route Tip (${escapeHtml(townWindowLabel(pack.townMicroRoute.window))})</p>
+        <h2 class="text-lg">${escapeHtml(pack.townMicroRoute.line)}</h2>
+        <div class="divider">
+          <p id="daily-town-micro-route-caption" class="output-value">${escapeHtml(pack.townMicroRoute.captionAddOn)}</p>
+          <p id="daily-town-micro-route-staff-line" class="output-value">${escapeHtml(pack.townMicroRoute.staffScript)}</p>
+        </div>
+      </article>`
     : "";
   const townSeasonalSection = pack.townSeasonalBoost
-    ? `<details class="output-card">
-        <summary><strong>Town Seasonal Boost (${escapeHtml(pack.townSeasonalBoost.seasonTags.join(", "))})</strong></summary>
-        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townSeasonalBoost.line)}</strong></p>
-        <p id="daily-town-seasonal-caption" class="output-value">${escapeHtml(pack.townSeasonalBoost.captionAddOn)}</p>
-        <p id="daily-town-seasonal-staff-line" class="output-value">${escapeHtml(pack.townSeasonalBoost.staffScript)}</p>
-      </details>`
+    ? `<article class="result-card">
+        <p class="section-title">Town Seasonal Boost (${escapeHtml(pack.townSeasonalBoost.seasonTags.join(", "))})</p>
+        <h2 class="text-lg">${escapeHtml(pack.townSeasonalBoost.line)}</h2>
+        <div class="divider">
+          <p id="daily-town-seasonal-caption" class="output-value">${escapeHtml(pack.townSeasonalBoost.captionAddOn)}</p>
+          <p id="daily-town-seasonal-staff-line" class="output-value">${escapeHtml(pack.townSeasonalBoost.staffScript)}</p>
+        </div>
+      </article>`
+    : "";
+  const smsSection = pack.optionalSms.enabled
+    ? `<article class="result-card">
+        <p class="section-title">Optional SMS</p>
+        <p id="daily-sms" class="output-value">${escapeHtml(pack.optionalSms.message)}</p>
+      </article>`
     : "";
   return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
-    <h3>Your daily money move</h3>
-    <details class="output-card" open>
-      <summary><strong>Today’s Special</strong></summary>
-      <p id="daily-special" class="output-value" style="margin-top:8px;"><strong>${escapeHtml(
-        pack.todaySpecial.promoName,
-      )}</strong><br/>${escapeHtml(pack.todaySpecial.offer)}<br/>${escapeHtml(pack.todaySpecial.timeWindow)}</p>
-      <p class="muted">${escapeHtml(pack.todaySpecial.whyThisWorks)}</p>
-    </details>
-    <details class="output-card" open>
-      <summary><strong>Ready-to-post caption</strong></summary>
-      <p id="daily-caption" class="output-value" style="margin-top:8px;"><strong>${escapeHtml(
-        pack.post.hook,
-      )}</strong><br/>${escapeHtml(pack.post.caption)}<br/>${escapeHtml(pack.post.onScreenText.join(" | "))}</p>
-      <p class="muted">Best time: ${escapeHtml(pack.post.bestTime)} · ${escapeHtml(pack.post.platform)}</p>
-    </details>
-    <details class="output-card" open>
-      <summary><strong>In-store sign</strong></summary>
-      <p id="daily-sign" class="output-value" style="margin-top:8px;"><strong>${escapeHtml(
-        pack.sign.headline,
-      )}</strong><br/>${escapeHtml(pack.sign.body)}${
-        pack.sign.finePrint ? `<br/><span class="muted">${escapeHtml(pack.sign.finePrint)}</span>` : ""
-      }</p>
-      <a class="secondary-button" style="margin-top:6px;" href="${escapeHtml(signUrl)}" id="open-sign-print">Print sign</a>
-    </details>
-    ${
-      pack.optionalSms.enabled
-        ? `<details class="output-card">
-            <summary><strong>Optional SMS</strong></summary>
-            <p id="daily-sms" class="output-value" style="margin-top:8px;">${escapeHtml(
-              pack.optionalSms.message,
-            )}</p>
-          </details>`
-        : ""
-    }
-    ${localBoostSection}
-    ${townBoostSection}
-    ${townStorySection}
-    ${townGraphSection}
-    ${townMicroRouteSection}
-    ${townSeasonalSection}
-    <div class="grid" style="grid-template-columns:1fr; margin-top:8px;">
+    <h3 class="text-xl">Your daily money move</h3>
+    <div class="result-stack">
+      <article class="result-card">
+        <p class="section-title">Today’s Special</p>
+        <h2 class="text-lg">${escapeHtml(pack.todaySpecial.promoName)}</h2>
+        <p id="daily-special" class="output-value">${escapeHtml(pack.todaySpecial.offer)}<br/>${escapeHtml(pack.todaySpecial.timeWindow)}</p>
+        <div class="divider">
+          <p class="muted">${escapeHtml(pack.todaySpecial.whyThisWorks)}</p>
+        </div>
+      </article>
+      <article class="result-card">
+        <p class="section-title">Ready-to-Post Caption</p>
+        <h2 class="text-lg">${escapeHtml(pack.post.hook)}</h2>
+        <p id="daily-caption" class="output-value">${escapeHtml(pack.post.caption)}<br/>${escapeHtml(
+          pack.post.onScreenText.join(" | "),
+        )}</p>
+        <div class="divider">
+          <p class="muted">Best time: ${escapeHtml(pack.post.bestTime)} · ${escapeHtml(pack.post.platform)}</p>
+        </div>
+      </article>
+      <article class="result-card">
+        <p class="section-title">In-Store Sign</p>
+        <h2 class="text-lg">${escapeHtml(pack.sign.headline)}</h2>
+        <p id="daily-sign" class="output-value">${escapeHtml(pack.sign.body)}${
+          pack.sign.finePrint ? `<br/><span class="muted">${escapeHtml(pack.sign.finePrint)}</span>` : ""
+        }</p>
+        <div class="divider">
+          <a class="secondary-button" href="${escapeHtml(signUrl)}" id="open-sign-print">Print sign</a>
+        </div>
+      </article>
+      ${smsSection}
+      ${localBoostSection}
+      ${townBoostSection}
+      ${townStorySection}
+      ${townGraphSection}
+      ${townMicroRouteSection}
+      ${townSeasonalSection}
+    </div>
+    <div class="button-stack">
       <button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>
       <button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>
       ${
@@ -837,13 +984,14 @@ router.get("/", async (req, res, next) => {
       </label>
     </details>`;
     const townPulseIndicator = townPulse
-      ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">🟢 Town Pulse Active</a>`
-      : `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">⚪ Town Pulse Warming Up</a>`;
+      ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">Town Pulse Active</a>`
+      : `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">Town Pulse Warming Up</a>`;
 
     const staffView =
       context.role === "member"
         ? `${townPulseIndicator}<section class="rounded-2xl p-6 shadow-sm bg-white">
-            <h2 class="text-xl">Today’s Pack</h2>
+            <p class="section-title">Today</p>
+            <h2 class="text-xl">Your daily pack is ready</h2>
             <p class="muted">Copy and post. No extra setup needed.</p>
           </section>
           ${
@@ -852,12 +1000,12 @@ router.get("/", async (req, res, next) => {
               : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack yet. Ask an owner to tap “Make Me Money Today”.</p></section>`
           }
           <section class="rounded-2xl p-6 shadow-sm bg-white">
-            <p class="muted">Quick actions</p>
-            <div class="two-col">
-              <a class="secondary-button" href="${escapeHtml(withSelection("/app/post-now", context))}">Post Now?</a>
-              <a class="secondary-button" href="${escapeHtml(withSelection("/app/media", context))}">Upload Photo</a>
-              <a class="secondary-button" href="${escapeHtml(withSelection("/app/insights", context))}">Insights</a>
-              <a class="secondary-button" href="${escapeHtml(withSelection("/app/schedule", context))}">Planned Posts</a>
+            <p class="section-title">Quick actions</p>
+            <div class="action-grid">
+              ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Right-now timing check")}
+              ${cardLink(withSelection("/app/media", context), "📷", "Media", "Improve a photo post")}
+              ${cardLink(withSelection("/app/insights", context), "📈", "Insights", "See what to repeat")}
+              ${cardLink(withSelection("/app/schedule", context), "📍", "Schedule", "Plan upcoming posts")}
             </div>
           </section>`
         : null;
@@ -865,23 +1013,25 @@ router.get("/", async (req, res, next) => {
     const ownerView =
       context.role !== "member"
         ? `${townPulseIndicator}<section class="rounded-2xl p-6 shadow-sm bg-white">
-            <h2 class="text-xl">One thing today</h2>
-            <p class="muted">No dashboard. One move. Real-world output.</p>
+            <p class="section-title">Daily focus</p>
+            <h2 class="text-xl">One clear move for today</h2>
+            <p class="muted">No dashboard clutter. Just what to do next.</p>
             <details style="margin-top:10px;">
               <summary class="muted">Optional note for today</summary>
               <textarea id="daily-notes" placeholder="Only if needed: weather, staffing, special event, etc."></textarea>
             </details>
             ${routeWindowSelect}
-            <button id="run-daily" class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="button">✅ Make Me Money Today</button>
+            <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">✦ Make Me Money Today</button>
             <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">🛟 Fix a Slow Day</button>
             <p id="daily-status" class="muted" style="margin-top:8px;"></p>
           </section>
           <section class="rounded-2xl p-6 shadow-sm bg-white">
-            <div class="two-col">
-              <a class="secondary-button" href="${escapeHtml(withSelection("/app/post-now", context))}">Post Now?</a>
-              <a class="secondary-button" href="${escapeHtml(withSelection("/app/media", context))}">Upload Photo</a>
-              <a class="secondary-button" href="${escapeHtml(withSelection("/app/plan-week", context))}">Plan My Week</a>
-              <a class="secondary-button" href="${escapeHtml(withSelection("/app/insights", context))}">Insights</a>
+            <p class="section-title">Secondary actions</p>
+            <div class="action-grid">
+              ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Check this moment")}
+              ${cardLink(withSelection("/app/media", context), "📷", "Media", "Polish your visual post")}
+              ${cardLink(withSelection("/app/plan-week", context), "📍", "Plan Week", "Map your next 7 days")}
+              ${cardLink(withSelection("/app/insights", context), "📈", "Insights", "Repeat what works")}
             </div>
           </section>
           <section id="rescue-output"></section>
@@ -926,31 +1076,32 @@ router.get("/", async (req, res, next) => {
             }
             function renderDailyPack(pack) {
               const smsSection = pack.optionalSms?.enabled
-                ? '<details class="output-card"><summary><strong>Optional SMS</strong></summary><p id="daily-sms" class="output-value" style="margin-top:8px;">' + esc(pack.optionalSms.message || "") + '</p></details>'
+                ? '<article class="result-card"><p class="section-title">Optional SMS</p><p id="daily-sms" class="output-value">' + esc(pack.optionalSms.message || "") + '</p></article>'
                 : '';
               const localBoostSection = pack.localBoost
-                ? '<details class="output-card"><summary><strong>Local Boost</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.localBoost.line || "") + '</strong></p><p id="daily-local-caption-addon" class="output-value">' + esc(pack.localBoost.captionAddOn || "") + '</p><p id="daily-local-staff-line" class="output-value">' + esc(pack.localBoost.staffScript || "") + '</p></details>'
+                ? '<article class="result-card"><p class="section-title">Local Boost</p><h2 class="text-lg">' + esc(pack.localBoost.line || "") + '</h2><div class="divider"><p id="daily-local-caption-addon" class="output-value">' + esc(pack.localBoost.captionAddOn || "") + '</p><p id="daily-local-staff-line" class="output-value">' + esc(pack.localBoost.staffScript || "") + '</p></div></article>'
                 : '';
               const townBoostSection = pack.townBoost
-                ? '<details class="output-card"><summary><strong>Town Boost</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townBoost.line || "") + '</strong></p><p id="daily-town-caption-addon" class="output-value">' + esc(pack.townBoost.captionAddOn || "") + '</p><p id="daily-town-staff-line" class="output-value">' + esc(pack.townBoost.staffScript || "") + '</p></details>'
+                ? '<article class="result-card"><p class="section-title">Town Boost</p><h2 class="text-lg">' + esc(pack.townBoost.line || "") + '</h2><div class="divider"><p id="daily-town-caption-addon" class="output-value">' + esc(pack.townBoost.captionAddOn || "") + '</p><p id="daily-town-staff-line" class="output-value">' + esc(pack.townBoost.staffScript || "") + '</p></div></article>'
                 : '';
               const townStorySection = pack.townStory
-                ? '<details class="output-card"><summary><strong>Town Story (optional)</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townStory.headline || "") + '</strong></p><p id="daily-town-story-caption" class="output-value">' + esc(pack.townStory.captionAddOn || "") + '</p><p id="daily-town-story-staff-line" class="output-value">' + esc(pack.townStory.staffLine || "") + '</p></details>'
+                ? '<article class="result-card"><p class="section-title">Town Story</p><h2 class="text-lg">' + esc(pack.townStory.headline || "") + '</h2><div class="divider"><p id="daily-town-story-caption" class="output-value">' + esc(pack.townStory.captionAddOn || "") + '</p><p id="daily-town-story-staff-line" class="output-value">' + esc(pack.townStory.staffLine || "") + '</p></div></article>'
                 : '';
               const townGraphSection = pack.townGraphBoost
-                ? '<details class="output-card"><summary><strong>Town Graph Boost (optional)</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townGraphBoost.nextStopIdea || "") + '</strong></p><p id="daily-town-graph-caption" class="output-value">' + esc(pack.townGraphBoost.captionAddOn || "") + '</p><p id="daily-town-graph-staff-line" class="output-value">' + esc(pack.townGraphBoost.staffLine || "") + '</p></details>'
+                ? '<article class="result-card"><p class="section-title">Town Graph Boost</p><h2 class="text-lg">' + esc(pack.townGraphBoost.nextStopIdea || "") + '</h2><div class="divider"><p id="daily-town-graph-caption" class="output-value">' + esc(pack.townGraphBoost.captionAddOn || "") + '</p><p id="daily-town-graph-staff-line" class="output-value">' + esc(pack.townGraphBoost.staffLine || "") + '</p></div></article>'
                 : '';
               const townMicroRouteSection = pack.townMicroRoute
-                ? '<details class="output-card"><summary><strong>Town Route Tip (' + esc(windowLabel(pack.townMicroRoute.window || "evening")) + ')</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townMicroRoute.line || "") + '</strong></p><p id="daily-town-micro-route-caption" class="output-value">' + esc(pack.townMicroRoute.captionAddOn || "") + '</p><p id="daily-town-micro-route-staff-line" class="output-value">' + esc(pack.townMicroRoute.staffScript || "") + '</p></details>'
+                ? '<article class="result-card"><p class="section-title">Town Route Tip (' + esc(windowLabel(pack.townMicroRoute.window || "evening")) + ')</p><h2 class="text-lg">' + esc(pack.townMicroRoute.line || "") + '</h2><div class="divider"><p id="daily-town-micro-route-caption" class="output-value">' + esc(pack.townMicroRoute.captionAddOn || "") + '</p><p id="daily-town-micro-route-staff-line" class="output-value">' + esc(pack.townMicroRoute.staffScript || "") + '</p></div></article>'
                 : '';
               const townSeasonalSection = pack.townSeasonalBoost
-                ? '<details class="output-card"><summary><strong>Town Seasonal Boost (' + esc((pack.townSeasonalBoost.seasonTags || []).join(", ")) + ')</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townSeasonalBoost.line || "") + '</strong></p><p id="daily-town-seasonal-caption" class="output-value">' + esc(pack.townSeasonalBoost.captionAddOn || "") + '</p><p id="daily-town-seasonal-staff-line" class="output-value">' + esc(pack.townSeasonalBoost.staffScript || "") + '</p></details>'
+                ? '<article class="result-card"><p class="section-title">Town Seasonal Boost (' + esc((pack.townSeasonalBoost.seasonTags || []).join(", ")) + ')</p><h2 class="text-lg">' + esc(pack.townSeasonalBoost.line || "") + '</h2><div class="divider"><p id="daily-town-seasonal-caption" class="output-value">' + esc(pack.townSeasonalBoost.captionAddOn || "") + '</p><p id="daily-town-seasonal-staff-line" class="output-value">' + esc(pack.townSeasonalBoost.staffScript || "") + '</p></div></article>'
                 : '';
               return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
-                '<h3>Your daily money move</h3>' +
-                '<details class="output-card" open><summary><strong>Today\\'s Special</strong></summary><p id="daily-special" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.todaySpecial?.promoName || "") + '</strong><br/>' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></details>' +
-                '<details class="output-card" open><summary><strong>Ready-to-post caption</strong></summary><p id="daily-caption" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.post?.hook || "") + '</strong><br/>' + esc(pack.post?.caption || "") + '<br/>' + esc((pack.post?.onScreenText || []).join(" | ")) + '</p><p class="muted">Best time: ' + esc(pack.post?.bestTime || "") + ' · ' + esc(pack.post?.platform || "") + '</p></details>' +
-                '<details class="output-card" open><summary><strong>In-store sign</strong></summary><p id="daily-sign" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.sign?.headline || "") + '</strong><br/>' + esc(pack.sign?.body || "") + (pack.sign?.finePrint ? '<br/><span class="muted">' + esc(pack.sign.finePrint) + '</span>' : '') + '</p><a class="secondary-button" style="margin-top:6px;" href="' + esc(signUrl) + '">Print sign</a></details>' +
+                '<h3 class="text-xl">Your daily money move</h3>' +
+                '<div class="result-stack">' +
+                '<article class="result-card"><p class="section-title">Today\\'s Special</p><h2 class="text-lg">' + esc(pack.todaySpecial?.promoName || "") + '</h2><p id="daily-special" class="output-value">' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><div class="divider"><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></div></article>' +
+                '<article class="result-card"><p class="section-title">Ready-to-Post Caption</p><h2 class="text-lg">' + esc(pack.post?.hook || "") + '</h2><p id="daily-caption" class="output-value">' + esc(pack.post?.caption || "") + '<br/>' + esc((pack.post?.onScreenText || []).join(" | ")) + '</p><div class="divider"><p class="muted">Best time: ' + esc(pack.post?.bestTime || "") + ' · ' + esc(pack.post?.platform || "") + '</p></div></article>' +
+                '<article class="result-card"><p class="section-title">In-Store Sign</p><h2 class="text-lg">' + esc(pack.sign?.headline || "") + '</h2><p id="daily-sign" class="output-value">' + esc(pack.sign?.body || "") + (pack.sign?.finePrint ? '<br/><span class="muted">' + esc(pack.sign.finePrint) + '</span>' : '') + '</p><div class="divider"><a class="secondary-button" id="open-sign-print" href="' + esc(signUrl) + '">Print sign</a></div></article>' +
                 smsSection +
                 localBoostSection +
                 townBoostSection +
@@ -958,7 +1109,8 @@ router.get("/", async (req, res, next) => {
                 townGraphSection +
                 townMicroRouteSection +
                 townSeasonalSection +
-                '<div class="grid" style="grid-template-columns:1fr; margin-top:8px;">' +
+                '</div>' +
+                '<div class="button-stack">' +
                 '<button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>' +
                 '<button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>' +
                 (pack.localBoost ? '<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Caption Add-on</button><button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>' : '') +
@@ -969,7 +1121,7 @@ router.get("/", async (req, res, next) => {
                 (pack.townMicroRoute ? '<button class="primary-button" data-copy-target="daily-town-micro-route-caption">Copy Route Add-on</button><button class="secondary-button" data-copy-target="daily-town-micro-route-staff-line">Copy Route Staff Line</button>' : '') +
                 (pack.townSeasonalBoost ? '<button class="primary-button" data-copy-target="daily-town-seasonal-caption">Copy Seasonal Add-on</button><button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Seasonal Staff Line</button>' : '') +
                 '<button class="secondary-button" id="share-daily" type="button">Share…</button>' +
-                '<a class="secondary-button" href="' + esc(signUrl) + '">Printable Sign</a>' +
+                '<a class="secondary-button" id="print-daily-sign" href="' + esc(signUrl) + '">Printable Sign</a>' +
                 '</div></section>';
             }
             async function runDailyPack() {
