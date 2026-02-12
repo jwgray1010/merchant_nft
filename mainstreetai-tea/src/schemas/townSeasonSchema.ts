@@ -57,7 +57,7 @@ export const townRouteSeasonWeightUpsertSchema = z.object({
 export const detectedTownSeasonSchema = z.object({
   primarySeason: townPrimarySeasonSchema,
   seasonTags: z.array(townSeasonKeySchema),
-  seasonNotes: z.record(townSeasonKeySchema, z.string()).default({}),
+  seasonNotes: z.record(z.string(), z.string()).default({}),
 });
 
 export const townSeasonalRoutePromptOutputSchema = z.object({

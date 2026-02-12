@@ -872,7 +872,8 @@ export async function buildTownSeasonalBoostForDaily(input: {
   if (!context) {
     return null;
   }
-  const seasonTags = context.seasonTags.length > 0 ? context.seasonTags : ["fall"];
+  const seasonTags: TownSeasonKey[] =
+    context.seasonTags.length > 0 ? context.seasonTags : (["fall"] as TownSeasonKey[]);
   const promptOutput = await runPrompt({
     promptFile: "town_seasonal_route.md",
     brandProfile: input.brand,
@@ -895,7 +896,7 @@ export async function buildTownSeasonalBoostForDaily(input: {
     },
     outputSchema: townSeasonalRoutePromptOutputSchema,
   }).catch(() => {
-    const tag = seasonTags[0] ?? "fall";
+    const tag: TownSeasonKey = seasonTags[0] ?? "fall";
     const tagPhrase = seasonTagPhrase(tag);
     return townSeasonalRoutePromptOutputSchema.parse({
       seasonalLine: `During ${tagPhrase}, locals often make short downtown stop loops.`,
