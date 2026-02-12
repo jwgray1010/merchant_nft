@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { getBrand } from "../data/brandStore";
 import { runPrompt } from "../ai/runPrompt";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { promoOutputSchema, promoRequestSchema } from "../schemas/promoRequestSchema";
+import { getAdapter } from "../storage/getAdapter";
 import { getUpcomingLocalEvents } from "../services/localEventAwareness";
 
 const router = Router();
@@ -32,7 +32,12 @@ router.post("/", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
@@ -41,7 +46,7 @@ router.post("/", async (req, res, next) => {
       ...parsed.data,
       slowHours: parsed.data.slowHours ?? brand.slowHours,
       ...(parsed.data.includeLocalEvents
-        ? { localEvents: await getUpcomingLocalEvents(parsedBrandId.data, 7) }
+        ? { localEvents: await getUpcomingLocalEvents(userId, parsedBrandId.data, 7) }
         : {}),
     };
 

@@ -2,6 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { createGenerationHistoryMiddleware } from "./middleware/generationHistory";
+import { verifyAuth } from "./supabase/verifyAuth";
 import adminRouter from "./routes/admin";
 import brandRouter from "./routes/brand";
 import eventsRouter from "./routes/events";
@@ -30,23 +31,24 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-app.use("/brands", brandRouter);
-app.use("/history", historyRouter);
-app.use("/local-events", localEventsRouter);
-app.use("/posts", postsRouter);
-app.use("/metrics", metricsRouter);
-app.use("/insights", insightsRouter);
-app.use("/schedule.ics", scheduleIcsRouter);
-app.use("/schedule", scheduleRouter);
-app.use("/today", todayRouter);
 app.use("/admin", adminRouter);
-app.use("/sign.pdf", signRouter);
-app.use("/promo", createGenerationHistoryMiddleware("promo"), promoRouter);
-app.use("/social", createGenerationHistoryMiddleware("social"), socialRouter);
-app.use("/events", createGenerationHistoryMiddleware("events"), eventsRouter);
-app.use("/week-plan", createGenerationHistoryMiddleware("week-plan"), weekPlanRouter);
+app.use("/brands", verifyAuth, brandRouter);
+app.use("/history", verifyAuth, historyRouter);
+app.use("/local-events", verifyAuth, localEventsRouter);
+app.use("/posts", verifyAuth, postsRouter);
+app.use("/metrics", verifyAuth, metricsRouter);
+app.use("/insights", verifyAuth, insightsRouter);
+app.use("/schedule.ics", verifyAuth, scheduleIcsRouter);
+app.use("/schedule", verifyAuth, scheduleRouter);
+app.use("/today", verifyAuth, todayRouter);
+app.use("/sign.pdf", verifyAuth, signRouter);
+app.use("/promo", verifyAuth, createGenerationHistoryMiddleware("promo"), promoRouter);
+app.use("/social", verifyAuth, createGenerationHistoryMiddleware("social"), socialRouter);
+app.use("/events", verifyAuth, createGenerationHistoryMiddleware("events"), eventsRouter);
+app.use("/week-plan", verifyAuth, createGenerationHistoryMiddleware("week-plan"), weekPlanRouter);
 app.use(
   "/next-week-plan",
+  verifyAuth,
   createGenerationHistoryMiddleware("next-week-plan"),
   nextWeekPlanRouter,
 );

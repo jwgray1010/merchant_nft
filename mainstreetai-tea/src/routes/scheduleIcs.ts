@@ -1,7 +1,6 @@
 import { Router } from "express";
-import { getBrand } from "../data/brandStore";
-import { listScheduleItems } from "../data/scheduleStore";
 import { brandIdSchema } from "../schemas/brandSchema";
+import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
@@ -50,12 +49,17 @@ router.get("/", async (req, res, next) => {
   const to = parseOptionalIso(req.query.to);
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const items = await listScheduleItems(parsedBrandId.data, { from, to });
+    const items = await adapter.listSchedule(userId, parsedBrandId.data, { from, to });
     const nowStamp = toIcsDate(new Date().toISOString());
 
     const events = items.map((item) => {

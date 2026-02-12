@@ -1,20 +1,18 @@
 import { Router } from "express";
-import {
-  createBrand,
-  deleteBrand,
-  getBrand,
-  listBrands,
-  updateBrand,
-} from "../data/brandStore";
 import { buildBrandFromTemplate } from "../data/templateStore";
 import { brandFromTemplateRequestSchema } from "../schemas/brandTemplateSchema";
 import { brandIdSchema, brandProfileSchema } from "../schemas/brandSchema";
+import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
 router.get("/", async (_req, res, next) => {
   try {
-    const brands = await listBrands();
+    const userId = _req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const brands = await getAdapter().listBrands(userId);
     return res.json(brands);
   } catch (error) {
     return next(error);
@@ -31,7 +29,11 @@ router.get("/:brandId", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const brand = await getAdapter().getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
@@ -51,7 +53,11 @@ router.post("/", async (req, res, next) => {
   }
 
   try {
-    const created = await createBrand(parsedBody.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const created = await getAdapter().createBrand(userId, parsedBody.data);
     if (!created) {
       return res.status(409).json({
         error: `Brand '${parsedBody.data.brandId}' already exists`,
@@ -75,7 +81,11 @@ router.post("/from-template", async (req, res, next) => {
 
   try {
     const brandProfile = await buildBrandFromTemplate(parsedBody.data);
-    const created = await createBrand(brandProfile);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const created = await getAdapter().createBrand(userId, brandProfile);
     if (!created) {
       return res.status(409).json({
         error: `Brand '${brandProfile.brandId}' already exists`,
@@ -112,7 +122,11 @@ router.put("/:brandId", async (req, res, next) => {
   }
 
   try {
-    const updated = await updateBrand(parsedBrandId.data, parsedBody.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const updated = await getAdapter().updateBrand(userId, parsedBrandId.data, parsedBody.data);
     if (!updated) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
@@ -133,7 +147,11 @@ router.delete("/:brandId", async (req, res, next) => {
   }
 
   try {
-    const deleted = await deleteBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const deleted = await getAdapter().deleteBrand(userId, parsedBrandId.data);
     if (!deleted) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }

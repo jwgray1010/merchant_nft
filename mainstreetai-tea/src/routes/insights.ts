@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
-import { getBrand } from "../data/brandStore";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { insightsOutputSchema } from "../schemas/insightsOutputSchema";
-import { generateInsights } from "../services/insightsService";
+import { generateInsightsForUser } from "../services/insightsService";
 import { localJsonStore } from "../storage/localJsonStore";
+import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
@@ -24,13 +24,13 @@ const cachedInsightsSchema = z.object({
   insights: insightsOutputSchema,
 });
 
-async function buildInsightsPayload(brandId: string) {
-  const brand = await getBrand(brandId);
+async function buildInsightsPayload(userId: string, brandId: string) {
+  const brand = await getAdapter().getBrand(userId, brandId);
   if (!brand) {
     return { error: `Brand '${brandId}' was not found` } as const;
   }
 
-  const result = await generateInsights(brand);
+  const result = await generateInsightsForUser(userId, brand);
 
   return {
     brandId,
@@ -66,7 +66,12 @@ router.get("/", async (req, res, next) => {
   }
 
   try {
-    const payload = await buildInsightsPayload(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const payload = await buildInsightsPayload(userId, parsedBrandId.data);
     if ("error" in payload) {
       return res.status(404).json({ error: payload.error });
     }
@@ -74,7 +79,12 @@ router.get("/", async (req, res, next) => {
     return res.json(payload);
   } catch (error) {
     try {
-      const cached = await localJsonStore.readBrandInsight<unknown>(parsedBrandId.data);
+      const userId = req.user?.id;
+      if (!userId) {
+        throw error;
+      }
+      const cacheKey = `${userId}__${parsedBrandId.data}`;
+      const cached = await localJsonStore.readBrandInsight<unknown>(cacheKey);
       const parsedCached = cachedInsightsSchema.safeParse(cached);
       if (parsedCached.success) {
         return res.json({
@@ -107,13 +117,19 @@ router.post("/refresh", async (req, res, next) => {
   }
 
   try {
-    const payload = await buildInsightsPayload(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const payload = await buildInsightsPayload(userId, parsedBrandId.data);
     if ("error" in payload) {
       return res.status(404).json({ error: payload.error });
     }
 
     const parsedPayload = cachedInsightsSchema.parse(payload);
-    await localJsonStore.writeBrandInsight(parsedBrandId.data, parsedPayload);
+    const cacheKey = `${userId}__${parsedBrandId.data}`;
+    await localJsonStore.writeBrandInsight(cacheKey, parsedPayload);
     return res.json(parsedPayload);
   } catch (error) {
     return next(error);

@@ -1,8 +1,7 @@
 import { Router } from "express";
-import { getBrand } from "../data/brandStore";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { historyRecordSchema, type HistoryRecord } from "../schemas/historySchema";
-import { localJsonStore } from "../storage/localJsonStore";
+import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
@@ -38,16 +37,17 @@ router.get("/", async (req, res, next) => {
   const limit = parseLimit(req.query.limit, 50);
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const records = await localJsonStore.listBrandRecords<unknown>({
-      collection: "history",
-      brandId: parsedBrandId.data,
-      limit,
-    });
+    const records = await adapter.listHistory(userId, parsedBrandId.data, limit);
 
     const parsedRecords = records
       .map((record) => historyRecordSchema.safeParse(record))
@@ -82,16 +82,17 @@ router.get("/:id", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const record = await localJsonStore.getBrandRecordById<unknown>({
-      collection: "history",
-      brandId: parsedBrandId.data,
-      id,
-    });
+    const record = await adapter.getHistoryById(userId, parsedBrandId.data, id);
 
     if (!record) {
       return res.status(404).json({ error: `History record '${id}' was not found` });

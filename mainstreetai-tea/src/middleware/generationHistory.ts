@@ -1,8 +1,6 @@
-import { randomUUID } from "node:crypto";
 import type { RequestHandler } from "express";
 import { brandIdSchema } from "../schemas/brandSchema";
-import { historyRecordSchema } from "../schemas/historySchema";
-import { localJsonStore } from "../storage/localJsonStore";
+import { getAdapter } from "../storage/getAdapter";
 
 export type GenerationEndpoint = "promo" | "social" | "events" | "week-plan" | "next-week-plan";
 
@@ -44,25 +42,22 @@ export function createGenerationHistoryMiddleware(endpoint: GenerationEndpoint):
         return;
       }
 
-      const createdAt = new Date().toISOString();
-      const tags = parseOptionalTags((req.body as { tags?: unknown } | undefined)?.tags);
-      const historyId = randomUUID();
+      const userId = req.user?.id;
+      if (!userId) {
+        return;
+      }
 
-      void localJsonStore
-        .saveBrandRecord({
-          collection: "history",
-          brandId: parsedBrandId.data,
-          fileSuffix: endpoint,
-          record: historyRecordSchema.parse({
-            id: historyId,
-            brandId: parsedBrandId.data,
-            endpoint,
-            createdAt,
-            request: req.body,
-            response: responseBody,
-            ...(tags ? { tags } : {}),
-          }),
-        })
+      const tags = parseOptionalTags((req.body as { tags?: unknown } | undefined)?.tags);
+
+      void getAdapter()
+        .addHistory(
+          userId,
+          parsedBrandId.data,
+          endpoint,
+          req.body,
+          responseBody,
+          tags,
+        )
         .catch((error) => {
           const message = error instanceof Error ? error.message : "Unknown history logging error";
           console.error(`History logging failed: ${message}`);

@@ -1,4 +1,4 @@
-import { getLocalEvents } from "../data/localEventsStore";
+import { getAdapter } from "../storage/getAdapter";
 
 type UpcomingLocalEvent = {
   eventId: string;
@@ -60,10 +60,12 @@ function addDays(base: Date, count: number): Date {
 }
 
 export async function getUpcomingLocalEvents(
+  userId: string,
   brandId: string,
   daysAhead = 7,
 ): Promise<UpcomingLocalEvent[]> {
-  const events = await getLocalEvents(brandId);
+  const adapter = getAdapter();
+  const events = await adapter.listLocalEvents(userId, brandId);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const end = addDays(today, Math.max(0, daysAhead - 1));

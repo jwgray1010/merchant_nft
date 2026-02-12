@@ -1,10 +1,12 @@
-# MainStreetAI Platform API (Phase 5)
+# MainStreetAI Platform API (Phase 7)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
 ## Features
 
-- Brand profiles (local JSON): `data/brands/<brandId>.json`
+- Storage adapter mode:
+  - `local` (default): local JSON files under `data/local_mode/<userId>/...`
+  - `supabase`: hosted Postgres + Supabase Auth + RLS
 - Brand CRUD: `/brands`
 - Generation endpoints (brand-aware):
   - `POST /promo?brandId=<brandId>`
@@ -36,6 +38,12 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - event-aware generation using `includeLocalEvents`
 - Faster onboarding templates:
   - `/brands/from-template`
+- Supabase auth + multi-user ownership:
+  - bearer token verification middleware
+  - route-level auth hardening
+  - per-user data isolation
+- Supabase migration + RLS policy file:
+  - `supabase/schema.sql`
 
 All OpenAI calls are centralized in:
 - `src/ai/openaiClient.ts`
@@ -59,7 +67,88 @@ Edit `.env`:
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4.1-mini
 PORT=3001
+STORAGE_MODE=local
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+LOCAL_DEV_USER_ID=local-dev-user
 ```
+
+## Storage modes
+
+- `STORAGE_MODE=local` (default): no Supabase required, local token format is used.
+- `STORAGE_MODE=supabase`: requires `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`.
+
+## Auth requirements
+
+All multi-tenant API endpoints require auth:
+
+- `/brands`
+- `/promo`, `/social`, `/events`, `/week-plan`, `/next-week-plan`
+- `/history`, `/posts`, `/metrics`, `/insights`
+- `/schedule`, `/schedule.ics`, `/today`
+- `/local-events`
+- `/sign.pdf`
+
+### Local mode auth token
+
+Use a bearer token in this format:
+
+```text
+Authorization: Bearer local:<userId>|<email>
+```
+
+Example:
+
+```bash
+export AUTH_TOKEN="local:owner-1|owner@example.com"
+```
+
+### Supabase mode auth token
+
+Use an access token from Supabase Auth (email/password sign-in).
+
+For server-rendered admin pages, use:
+
+- `GET /admin/login`
+- submit email/password form
+- app sets secure `msai_token` cookie for same-origin authenticated requests
+
+## Supabase project setup
+
+1. Create a Supabase project.
+2. Open **SQL Editor** and run:
+   - `supabase/schema.sql`
+3. Confirm RLS is enabled on all app tables.
+4. Copy env values into `.env`:
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+5. Set:
+   - `STORAGE_MODE=supabase`
+
+## RLS model (summary)
+
+Every table includes `owner_id` and uses RLS policies that enforce:
+
+```sql
+owner_id = auth.uid()
+```
+
+This ensures each signed-in user only sees and mutates their own rows.
+
+## Supabase seed script
+
+Seed a demo brand for a specific user id:
+
+```bash
+npm run seed:supabase -- --user-id <auth-user-uuid>
+```
+
+This seeds/updates:
+- `main-street-nutrition`
+- business name `Main Street Nutrition`
+- location `Independence, KS`
 
 ## Run
 
@@ -85,22 +174,29 @@ data/
 
 ## Brand endpoints
 
+Use this auth header for API examples:
+
+```bash
+AUTH_HEADER="Authorization: Bearer ${AUTH_TOKEN}"
+```
+
 ### List brands
 
 ```bash
-curl http://localhost:3001/brands
+curl http://localhost:3001/brands -H "$AUTH_HEADER"
 ```
 
 ### Get one brand
 
 ```bash
-curl http://localhost:3001/brands/main-street-nutrition
+curl http://localhost:3001/brands/main-street-nutrition -H "$AUTH_HEADER"
 ```
 
 ### Create brand
 
 ```bash
 curl -X POST http://localhost:3001/brands \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "brandId": "hometown-bakery",
@@ -127,6 +223,7 @@ curl -X POST http://localhost:3001/brands \
 
 ```bash
 curl -X POST http://localhost:3001/brands/from-template \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "brandId":"new-day-cafe",
@@ -142,6 +239,7 @@ curl -X POST http://localhost:3001/brands/from-template \
 
 ```bash
 curl -X POST "http://localhost:3001/promo?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{"dateLabel":"Thursday","weather":"cold","goal":"slow_hours","includeLocalEvents":true}'
 ```
@@ -150,6 +248,7 @@ curl -X POST "http://localhost:3001/promo?brandId=main-street-nutrition" \
 
 ```bash
 curl -X POST "http://localhost:3001/social?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{"todaySpecial":"Blue raspberry loaded tea","audience":"parents and teachers","tone":"fun"}'
 ```
@@ -158,6 +257,7 @@ curl -X POST "http://localhost:3001/social?brandId=main-street-nutrition" \
 
 ```bash
 curl -X POST "http://localhost:3001/events?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{"events":[{"name":"High School Basketball","time":"7:00pm","audience":"families"}]}'
 ```
@@ -166,6 +266,7 @@ curl -X POST "http://localhost:3001/events?brandId=main-street-nutrition" \
 
 ```bash
 curl -X POST "http://localhost:3001/week-plan?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "startDate":"2026-02-16",
@@ -180,6 +281,7 @@ curl -X POST "http://localhost:3001/week-plan?brandId=main-street-nutrition" \
 
 ```bash
 curl -X POST "http://localhost:3001/next-week-plan?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "startDate":"2026-02-23",
@@ -194,13 +296,14 @@ curl -X POST "http://localhost:3001/next-week-plan?brandId=main-street-nutrition
 ### Get local events
 
 ```bash
-curl "http://localhost:3001/local-events?brandId=main-street-nutrition"
+curl "http://localhost:3001/local-events?brandId=main-street-nutrition" -H "$AUTH_HEADER"
 ```
 
 ### Add/replace local events
 
 ```bash
 curl -X POST "http://localhost:3001/local-events?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "mode":"append",
@@ -212,7 +315,7 @@ curl -X POST "http://localhost:3001/local-events?brandId=main-street-nutrition" 
 ### Delete one local event
 
 ```bash
-curl -X DELETE "http://localhost:3001/local-events/<eventId>?brandId=main-street-nutrition"
+curl -X DELETE "http://localhost:3001/local-events/<eventId>?brandId=main-street-nutrition" -H "$AUTH_HEADER"
 ```
 
 ## Logging + insights endpoints
@@ -221,6 +324,7 @@ curl -X DELETE "http://localhost:3001/local-events/<eventId>?brandId=main-street
 
 ```bash
 curl -X POST "http://localhost:3001/posts?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "platform":"instagram",
@@ -236,6 +340,7 @@ curl -X POST "http://localhost:3001/posts?brandId=main-street-nutrition" \
 
 ```bash
 curl -X POST "http://localhost:3001/metrics?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "platform":"instagram",
@@ -254,13 +359,13 @@ curl -X POST "http://localhost:3001/metrics?brandId=main-street-nutrition" \
 ### Get insights
 
 ```bash
-curl "http://localhost:3001/insights?brandId=main-street-nutrition"
+curl "http://localhost:3001/insights?brandId=main-street-nutrition" -H "$AUTH_HEADER"
 ```
 
 ### Refresh and cache insights
 
 ```bash
-curl -X POST "http://localhost:3001/insights/refresh?brandId=main-street-nutrition"
+curl -X POST "http://localhost:3001/insights/refresh?brandId=main-street-nutrition" -H "$AUTH_HEADER"
 ```
 
 ## Scheduling + reminders
@@ -269,6 +374,7 @@ curl -X POST "http://localhost:3001/insights/refresh?brandId=main-street-nutriti
 
 ```bash
 curl -X POST "http://localhost:3001/schedule?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "title":"After-school promo reel",
@@ -283,13 +389,14 @@ curl -X POST "http://localhost:3001/schedule?brandId=main-street-nutrition" \
 ### List schedule items
 
 ```bash
-curl "http://localhost:3001/schedule?brandId=main-street-nutrition&from=2026-02-12&to=2026-02-20"
+curl "http://localhost:3001/schedule?brandId=main-street-nutrition&from=2026-02-12&to=2026-02-20" -H "$AUTH_HEADER"
 ```
 
 ### Update a schedule item
 
 ```bash
 curl -X PUT "http://localhost:3001/schedule/<scheduleId>?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{"status":"posted"}'
 ```
@@ -297,37 +404,37 @@ curl -X PUT "http://localhost:3001/schedule/<scheduleId>?brandId=main-street-nut
 ### Delete a schedule item
 
 ```bash
-curl -X DELETE "http://localhost:3001/schedule/<scheduleId>?brandId=main-street-nutrition"
+curl -X DELETE "http://localhost:3001/schedule/<scheduleId>?brandId=main-street-nutrition" -H "$AUTH_HEADER"
 ```
 
 ### Export .ics calendar reminders
 
 ```bash
-curl -L "http://localhost:3001/schedule.ics?brandId=main-street-nutrition&from=2026-02-12&to=2026-02-20" --output reminders.ics
+curl -L "http://localhost:3001/schedule.ics?brandId=main-street-nutrition&from=2026-02-12&to=2026-02-20" -H "$AUTH_HEADER" --output reminders.ics
 ```
 
 ### Get today's automated to-do list
 
 ```bash
-curl "http://localhost:3001/today?brandId=main-street-nutrition"
+curl "http://localhost:3001/today?brandId=main-street-nutrition" -H "$AUTH_HEADER"
 ```
 
 ### List generation history
 
 ```bash
-curl "http://localhost:3001/history?brandId=main-street-nutrition&limit=10"
+curl "http://localhost:3001/history?brandId=main-street-nutrition&limit=10" -H "$AUTH_HEADER"
 ```
 
 ### Get one history record
 
 ```bash
-curl "http://localhost:3001/history/<historyId>?brandId=main-street-nutrition"
+curl "http://localhost:3001/history/<historyId>?brandId=main-street-nutrition" -H "$AUTH_HEADER"
 ```
 
 ### Printable sign PDF (from history)
 
 ```bash
-curl -L "http://localhost:3001/sign.pdf?brandId=main-street-nutrition&historyId=<historyId>" --output sign.pdf
+curl -L "http://localhost:3001/sign.pdf?brandId=main-street-nutrition&historyId=<historyId>" -H "$AUTH_HEADER" --output sign.pdf
 ```
 
 ## Admin UI (no frontend framework)
@@ -335,7 +442,7 @@ curl -L "http://localhost:3001/sign.pdf?brandId=main-street-nutrition&historyId=
 Open:
 
 ```bash
-http://localhost:3001/admin
+http://localhost:3001/admin/login
 ```
 
 From admin you can:
@@ -349,7 +456,7 @@ From admin you can:
 - manage recurring and one-off local events
 - onboard new brands quickly from templates
 
-## Phase 3 + 4 + 5 + 6 Workflow
+## Phase 3 + 4 + 5 + 6 + 7 Workflow
 
 1. Generate promo/social/week-plan content.
 2. Log what actually got posted using `POST /posts`.
@@ -367,3 +474,5 @@ From admin you can:
 - Request and output validation uses `zod`.
 - Insights are resilient when metrics are sparse (limited-data behavior).
 - Model responses are parsed as JSON and validated, with one repair retry if needed.
+- In `supabase` mode, verify your JWT subject matches table `owner_id` values.
+- If every query returns empty in Supabase mode, re-check RLS policies and bearer token validity.

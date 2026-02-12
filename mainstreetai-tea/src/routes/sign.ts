@@ -1,9 +1,8 @@
 import { Router } from "express";
 import PDFDocument from "pdfkit";
-import { getBrand } from "../data/brandStore";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { historyRecordSchema } from "../schemas/historySchema";
-import { localJsonStore } from "../storage/localJsonStore";
+import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
@@ -71,7 +70,12 @@ router.get("/", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
@@ -80,17 +84,14 @@ router.get("/", async (req, res, next) => {
     let historyDerived: Partial<SignContent> = {};
 
     if (historyId) {
-      const record = await localJsonStore.getBrandRecordById<unknown>({
-        collection: "history",
-        brandId: parsedBrandId.data,
-        id: historyId,
-      });
+      const adapterRecord = await adapter.getHistoryById(userId, parsedBrandId.data, historyId);
+      const resolvedRecord = adapterRecord;
 
-      if (!record) {
+      if (!resolvedRecord) {
         return res.status(404).json({ error: `History record '${historyId}' was not found` });
       }
 
-      const parsedRecord = historyRecordSchema.safeParse(record);
+      const parsedRecord = historyRecordSchema.safeParse(resolvedRecord);
       if (!parsedRecord.success) {
         return res.status(400).json({ error: `History record '${historyId}' could not be used for a sign` });
       }

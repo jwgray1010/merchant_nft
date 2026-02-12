@@ -1,13 +1,11 @@
-import { randomUUID } from "node:crypto";
 import { Router } from "express";
-import { getBrand } from "../data/brandStore";
 import { brandIdSchema } from "../schemas/brandSchema";
 import {
   metricsRequestSchema,
   storedMetricsSchema,
   type StoredMetrics,
 } from "../schemas/metricsSchema";
-import { localJsonStore } from "../storage/localJsonStore";
+import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
@@ -48,33 +46,18 @@ router.post("/", async (req, res, next) => {
     });
   }
 
-  const createdAt = new Date().toISOString();
-
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const id = randomUUID();
-    await localJsonStore.saveBrandRecord({
-      collection: "metrics",
-      brandId: parsedBrandId.data,
-      fileSuffix: "metrics",
-      record: {
-        id,
-        brandId: parsedBrandId.data,
-        createdAt,
-        ...parsedBody.data,
-      },
-    });
-
-    const response = storedMetricsSchema.parse({
-      id,
-      brandId: parsedBrandId.data,
-      createdAt,
-      ...parsedBody.data,
-    });
+    const response = await adapter.addMetrics(userId, parsedBrandId.data, parsedBody.data);
 
     return res.status(201).json(response);
   } catch (error) {
@@ -101,16 +84,17 @@ router.get("/", async (req, res, next) => {
   const limit = parseLimit(req.query.limit, 100);
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const records = await localJsonStore.listBrandRecords<unknown>({
-      collection: "metrics",
-      brandId: parsedBrandId.data,
-      limit,
-    });
+    const records = await adapter.listMetrics(userId, parsedBrandId.data, limit);
 
     const parsedRecords = records
       .map((record) => storedMetricsSchema.safeParse(record))

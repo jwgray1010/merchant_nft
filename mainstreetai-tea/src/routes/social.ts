@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { getBrand } from "../data/brandStore";
 import { runPrompt } from "../ai/runPrompt";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { socialOutputSchema, socialRequestSchema } from "../schemas/socialRequestSchema";
+import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
@@ -31,7 +31,11 @@ router.post("/", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const brand = await getAdapter().getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }

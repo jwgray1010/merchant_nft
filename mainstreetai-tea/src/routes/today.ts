@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { getBrand } from "../data/brandStore";
 import { brandIdSchema } from "../schemas/brandSchema";
+import { getAdapter } from "../storage/getAdapter";
 import { buildTodayTasks } from "../services/todayService";
 
 const router = Router();
@@ -22,12 +22,18 @@ router.get("/", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const payload = await buildTodayTasks(parsedBrandId.data);
+    const payload = await buildTodayTasks(userId, parsedBrandId.data);
     return res.json(payload);
   } catch (error) {
     return next(error);

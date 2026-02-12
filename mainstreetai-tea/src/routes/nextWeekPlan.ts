@@ -1,11 +1,11 @@
 import { Router } from "express";
-import { getBrand } from "../data/brandStore";
 import { runPrompt } from "../ai/runPrompt";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { nextWeekPlanRequestSchema } from "../schemas/nextWeekPlanRequestSchema";
 import { weekPlanOutputSchema } from "../schemas/weekPlanOutputSchema";
+import { getAdapter } from "../storage/getAdapter";
 import { getUpcomingLocalEvents } from "../services/localEventAwareness";
-import { generateInsights } from "../services/insightsService";
+import { generateInsightsForUser } from "../services/insightsService";
 
 const router = Router();
 
@@ -35,12 +35,16 @@ router.post("/", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const brand = await getAdapter().getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const learning = await generateInsights(brand);
+    const learning = await generateInsightsForUser(userId, brand);
 
     const result = await runPrompt({
       promptFile: "next_week_plan.md",
@@ -52,7 +56,7 @@ router.post("/", async (req, res, next) => {
         previousWeekPlans: learning.previousWeekPlans,
         recentTopPosts: learning.recentTopPosts,
         ...(parsed.data.includeLocalEvents
-          ? { localEvents: await getUpcomingLocalEvents(parsedBrandId.data, 7) }
+          ? { localEvents: await getUpcomingLocalEvents(userId, parsedBrandId.data, 7) }
           : {}),
       },
       outputSchema: weekPlanOutputSchema,

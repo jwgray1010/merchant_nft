@@ -1,19 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { Router } from "express";
-import { createBrand, getBrand, listBrands, updateBrand } from "../data/brandStore";
+import { createClient } from "@supabase/supabase-js";
 import { AVAILABLE_TEMPLATE_NAMES, buildBrandFromTemplate } from "../data/templateStore";
-import {
-  createScheduleItem,
-  deleteScheduleItem,
-  listScheduleItems,
-  updateScheduleItem,
-} from "../data/scheduleStore";
-import { deleteLocalEvent, getLocalEvents, upsertLocalEvents } from "../data/localEventsStore";
-import {
-  brandProfileSchema,
-  type BrandProfile,
-  type BrandRegistryItem,
-} from "../schemas/brandSchema";
+import { brandProfileSchema, type BrandProfile, type BrandRegistryItem } from "../schemas/brandSchema";
 import { historyRecordSchema, type HistoryRecord } from "../schemas/historySchema";
 import { metricsRequestSchema, storedMetricsSchema, type StoredMetrics } from "../schemas/metricsSchema";
 import { postRequestSchema, storedPostSchema, type StoredPost } from "../schemas/postSchema";
@@ -23,7 +11,8 @@ import {
   scheduleUpdateRequestSchema,
 } from "../schemas/scheduleSchema";
 import { buildTodayTasks } from "../services/todayService";
-import { localJsonStore } from "../storage/localJsonStore";
+import { getStorageMode, getAdapter } from "../storage/getAdapter";
+import { extractAuthToken, resolveAuthUser } from "../supabase/verifyAuth";
 
 const router = Router();
 
@@ -67,6 +56,23 @@ function snippet(value: string, maxLength: number): string {
     return trimmed;
   }
   return `${trimmed.slice(0, maxLength - 3)}...`;
+}
+
+function toLocalUserIdFromEmail(email: string): string {
+  const base = email
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return base || "local-user";
+}
+
+function serializeAuthCookie(token: string, maxAgeSeconds = 60 * 60 * 12): string {
+  return `msai_token=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; SameSite=Lax`;
+}
+
+function clearAuthCookie(): string {
+  return "msai_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax";
 }
 
 function toListInput(value: string[]): string {
@@ -156,6 +162,7 @@ function renderLayout(
         <a class="button secondary small" href="/admin/schedule">Schedule</a>
         <a class="button secondary small" href="/admin/local-events">Local Events</a>
         <a class="button secondary small" href="/admin/today">Today</a>
+        <a class="button secondary small" href="/admin/logout">Logout</a>
       </div>
       ${noticeHtml}
       ${content}
@@ -629,19 +636,110 @@ function renderGeneratorScript(kind: GeneratorKind, apiPath: string, payloadScri
   `;
 }
 
+router.get("/login", (req, res) => {
+  const mode = getStorageMode();
+  const status = optionalText(req.query.error);
+  const notice =
+    status === "1"
+      ? { type: "error" as const, text: "Login failed. Check credentials and try again." }
+      : undefined;
+
+  const html = renderLayout(
+    "Admin Login",
+    `
+    <div class="card">
+      <h1>Admin Login</h1>
+      <p class="muted">Storage mode: ${escapeHtml(mode)}</p>
+      <form method="POST" action="/admin/login">
+        <div class="field"><label>Email</label><input type="email" name="email" required /></div>
+        <div class="field"><label>Password</label><input type="password" name="password" required /></div>
+        <button type="submit">Log In</button>
+      </form>
+      ${
+        mode === "local"
+          ? `<p class="muted" style="margin-top:10px;">Local mode accepts any email/password and creates a local user token.</p>`
+          : ""
+      }
+    </div>
+    `,
+    notice,
+  );
+  return res.type("html").send(html);
+});
+
+router.post("/login", async (req, res, next) => {
+  try {
+    const mode = getStorageMode();
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const email = String(body.email ?? "").trim().toLowerCase();
+    const password = String(body.password ?? "");
+    if (!email || !password) {
+      return res.redirect("/admin/login?error=1");
+    }
+
+    if (mode === "local") {
+      const userId = toLocalUserIdFromEmail(email);
+      const token = `local:${userId}|${email}`;
+      res.setHeader("Set-Cookie", serializeAuthCookie(token));
+      return res.redirect("/admin");
+    }
+
+    const url = process.env.SUPABASE_URL;
+    const anonKey = process.env.SUPABASE_ANON_KEY;
+    if (!url || !anonKey) {
+      return res.redirect("/admin/login?error=1");
+    }
+
+    const authClient = createClient(url, anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    const { data, error } = await authClient.auth.signInWithPassword({ email, password });
+    if (error || !data.session?.access_token) {
+      return res.redirect("/admin/login?error=1");
+    }
+
+    res.setHeader("Set-Cookie", serializeAuthCookie(data.session.access_token));
+    return res.redirect("/admin");
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/logout", (_req, res) => {
+  res.setHeader("Set-Cookie", clearAuthCookie());
+  return res.redirect("/admin/login");
+});
+
+router.use(async (req, res, next) => {
+  if (req.path === "/login" || req.path === "/logout") {
+    return next();
+  }
+
+  const token = extractAuthToken(req);
+  if (!token) {
+    return res.redirect("/admin/login");
+  }
+
+  const user = await resolveAuthUser(token);
+  if (!user) {
+    return res.redirect("/admin/login");
+  }
+
+  req.user = user;
+  return next();
+});
+
 router.get("/", async (req, res, next) => {
   try {
-    const brands = await listBrands();
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
     const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
 
     let historyRows = `<tr><td colspan="5" class="muted">Select a business to see history.</td></tr>`;
     if (selectedBrandId) {
-      const records = await localJsonStore.listBrandRecords<unknown>({
-        collection: "history",
-        brandId: selectedBrandId,
-        limit: 10,
-      });
-
+      const records = await adapter.listHistory(userId, selectedBrandId, 10);
       const parsed = records
         .map((record) => historyRecordSchema.safeParse(record))
         .filter((result): result is { success: true; data: HistoryRecord } => result.success)
@@ -716,7 +814,8 @@ router.get("/", async (req, res, next) => {
 
 router.get("/brands", async (req, res, next) => {
   try {
-    const brands = await listBrands();
+    const userId = req.user?.id ?? "local-dev-user";
+    const brands = await getAdapter().listBrands(userId);
     const status = optionalText(req.query.status);
 
     const rows =
@@ -782,9 +881,10 @@ router.get("/brands/new", (_req, res) => {
 
 router.post("/brands", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
     const body = (req.body ?? {}) as Record<string, unknown>;
     const parsed = parseBrandForm(body);
-    const created = await createBrand(parsed);
+    const created = await getAdapter().createBrand(userId, parsed);
     if (!created) {
       const html = renderLayout(
         "Create Brand",
@@ -867,6 +967,7 @@ router.get("/brands/new-from-template", (_req, res) => {
 
 router.post("/brands/new-from-template", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
     const body = (req.body ?? {}) as Record<string, unknown>;
     const profile = await buildBrandFromTemplate({
       brandId: String(body.brandId ?? "")
@@ -877,7 +978,7 @@ router.post("/brands/new-from-template", async (req, res, next) => {
       template: String(body.template ?? "") as (typeof AVAILABLE_TEMPLATE_NAMES)[number],
     });
 
-    const created = await createBrand(profile);
+    const created = await getAdapter().createBrand(userId, profile);
     if (!created) {
       const html = renderLayout(
         "Create Brand From Template",
@@ -918,7 +1019,8 @@ router.post("/brands/new-from-template", async (req, res, next) => {
 
 router.get("/brands/:brandId/edit", async (req, res, next) => {
   try {
-    const brand = await getBrand(req.params.brandId);
+    const userId = req.user?.id ?? "local-dev-user";
+    const brand = await getAdapter().getBrand(userId, req.params.brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Brand Not Found", "<h1>Brand not found.</h1>"));
     }
@@ -940,16 +1042,18 @@ router.get("/brands/:brandId/edit", async (req, res, next) => {
 
 router.post("/brands/:brandId", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
     const body = (req.body ?? {}) as Record<string, unknown>;
     body.brandId = req.params.brandId;
     const parsed = parseBrandForm(body);
-    const updated = await updateBrand(req.params.brandId, parsed);
+    const updated = await getAdapter().updateBrand(userId, req.params.brandId, parsed);
     if (!updated) {
       return res.status(404).type("html").send(renderLayout("Brand Not Found", "<h1>Brand not found.</h1>"));
     }
     return res.redirect("/admin/brands?status=updated");
   } catch (error) {
-    const existing = await getBrand(req.params.brandId);
+    const userId = req.user?.id ?? "local-dev-user";
+    const existing = await getAdapter().getBrand(userId, req.params.brandId);
     const message = error instanceof Error ? error.message : "Invalid brand payload";
     const html = renderLayout(
       "Edit Brand",
@@ -976,7 +1080,9 @@ router.get("/generate/:kind", async (req, res, next) => {
   }
 
   try {
-    const brands = await listBrands();
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
     const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
     const cfg = generatorConfig(kind);
 
@@ -1023,17 +1129,15 @@ router.get("/generate/:kind", async (req, res, next) => {
 
 router.get("/posts", async (req, res, next) => {
   try {
-    const brands = await listBrands();
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
     const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
     const saved = optionalText(req.query.saved);
 
     let rows = `<tr><td colspan="7" class="muted">Select a business to view post logs.</td></tr>`;
     if (selectedBrandId) {
-      const records = await localJsonStore.listBrandRecords<unknown>({
-        collection: "posts",
-        brandId: selectedBrandId,
-        limit: 20,
-      });
+      const records = await adapter.listPosts(userId, selectedBrandId, 20);
       const posts = records
         .map((record) => storedPostSchema.safeParse(record))
         .filter((result): result is { success: true; data: StoredPost } => result.success)
@@ -1117,12 +1221,14 @@ router.get("/posts", async (req, res, next) => {
 
 router.post("/posts", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Posting Log", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const brand = await getBrand(brandId);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Posting Log", "<h1>Brand not found.</h1>"));
     }
@@ -1138,19 +1244,7 @@ router.post("/posts", async (req, res, next) => {
       ...(optionalText(body.notes) ? { notes: optionalText(body.notes) } : {}),
     });
 
-    const createdAt = new Date().toISOString();
-    const id = randomUUID();
-    await localJsonStore.saveBrandRecord({
-      collection: "posts",
-      brandId,
-      fileSuffix: "post",
-      record: storedPostSchema.parse({
-        id,
-        brandId,
-        createdAt,
-        ...parsedRequest,
-      }),
-    });
+    await adapter.addPost(userId, brandId, parsedRequest);
 
     return res.redirect(`/admin/posts?brandId=${encodeURIComponent(brandId)}&saved=1`);
   } catch (error) {
@@ -1160,17 +1254,15 @@ router.post("/posts", async (req, res, next) => {
 
 router.get("/metrics", async (req, res, next) => {
   try {
-    const brands = await listBrands();
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
     const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
     const saved = optionalText(req.query.saved);
 
     let rows = `<tr><td colspan="10" class="muted">Select a business to view metric logs.</td></tr>`;
     if (selectedBrandId) {
-      const records = await localJsonStore.listBrandRecords<unknown>({
-        collection: "metrics",
-        brandId: selectedBrandId,
-        limit: 20,
-      });
+      const records = await adapter.listMetrics(userId, selectedBrandId, 20);
       const metrics = records
         .map((record) => storedMetricsSchema.safeParse(record))
         .filter((result): result is { success: true; data: StoredMetrics } => result.success)
@@ -1255,12 +1347,14 @@ router.get("/metrics", async (req, res, next) => {
 
 router.post("/metrics", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Metrics Log", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const brand = await getBrand(brandId);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Metrics Log", "<h1>Brand not found.</h1>"));
     }
@@ -1280,19 +1374,7 @@ router.post("/metrics", async (req, res, next) => {
       salesNotes: optionalText(body.salesNotes),
     });
 
-    const createdAt = new Date().toISOString();
-    const id = randomUUID();
-    await localJsonStore.saveBrandRecord({
-      collection: "metrics",
-      brandId,
-      fileSuffix: "metrics",
-      record: storedMetricsSchema.parse({
-        id,
-        brandId,
-        createdAt,
-        ...parsedRequest,
-      }),
-    });
+    await adapter.addMetrics(userId, brandId, parsedRequest);
 
     return res.redirect(`/admin/metrics?brandId=${encodeURIComponent(brandId)}&saved=1`);
   } catch (error) {
@@ -1302,7 +1384,9 @@ router.post("/metrics", async (req, res, next) => {
 
 router.get("/local-events", async (req, res, next) => {
   try {
-    const brands = await listBrands();
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
     const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
     const status = optionalText(req.query.status);
 
@@ -1310,7 +1394,7 @@ router.get("/local-events", async (req, res, next) => {
     let oneOffRows = `<tr><td colspan="7" class="muted">Select a business to manage local events.</td></tr>`;
 
     if (selectedBrandId) {
-      const events = await getLocalEvents(selectedBrandId);
+      const events = await adapter.listLocalEvents(userId, selectedBrandId);
       recurringRows =
         events.recurring.length > 0
           ? events.recurring
@@ -1470,18 +1554,20 @@ router.get("/local-events", async (req, res, next) => {
 
 router.post("/local-events/recurring", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const brand = await getBrand(brandId);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Local Events", "<h1>Brand not found.</h1>"));
     }
 
     const body = (req.body ?? {}) as Record<string, unknown>;
-    await upsertLocalEvents(brandId, {
+    await adapter.upsertLocalEvents(userId, brandId, {
       mode: "append",
       recurring: [
         {
@@ -1501,18 +1587,20 @@ router.post("/local-events/recurring", async (req, res, next) => {
 
 router.post("/local-events/oneoff", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const brand = await getBrand(brandId);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Local Events", "<h1>Brand not found.</h1>"));
     }
 
     const body = (req.body ?? {}) as Record<string, unknown>;
-    await upsertLocalEvents(brandId, {
+    await adapter.upsertLocalEvents(userId, brandId, {
       mode: "append",
       oneOff: [
         {
@@ -1533,12 +1621,14 @@ router.post("/local-events/oneoff", async (req, res, next) => {
 
 router.post("/local-events/paste", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const brand = await getBrand(brandId);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Local Events", "<h1>Brand not found.</h1>"));
     }
@@ -1549,7 +1639,7 @@ router.post("/local-events/paste", async (req, res, next) => {
       oneOff?: Array<{ name: string; date: string; time?: string; audience: string; notes?: string }>;
     };
 
-    await upsertLocalEvents(brandId, {
+    await adapter.upsertLocalEvents(userId, brandId, {
       mode: "append",
       recurring: (parsed.recurring ?? []).map((event) => ({
         name: event.name,
@@ -1574,12 +1664,14 @@ router.post("/local-events/paste", async (req, res, next) => {
 
 router.post("/local-events/:eventId/delete", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const brand = await getBrand(brandId);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Local Events", "<h1>Brand not found.</h1>"));
     }
@@ -1589,7 +1681,7 @@ router.post("/local-events/:eventId/delete", async (req, res, next) => {
       return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing event id.</h1>"));
     }
 
-    await deleteLocalEvent(brandId, eventId);
+    await adapter.deleteLocalEvent(userId, brandId, eventId);
     return res.redirect(`/admin/local-events?brandId=${encodeURIComponent(brandId)}&status=deleted`);
   } catch (error) {
     return next(error);
@@ -1598,7 +1690,9 @@ router.post("/local-events/:eventId/delete", async (req, res, next) => {
 
 router.get("/schedule", async (req, res, next) => {
   try {
-    const brands = await listBrands();
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
     const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
     const status = optionalText(req.query.status);
 
@@ -1606,7 +1700,7 @@ router.get("/schedule", async (req, res, next) => {
     let rows = `<tr><td colspan="8" class="muted">Select a business to view schedule items.</td></tr>`;
 
     if (selectedBrandId) {
-      const items = await listScheduleItems(selectedBrandId);
+      const items = await adapter.listSchedule(userId, selectedBrandId);
       rows =
         items.length > 0
           ? items
@@ -1722,12 +1816,14 @@ router.get("/schedule", async (req, res, next) => {
 
 router.post("/schedule", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Schedule", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const brand = await getBrand(brandId);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Schedule", "<h1>Brand not found.</h1>"));
     }
@@ -1742,7 +1838,7 @@ router.post("/schedule", async (req, res, next) => {
       status: String(body.status ?? "planned"),
     });
 
-    await createScheduleItem(brandId, parsedPayload);
+    await adapter.addScheduleItem(userId, brandId, parsedPayload);
     return res.redirect(`/admin/schedule?brandId=${encodeURIComponent(brandId)}&status=created`);
   } catch (error) {
     return next(error);
@@ -1751,12 +1847,14 @@ router.post("/schedule", async (req, res, next) => {
 
 router.post("/schedule/:id/update", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Schedule", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const brand = await getBrand(brandId);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Schedule", "<h1>Brand not found.</h1>"));
     }
@@ -1789,7 +1887,7 @@ router.post("/schedule/:id/update", async (req, res, next) => {
 
     const parsedPayload = scheduleUpdateRequestSchema.parse(updatePayload);
 
-    const updated = await updateScheduleItem(brandId, scheduleId, parsedPayload);
+    const updated = await adapter.updateSchedule(userId, brandId, scheduleId, parsedPayload);
     if (!updated) {
       return res.status(404).type("html").send(renderLayout("Schedule", "<h1>Schedule item not found.</h1>"));
     }
@@ -1802,12 +1900,14 @@ router.post("/schedule/:id/update", async (req, res, next) => {
 
 router.post("/schedule/:id/delete", async (req, res, next) => {
   try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Schedule", "<h1>Missing brandId query parameter.</h1>"));
     }
 
-    const brand = await getBrand(brandId);
+    const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).type("html").send(renderLayout("Schedule", "<h1>Brand not found.</h1>"));
     }
@@ -1817,7 +1917,7 @@ router.post("/schedule/:id/delete", async (req, res, next) => {
       return res.status(400).type("html").send(renderLayout("Schedule", "<h1>Missing schedule id.</h1>"));
     }
 
-    await deleteScheduleItem(brandId, scheduleId);
+    await adapter.deleteSchedule(userId, brandId, scheduleId);
     return res.redirect(`/admin/schedule?brandId=${encodeURIComponent(brandId)}&status=deleted`);
   } catch (error) {
     return next(error);
@@ -1826,13 +1926,14 @@ router.post("/schedule/:id/delete", async (req, res, next) => {
 
 router.get("/today", async (req, res, next) => {
   try {
-    const brands = await listBrands();
+    const userId = req.user?.id ?? "local-dev-user";
+    const brands = await getAdapter().listBrands(userId);
     const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
 
     let tasksHtml = `<p class="muted">Select a business to view today's checklist.</p>`;
     let dateLabel = "";
     if (selectedBrandId) {
-      const payload = await buildTodayTasks(selectedBrandId);
+      const payload = await buildTodayTasks(userId, selectedBrandId);
       dateLabel = payload.date;
       tasksHtml =
         payload.tasks.length > 0

@@ -1,8 +1,7 @@
 import { Router } from "express";
-import { getBrand } from "../data/brandStore";
-import { deleteLocalEvent, getLocalEvents, upsertLocalEvents } from "../data/localEventsStore";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { localEventsUpsertSchema } from "../schemas/localEventsSchema";
+import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
@@ -23,12 +22,17 @@ router.get("/", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const data = await getLocalEvents(parsedBrandId.data);
+    const data = await adapter.listLocalEvents(userId, parsedBrandId.data);
     return res.json(data);
   } catch (error) {
     return next(error);
@@ -61,12 +65,17 @@ router.post("/", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const updated = await upsertLocalEvents(parsedBrandId.data, parsedBody.data);
+    const updated = await adapter.upsertLocalEvents(userId, parsedBrandId.data, parsedBody.data);
     return res.json(updated);
   } catch (error) {
     return next(error);
@@ -96,12 +105,17 @@ router.delete("/:eventId", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const deleted = await deleteLocalEvent(parsedBrandId.data, eventId);
+    const deleted = await adapter.deleteLocalEvent(userId, parsedBrandId.data, eventId);
     if (!deleted) {
       return res.status(404).json({ error: `Local event '${eventId}' was not found` });
     }

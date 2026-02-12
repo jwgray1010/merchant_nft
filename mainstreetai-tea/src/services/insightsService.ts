@@ -5,7 +5,7 @@ import { historyRecordSchema } from "../schemas/historySchema";
 import { insightsOutputSchema, type InsightsOutput } from "../schemas/insightsOutputSchema";
 import { storedMetricsSchema, type StoredMetrics } from "../schemas/metricsSchema";
 import { storedPostSchema, type StoredPost } from "../schemas/postSchema";
-import { localJsonStore } from "../storage/localJsonStore";
+import { getAdapter } from "../storage/getAdapter";
 
 const legacyHistoryEntrySchema = z.object({
   id: z.string().optional(),
@@ -232,7 +232,7 @@ export function buildRecentTopPosts(posts: StoredPost[], metrics: StoredMetrics[
   }));
 }
 
-export async function loadRecentLearningData(brandId: string): Promise<{
+export async function loadRecentLearningData(userId: string, brandId: string): Promise<{
   history: HistoryEntry[];
   posts: StoredPost[];
   metrics: StoredMetrics[];
@@ -240,22 +240,11 @@ export async function loadRecentLearningData(brandId: string): Promise<{
   previousWeekPlans: unknown[];
   recentTopPosts: Array<Record<string, unknown>>;
 }> {
+  const adapter = getAdapter();
   const [rawHistory, rawPosts, rawMetrics] = await Promise.all([
-    localJsonStore.listBrandRecords<unknown>({
-      collection: "history",
-      brandId,
-      limit: 180,
-    }),
-    localJsonStore.listBrandRecords<unknown>({
-      collection: "posts",
-      brandId,
-      limit: 180,
-    }),
-    localJsonStore.listBrandRecords<unknown>({
-      collection: "metrics",
-      brandId,
-      limit: 180,
-    }),
+    adapter.listHistory(userId, brandId, 180),
+    adapter.listPosts(userId, brandId, 180),
+    adapter.listMetrics(userId, brandId, 180),
   ]);
 
   const history = pickRecentEntries(
@@ -326,7 +315,23 @@ export async function generateInsights(brand: BrandProfile): Promise<{
   previousWeekPlans: unknown[];
   recentTopPosts: Array<Record<string, unknown>>;
 }> {
-  const recent = await loadRecentLearningData(brand.brandId);
+  const fallbackUserId = process.env.LOCAL_DEV_USER_ID?.trim() || "local-dev-user";
+  return generateInsightsForUser(fallbackUserId, brand);
+}
+
+export async function generateInsightsForUser(
+  userId: string,
+  brand: BrandProfile,
+): Promise<{
+  insights: InsightsOutput;
+  history: HistoryEntry[];
+  posts: StoredPost[];
+  metrics: StoredMetrics[];
+  aggregates: Record<string, unknown>;
+  previousWeekPlans: unknown[];
+  recentTopPosts: Array<Record<string, unknown>>;
+}> {
+  const recent = await loadRecentLearningData(userId, brand.brandId);
 
   const insights = await runPrompt({
     promptFile: "insights.md",

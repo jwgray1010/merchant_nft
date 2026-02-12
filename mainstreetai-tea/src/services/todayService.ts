@@ -1,9 +1,7 @@
-import { getBrand } from "../data/brandStore";
-import { listScheduleItems } from "../data/scheduleStore";
 import { historyRecordSchema } from "../schemas/historySchema";
 import { storedMetricsSchema } from "../schemas/metricsSchema";
 import { storedPostSchema } from "../schemas/postSchema";
-import { localJsonStore } from "../storage/localJsonStore";
+import { getAdapter } from "../storage/getAdapter";
 
 export type TodayTask = {
   type: "post" | "promo" | "followup";
@@ -38,11 +36,12 @@ function snippet(value: string, maxLength: number): string {
   return `${trimmed.slice(0, maxLength - 3)}...`;
 }
 
-export async function buildTodayTasks(brandId: string): Promise<{
+export async function buildTodayTasks(userId: string, brandId: string): Promise<{
   date: string;
   tasks: TodayTask[];
 }> {
-  const brand = await getBrand(brandId);
+  const adapter = getAdapter();
+  const brand = await adapter.getBrand(userId, brandId);
   if (!brand) {
     throw new Error(`Brand '${brandId}' was not found`);
   }
@@ -50,7 +49,7 @@ export async function buildTodayTasks(brandId: string): Promise<{
   const { from, to, dateKey } = localDayRange(new Date());
   const tasks: TodayTask[] = [];
 
-  const scheduleItems = await listScheduleItems(brandId, { from, to });
+  const scheduleItems = await adapter.listSchedule(userId, brandId, { from, to });
   for (const item of scheduleItems) {
     if (item.status === "skipped") {
       continue;
@@ -66,11 +65,7 @@ export async function buildTodayTasks(brandId: string): Promise<{
     });
   }
 
-  const rawHistory = await localJsonStore.listBrandRecords<unknown>({
-    collection: "history",
-    brandId,
-    limit: 40,
-  });
+  const rawHistory = await adapter.listHistory(userId, brandId, 40);
 
   const promoToday = rawHistory
     .map((entry) => historyRecordSchema.safeParse(entry))
@@ -106,16 +101,8 @@ export async function buildTodayTasks(brandId: string): Promise<{
   }
 
   const [rawPosts, rawMetrics] = await Promise.all([
-    localJsonStore.listBrandRecords<unknown>({
-      collection: "posts",
-      brandId,
-      limit: 120,
-    }),
-    localJsonStore.listBrandRecords<unknown>({
-      collection: "metrics",
-      brandId,
-      limit: 200,
-    }),
+    adapter.listPosts(userId, brandId, 120),
+    adapter.listMetrics(userId, brandId, 200),
   ]);
 
   const posts = rawPosts

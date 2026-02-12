@@ -1,17 +1,11 @@
 import { Router } from "express";
-import { getBrand } from "../data/brandStore";
-import {
-  createScheduleItem,
-  deleteScheduleItem,
-  listScheduleItems,
-  updateScheduleItem,
-} from "../data/scheduleStore";
 import { brandIdSchema } from "../schemas/brandSchema";
 import {
   scheduleCreateRequestSchema,
   scheduleItemSchema,
   scheduleUpdateRequestSchema,
 } from "../schemas/scheduleSchema";
+import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
 
@@ -51,12 +45,17 @@ router.post("/", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const created = await createScheduleItem(parsedBrandId.data, parsedBody.data);
+    const created = await adapter.addScheduleItem(userId, parsedBrandId.data, parsedBody.data);
     return res.status(201).json(created);
   } catch (error) {
     return next(error);
@@ -83,12 +82,17 @@ router.get("/", async (req, res, next) => {
   const to = parseOptionalIso(req.query.to);
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const items = await listScheduleItems(parsedBrandId.data, { from, to });
+    const items = await adapter.listSchedule(userId, parsedBrandId.data, { from, to });
     const validated = items.map((item) => scheduleItemSchema.parse(item));
     return res.json(validated);
   } catch (error) {
@@ -126,12 +130,17 @@ router.put("/:id", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const updated = await updateScheduleItem(parsedBrandId.data, id, parsedBody.data);
+    const updated = await adapter.updateSchedule(userId, parsedBrandId.data, id, parsedBody.data);
     if (!updated) {
       return res.status(404).json({ error: `Schedule item '${id}' was not found` });
     }
@@ -164,12 +173,17 @@ router.delete("/:id", async (req, res, next) => {
   }
 
   try {
-    const brand = await getBrand(parsedBrandId.data);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const deleted = await deleteScheduleItem(parsedBrandId.data, id);
+    const deleted = await adapter.deleteSchedule(userId, parsedBrandId.data, id);
     if (!deleted) {
       return res.status(404).json({ error: `Schedule item '${id}' was not found` });
     }
