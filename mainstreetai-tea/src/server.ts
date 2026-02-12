@@ -17,6 +17,7 @@ import billingWebhookRouter from "./routes/billingWebhook";
 import brandRouter from "./routes/brand";
 import bufferOAuthRouter from "./routes/bufferOAuth";
 import emailDigestRouter from "./routes/emailDigest";
+import easyModeRouter from "./routes/easyMode";
 import eventsRouter from "./routes/events";
 import gbpRouter from "./routes/gbp";
 import gbpOAuthRouter from "./routes/gbpOAuth";
@@ -150,6 +151,7 @@ app.use("/api/jobs/outbox", jobsOutboxRouter);
 app.use("/api/jobs/digests", jobsDigestsRouter);
 app.use("/api/jobs/autopilot", jobsAutopilotRouter);
 app.use("/api/jobs/alerts", jobsAlertsRouter);
+app.use("/app", easyModeRouter);
 app.use("/", publicRouter);
 
 app.use((_req: Request, res: Response) => {

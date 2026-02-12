@@ -1246,3 +1246,23 @@ curl -X POST "http://localhost:3001/api/post-now?brandId=main-street-nutrition" 
 ### 8) Optional autopilot enhancement
 
 When `FEATURE_AUTOPILOT_VISUAL=true`, autopilot attempts a quick visual pass against the latest media asset and can inject stronger on-screen text suggestions into tomorrow-ready output.
+
+## Phase UX: MainStreetAI Easy Mode (mobile-first)
+
+New owner-first routes are available under `/app` and are now the default post-login experience:
+
+- `/app` (daily dashboard)
+- `/app/promo` (Make Today’s Special)
+- `/app/social` (Create Social Post)
+- `/app/post-now` (Should I Post Right Now?)
+- `/app/tomorrow` (Tomorrow Ready)
+- `/app/media` (Analyze Photo)
+- `/app/sms` (Send SMS)
+- `/app/insights` (simple insights view)
+- `/app/settings` and `/app/settings/advanced`
+
+Highlights:
+- Mobile-first layout with large tap targets and bottom nav.
+- Plain-English labels (e.g. “Automatic Help”, “Planned Post”, “How did it perform?”).
+- Smart defaults from session + brand settings (brand, location, audience, timing).
+- Optional coach bubble: “Need an idea today?” for quick actions.

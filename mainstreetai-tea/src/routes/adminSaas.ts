@@ -60,6 +60,7 @@ function render(title: string, body: string): string {
   <body>
     <div class="wrap">
       <div class="row" style="margin-bottom:12px;">
+        <a class="button secondary" href="/app">Easy Mode</a>
         <a class="button secondary" href="/admin">Admin Home</a>
         <a class="button secondary" href="/admin/billing">Billing</a>
         <a class="button secondary" href="/admin/team">Team</a>

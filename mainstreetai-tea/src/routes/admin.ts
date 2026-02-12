@@ -204,6 +204,7 @@ function renderLayout(
   <body>
     <div class="container">
       <div class="nav">
+        <a class="button secondary small" href="/app">Easy Mode</a>
         <a class="button secondary small" href="/admin">Home</a>
         <a class="button secondary small" href="/admin/brands">Brands</a>
         <a class="button secondary small" href="/admin/integrations">Integrations</a>
@@ -217,11 +218,10 @@ function renderLayout(
         <a class="button secondary small" href="/admin/tenant/settings">Tenant</a>
         <a class="button secondary small" href="/admin/billing">Billing</a>
         <a class="button secondary small" href="/admin/team">Team</a>
-        <a class="button secondary small" href="/admin/schedule">Schedule</a>
-        <a class="button secondary small" href="/admin/autopilot">Autopilot</a>
+        <a class="button secondary small" href="/admin/schedule">Planned Posts</a>
+        <a class="button secondary small" href="/admin/autopilot">Automatic Help</a>
         <a class="button secondary small" href="/admin/alerts">Alerts</a>
         <a class="button secondary small" href="/admin/tomorrow">Tomorrow</a>
-        <a class="button secondary small" href="/admin/outbox">Outbox</a>
         <a class="button secondary small" href="/admin/local-events">Local Events</a>
         <a class="button secondary small" href="/admin/today">Today</a>
         <a class="button secondary small" href="/admin/logout">Logout</a>
@@ -849,7 +849,7 @@ router.post("/login", async (req, res, next) => {
       const userId = toLocalUserIdFromEmail(email);
       const token = `local:${userId}|${email}`;
       res.setHeader("Set-Cookie", serializeAuthCookie(token));
-      return res.redirect("/admin");
+      return res.redirect("/app");
     }
 
     const url = process.env.SUPABASE_URL;
@@ -868,7 +868,7 @@ router.post("/login", async (req, res, next) => {
     }
 
     res.setHeader("Set-Cookie", serializeAuthCookie(data.session.access_token));
-    return res.redirect("/admin");
+    return res.redirect("/app");
   } catch (error) {
     return next(error);
   }
@@ -942,13 +942,13 @@ router.get("/", async (req, res, next) => {
         <a class="button" href="/admin/generate/promo?brandId=${encodeURIComponent(selectedBrandId)}">Promo</a>
         <a class="button" href="/admin/generate/social?brandId=${encodeURIComponent(selectedBrandId)}">Social</a>
         <a class="button" href="/admin/generate/events?brandId=${encodeURIComponent(selectedBrandId)}">Events</a>
-        <a class="button" href="/admin/generate/week-plan?brandId=${encodeURIComponent(selectedBrandId)}">Week Plan</a>
-        <a class="button" href="/admin/generate/next-week-plan?brandId=${encodeURIComponent(selectedBrandId)}">Next Week Plan</a>
+        <a class="button" href="/admin/generate/week-plan?brandId=${encodeURIComponent(selectedBrandId)}">Plan My Week</a>
+        <a class="button" href="/admin/generate/next-week-plan?brandId=${encodeURIComponent(selectedBrandId)}">Plan My Next Week</a>
       </div>
       <div class="row" style="margin-top: 10px;">
-        <a class="button secondary" href="/admin/posts?brandId=${encodeURIComponent(selectedBrandId)}">Posting Log</a>
-        <a class="button secondary" href="/admin/metrics?brandId=${encodeURIComponent(selectedBrandId)}">Metrics Log</a>
-        <a class="button secondary" href="/admin/autopilot?brandId=${encodeURIComponent(selectedBrandId)}">Autopilot</a>
+        <a class="button secondary" href="/admin/posts?brandId=${encodeURIComponent(selectedBrandId)}">Posted History</a>
+        <a class="button secondary" href="/admin/metrics?brandId=${encodeURIComponent(selectedBrandId)}">How did it perform?</a>
+        <a class="button secondary" href="/admin/autopilot?brandId=${encodeURIComponent(selectedBrandId)}">Automatic Help</a>
         <a class="button secondary" href="/admin/alerts?brandId=${encodeURIComponent(selectedBrandId)}">Alerts</a>
         <a class="button secondary" href="/admin/tomorrow?brandId=${encodeURIComponent(selectedBrandId)}">Tomorrow Pack</a>
         <a class="button secondary" href="/admin/billing?brandId=${encodeURIComponent(selectedBrandId)}">Billing</a>
@@ -957,8 +957,7 @@ router.get("/", async (req, res, next) => {
         <a class="button secondary" href="/admin/sms?brandId=${encodeURIComponent(selectedBrandId)}">SMS</a>
         <a class="button secondary" href="/admin/email?brandId=${encodeURIComponent(selectedBrandId)}">Email</a>
         <a class="button secondary" href="/admin/gbp?brandId=${encodeURIComponent(selectedBrandId)}">GBP Post</a>
-        <a class="button secondary" href="/admin/outbox?brandId=${encodeURIComponent(selectedBrandId)}">Outbox</a>
-        <a class="button secondary" href="/admin/schedule?brandId=${encodeURIComponent(selectedBrandId)}">Schedule</a>
+        <a class="button secondary" href="/admin/schedule?brandId=${encodeURIComponent(selectedBrandId)}">Planned Posts</a>
         <a class="button secondary" href="/admin/local-events?brandId=${encodeURIComponent(selectedBrandId)}">Local Events</a>
         <a class="button secondary" href="/admin/today?brandId=${encodeURIComponent(selectedBrandId)}">Today's Checklist</a>
       </div>`

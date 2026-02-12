@@ -79,6 +79,7 @@ function layout(
         <div class="muted">${escapeHtml(brandLabel)}</div>
       </div>
       <div style="margin-bottom:16px;">
+        <a class="button secondary" href="/app">Easy Mode</a>
         <a class="button secondary" href="/">Home</a>
         <a class="button secondary" href="/pricing">Pricing</a>
         <a class="button secondary" href="/demo">Demo</a>
@@ -100,7 +101,14 @@ function slugify(value: string): string {
     .slice(0, 80);
 }
 
-router.get("/", (_req, res) => {
+router.get("/", async (_req, res) => {
+  const token = extractAuthToken(_req);
+  if (token) {
+    const user = await resolveAuthUser(token);
+    if (user) {
+      return res.redirect("/app");
+    }
+  }
   const branding = brandingFromRequest(_req);
   const html = layout(
     "AI Growth Engine for Local Businesses",
@@ -188,35 +196,50 @@ router.get("/onboarding", (_req, res) => {
     "Onboarding Wizard",
     `
       <div class="card">
-        <h1>Onboarding Wizard</h1>
-        <p class="muted">Set up your business in minutes. You can refine everything later in Admin.</p>
+        <h1>Quick Setup (5 steps)</h1>
+        <p class="muted">Simple and fast. You can change details later in Settings.</p>
       </div>
       <form method="POST" action="/onboarding/complete" class="card">
-        <h2>Step 1 — Business</h2>
+        <h2>Step 1: Business name</h2>
         <div class="grid">
           <div><label>Business Name</label><input name="businessName" required /></div>
-          <div><label>Location</label><input name="location" required /></div>
-          <div><label>Template</label>
-            <select name="template">
+          <div><label>Location</label><input name="location" placeholder="Independence, KS" required /></div>
+        </div>
+
+        <h2>Step 2: What do you sell?</h2>
+        <div class="grid">
+          <div><label>Business Type</label>
+            <select name="businessType">
               <option value="loaded-tea">loaded-tea</option>
               <option value="cafe">cafe</option>
               <option value="retail">retail</option>
               <option value="service">service</option>
+              <option value="restaurant">restaurant</option>
               <option value="gym">gym</option>
             </select>
           </div>
         </div>
 
-        <h2>Step 2 — Voice + Audience</h2>
-        <div><label>Voice</label><textarea name="voice">Friendly, local, practical, and human.</textarea></div>
-        <div><label>Audiences (comma-separated)</label><input name="audiences" placeholder="teachers, parents, students" /></div>
-        <div><label>Offers allowed (comma-separated)</label><input name="offersWeCanUse" placeholder="$1 off add-on, combo upgrade" /></div>
+        <h2>Step 3: Who comes in most?</h2>
+        <div class="grid">
+          <div>
+            <label>Main audience</label>
+            <select name="topAudience">
+              <option value="teachers">teachers</option>
+              <option value="gym">gym</option>
+              <option value="families">families</option>
+              <option value="parents">parents</option>
+              <option value="students">students</option>
+              <option value="general">general</option>
+            </select>
+          </div>
+        </div>
 
-        <h2>Step 3 — Integrations</h2>
-        <p class="muted">You can connect Buffer / GBP / Email in Admin after setup.</p>
+        <h2>Step 4: Connect socials (optional)</h2>
+        <label><input type="checkbox" name="connectSocials" /> Remind me to connect Buffer/GBP after setup</label>
 
-        <h2>Step 4 — Autopilot</h2>
-        <label><input type="checkbox" name="enableAutopilot" /> Enable Autopilot now</label>
+        <h2>Step 5: Turn on Automatic Help?</h2>
+        <label><input type="checkbox" name="enableAutopilot" /> Yes, turn on Automatic Help</label>
 
         <div style="margin-top:14px;"><button class="button" type="submit">Complete Setup</button></div>
       </form>
@@ -240,7 +263,8 @@ router.post("/onboarding/complete", async (req, res, next) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const businessName = String(body.businessName ?? "").trim();
     const location = String(body.location ?? "").trim();
-    const template = String(body.template ?? "service").trim().toLowerCase();
+    const template = String(body.businessType ?? body.template ?? "service").trim().toLowerCase();
+    const topAudience = String(body.topAudience ?? "").trim();
     if (!businessName || !location) {
       return res
         .status(400)
@@ -256,22 +280,9 @@ router.post("/onboarding/complete", async (req, res, next) => {
       template: template as "loaded-tea" | "cafe" | "service" | "retail" | "restaurant" | "gym",
     });
 
-    const audiences =
-      typeof body.audiences === "string"
-        ? body.audiences
-            .split(",")
-            .map((entry) => entry.trim())
-            .filter((entry) => entry.length > 0)
-        : baseBrand.audiences;
-    const offers =
-      typeof body.offersWeCanUse === "string"
-        ? body.offersWeCanUse
-            .split(",")
-            .map((entry) => entry.trim())
-            .filter((entry) => entry.length > 0)
-        : baseBrand.offersWeCanUse;
-    const voice =
-      typeof body.voice === "string" && body.voice.trim() !== "" ? body.voice.trim() : baseBrand.voice;
+    const audiences = topAudience ? [topAudience, ...baseBrand.audiences].slice(0, 6) : baseBrand.audiences;
+    const offers = baseBrand.offersWeCanUse;
+    const voice = baseBrand.voice;
 
     const brand = brandProfileSchema.parse({
       ...baseBrand,
@@ -298,7 +309,7 @@ router.post("/onboarding/complete", async (req, res, next) => {
       await adapter.upsertAutopilotSettings(user.id, brand.brandId, autopilot);
     }
 
-    return res.redirect(`/admin/tomorrow?brandId=${encodeURIComponent(brand.brandId)}`);
+    return res.redirect(`/app/tomorrow?brandId=${encodeURIComponent(brand.brandId)}`);
   } catch (error) {
     return next(error);
   }
