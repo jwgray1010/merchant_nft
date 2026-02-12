@@ -93,9 +93,12 @@ function toHistoryRecord(brandId: string, row: HistoryRow): HistoryRecord {
 export class SupabaseAdapter implements StorageAdapter {
   private readonly client = getSupabaseAdminClient();
 
+  private table(tableName: string): any {
+    return this.client.from(tableName as never);
+  }
+
   private async getBrandRow(userId: string, brandId: string): Promise<BrandRow | null> {
-    const { data, error } = await this.client
-      .from("brands")
+    const { data, error } = await this.table("brands")
       .select("*")
       .eq("owner_id", userId)
       .eq("brand_id", brandId)
@@ -115,8 +118,7 @@ export class SupabaseAdapter implements StorageAdapter {
   }
 
   async listBrands(userId: string): Promise<BrandProfile[]> {
-    const { data, error } = await this.client
-      .from("brands")
+    const { data, error } = await this.table("brands")
       .select("*")
       .eq("owner_id", userId)
       .order("business_name", { ascending: true });
@@ -149,7 +151,7 @@ export class SupabaseAdapter implements StorageAdapter {
       constraints: parsed.constraints,
     };
 
-    const { data, error } = await this.client.from("brands").insert(payload).select("*").single();
+    const { data, error } = await this.table("brands").insert(payload).select("*").single();
     if (error) {
       if (isUniqueViolation(error)) {
         return null;
@@ -190,8 +192,7 @@ export class SupabaseAdapter implements StorageAdapter {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await this.client
-      .from("brands")
+    const { data, error } = await this.table("brands")
       .update(updatePayload)
       .eq("owner_id", userId)
       .eq("brand_id", brandId)
@@ -204,8 +205,7 @@ export class SupabaseAdapter implements StorageAdapter {
   }
 
   async deleteBrand(userId: string, brandId: string): Promise<boolean> {
-    const { data, error } = await this.client
-      .from("brands")
+    const { data, error } = await this.table("brands")
       .delete()
       .eq("owner_id", userId)
       .eq("brand_id", brandId)
@@ -227,8 +227,7 @@ export class SupabaseAdapter implements StorageAdapter {
   ): Promise<HistoryRecord> {
     const brandRow = await this.requireBrandRow(userId, brandId);
 
-    const { data, error } = await this.client
-      .from("history")
+    const { data, error } = await this.table("history")
       .insert({
         owner_id: userId,
         brand_ref: brandRow.id,
@@ -247,8 +246,7 @@ export class SupabaseAdapter implements StorageAdapter {
   async listHistory(userId: string, brandId: string, limit: number): Promise<HistoryRecord[]> {
     const brandRow = await this.requireBrandRow(userId, brandId);
 
-    const { data, error } = await this.client
-      .from("history")
+    const { data, error } = await this.table("history")
       .select("*")
       .eq("owner_id", userId)
       .eq("brand_ref", brandRow.id)
@@ -262,8 +260,7 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async getHistoryById(userId: string, brandId: string, id: string): Promise<HistoryRecord | null> {
     const brandRow = await this.requireBrandRow(userId, brandId);
-    const { data, error } = await this.client
-      .from("history")
+    const { data, error } = await this.table("history")
       .select("*")
       .eq("owner_id", userId)
       .eq("brand_ref", brandRow.id)
@@ -283,8 +280,7 @@ export class SupabaseAdapter implements StorageAdapter {
     const parsed = postRequestSchema.parse(post);
     const postedAt = new Date(parsed.postedAt).toISOString();
 
-    const { data, error } = await this.client
-      .from("posts")
+    const { data, error } = await this.table("posts")
       .insert({
         owner_id: userId,
         brand_ref: brandRow.id,
@@ -326,8 +322,7 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async listPosts(userId: string, brandId: string, limit: number): Promise<StoredPost[]> {
     const brandRow = await this.requireBrandRow(userId, brandId);
-    const { data, error } = await this.client
-      .from("posts")
+    const { data, error } = await this.table("posts")
       .select("*")
       .eq("owner_id", userId)
       .eq("brand_ref", brandRow.id)
@@ -357,8 +352,7 @@ export class SupabaseAdapter implements StorageAdapter {
     const parsed = metricsRequestSchema.parse(metrics);
     const postRef = isUuid(parsed.postId) ? parsed.postId : null;
 
-    const { data, error } = await this.client
-      .from("metrics")
+    const { data, error } = await this.table("metrics")
       .insert({
         owner_id: userId,
         brand_ref: brandRow.id,
@@ -401,8 +395,7 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async listMetrics(userId: string, brandId: string, limit: number): Promise<StoredMetrics[]> {
     const brandRow = await this.requireBrandRow(userId, brandId);
-    const { data, error } = await this.client
-      .from("metrics")
+    const { data, error } = await this.table("metrics")
       .select("*")
       .eq("owner_id", userId)
       .eq("brand_ref", brandRow.id)
@@ -440,8 +433,7 @@ export class SupabaseAdapter implements StorageAdapter {
     const brandRow = await this.requireBrandRow(userId, brandId);
     const parsed = scheduleCreateRequestSchema.parse(item);
 
-    const { data, error } = await this.client
-      .from("schedule")
+    const { data, error } = await this.table("schedule")
       .insert({
         owner_id: userId,
         brand_ref: brandRow.id,
@@ -478,8 +470,7 @@ export class SupabaseAdapter implements StorageAdapter {
     options?: { from?: string; to?: string },
   ): Promise<ScheduleItem[]> {
     const brandRow = await this.requireBrandRow(userId, brandId);
-    let query = this.client
-      .from("schedule")
+    let query = this.table("schedule")
       .select("*")
       .eq("owner_id", userId)
       .eq("brand_ref", brandRow.id)
@@ -530,8 +521,7 @@ export class SupabaseAdapter implements StorageAdapter {
     if (parsed.assetNotes !== undefined) payload.asset_notes = parsed.assetNotes;
     if (parsed.status !== undefined) payload.status = parsed.status;
 
-    const { data, error } = await this.client
-      .from("schedule")
+    const { data, error } = await this.table("schedule")
       .update(payload)
       .eq("owner_id", userId)
       .eq("brand_ref", brandRow.id)
@@ -561,8 +551,7 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async deleteSchedule(userId: string, brandId: string, scheduleId: string): Promise<boolean> {
     const brandRow = await this.requireBrandRow(userId, brandId);
-    const { data, error } = await this.client
-      .from("schedule")
+    const { data, error } = await this.table("schedule")
       .delete()
       .eq("owner_id", userId)
       .eq("brand_ref", brandRow.id)
@@ -577,8 +566,7 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async listLocalEvents(userId: string, brandId: string): Promise<LocalEvents> {
     const brandRow = await this.requireBrandRow(userId, brandId);
-    const { data, error } = await this.client
-      .from("local_events")
+    const { data, error } = await this.table("local_events")
       .select("*")
       .eq("owner_id", userId)
       .eq("brand_ref", brandRow.id)
@@ -588,8 +576,8 @@ export class SupabaseAdapter implements StorageAdapter {
     }
 
     const recurring = (data ?? [])
-      .filter((row) => row.kind === "recurring")
-      .map((row) => ({
+      .filter((row: any) => row.kind === "recurring")
+      .map((row: any) => ({
         eventId: row.id as string,
         name: row.name as string,
         pattern: (row.pattern as string) ?? "",
@@ -597,8 +585,8 @@ export class SupabaseAdapter implements StorageAdapter {
         notes: (row.notes as string) ?? "",
       }));
     const oneOff = (data ?? [])
-      .filter((row) => row.kind === "oneoff")
-      .map((row) => ({
+      .filter((row: any) => row.kind === "oneoff")
+      .map((row: any) => ({
         eventId: row.id as string,
         name: row.name as string,
         date: (row.event_date as string) ?? "",
@@ -619,8 +607,7 @@ export class SupabaseAdapter implements StorageAdapter {
     const parsed = localEventsUpsertSchema.parse(payload);
 
     if (parsed.mode === "replace") {
-      const { error: deleteError } = await this.client
-        .from("local_events")
+      const { error: deleteError } = await this.table("local_events")
         .delete()
         .eq("owner_id", userId)
         .eq("brand_ref", brandRow.id);
@@ -658,7 +645,7 @@ export class SupabaseAdapter implements StorageAdapter {
     }
 
     if (inserts.length > 0) {
-      const { error } = await this.client.from("local_events").insert(inserts);
+      const { error } = await this.table("local_events").insert(inserts);
       if (error) {
         throw error;
       }
@@ -669,8 +656,7 @@ export class SupabaseAdapter implements StorageAdapter {
 
   async deleteLocalEvent(userId: string, brandId: string, eventId: string): Promise<boolean> {
     const brandRow = await this.requireBrandRow(userId, brandId);
-    const { data, error } = await this.client
-      .from("local_events")
+    const { data, error } = await this.table("local_events")
       .delete()
       .eq("owner_id", userId)
       .eq("brand_ref", brandRow.id)
