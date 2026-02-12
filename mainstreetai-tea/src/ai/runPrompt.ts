@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { BrandProfile } from "../schemas/brandSchema";
 import type { BrandVoiceProfile } from "../schemas/voiceSchema";
 import { getBrandVoiceProfile } from "../services/voiceStore";
-import { getModelName, getOpenAIClient } from "./openaiClient";
+import { getOpenAIClient, getTextModelName, getVisionModelName } from "./openaiClient";
 
 type RunPromptOptions<TOutput> = {
   promptFile: string;
@@ -16,6 +16,7 @@ type RunPromptOptions<TOutput> = {
     address?: string;
     timezone?: string;
   };
+  imageUrls?: string[];
   input: unknown;
   outputSchema: z.ZodType<TOutput>;
 };
@@ -117,16 +118,60 @@ function buildComposedPrompt(
     "USER INPUT (JSON)",
     JSON.stringify(input, null, 2),
     "",
+    "IMAGE INPUTS",
+    "If images are attached, use them as primary visual context.",
+    "",
     "Return JSON ONLY. Do not include markdown fences or extra commentary.",
   ].join("\n");
 }
 
-async function requestModel(prompt: string): Promise<string> {
+function extractCompletionText(raw: unknown): string {
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (Array.isArray(raw)) {
+    const text = raw
+      .map((part) => {
+        if (typeof part === "object" && part !== null && "type" in part && "text" in part) {
+          const record = part as { type?: unknown; text?: unknown };
+          if (record.type === "text" && typeof record.text === "string") {
+            return record.text;
+          }
+        }
+        return "";
+      })
+      .join("")
+      .trim();
+    if (text) {
+      return text;
+    }
+  }
+  throw new Error("Model returned an empty response");
+}
+
+async function requestModel(input: { prompt: string; imageUrls?: string[] }): Promise<string> {
   const openai = getOpenAIClient();
-  const model = getModelName();
-  const baseRequest = {
+  const imageUrls = (input.imageUrls ?? []).filter((url) => typeof url === "string" && url.trim() !== "");
+  const model = imageUrls.length > 0 ? getVisionModelName() : getTextModelName();
+  const baseRequest: any = {
     model,
-    messages: [{ role: "user" as const, content: prompt }],
+    messages: [
+      {
+        role: "user",
+        content:
+          imageUrls.length > 0
+            ? [
+                { type: "text", text: input.prompt },
+                ...imageUrls.map((url) => ({
+                  type: "image_url",
+                  image_url: {
+                    url,
+                  },
+                })),
+              ]
+            : input.prompt,
+      },
+    ],
   };
 
   try {
@@ -135,11 +180,7 @@ async function requestModel(prompt: string): Promise<string> {
       response_format: { type: "json_object" },
     });
 
-    const raw = completion.choices[0]?.message?.content;
-    if (!raw) {
-      throw new Error("Model returned an empty response");
-    }
-    return raw;
+    return extractCompletionText(completion.choices[0]?.message?.content);
   } catch (error) {
     if (!isResponseFormatUnsupported(error)) {
       throw error;
@@ -147,11 +188,7 @@ async function requestModel(prompt: string): Promise<string> {
   }
 
   const completion = await openai.chat.completions.create(baseRequest);
-  const raw = completion.choices[0]?.message?.content;
-  if (!raw) {
-    throw new Error("Model returned an empty response");
-  }
-  return raw;
+  return extractCompletionText(completion.choices[0]?.message?.content);
 }
 
 function formatValidationError(error: unknown): string {
@@ -184,6 +221,7 @@ export async function runPrompt<TOutput>({
   brandProfile,
   userId,
   locationContext,
+  imageUrls,
   input,
   outputSchema,
 }: RunPromptOptions<TOutput>): Promise<TOutput> {
@@ -201,7 +239,10 @@ export async function runPrompt<TOutput>({
     locationContext,
     input,
   );
-  const firstRaw = await requestModel(composedPrompt);
+  const firstRaw = await requestModel({
+    prompt: composedPrompt,
+    imageUrls,
+  });
 
   try {
     const firstParsed = parseModelJson(firstRaw);
@@ -220,7 +261,10 @@ export async function runPrompt<TOutput>({
       "Retry now. Return ONLY valid JSON that matches the schema from TASK PROMPT.",
     ].join("\n");
 
-    const repairRaw = await requestModel(repairPrompt);
+    const repairRaw = await requestModel({
+      prompt: repairPrompt,
+      imageUrls,
+    });
     const repairedParsed = parseModelJson(repairRaw);
     return outputSchema.parse(repairedParsed);
   }

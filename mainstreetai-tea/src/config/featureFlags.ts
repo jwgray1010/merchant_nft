@@ -9,6 +9,7 @@ function envFlag(name: string, fallback: boolean): boolean {
 
 export const FEATURES = {
   autopilot: envFlag("FEATURE_AUTOPILOT", true),
+  autopilotVisual: envFlag("FEATURE_AUTOPILOT_VISUAL", false),
   sms: envFlag("FEATURE_SMS", true),
   gbp: envFlag("FEATURE_GBP", true),
   billing: envFlag("FEATURE_BILLING", true),

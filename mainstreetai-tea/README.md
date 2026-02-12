@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 11)
+# MainStreetAI Platform API (Phase 12)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -983,7 +983,7 @@ From admin you can:
 - preview and queue email digests
 - monitor and retry outbox jobs
 
-## Phase 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 Workflow
+## Phase 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 12 Workflow
 
 1. Generate promo/social/week-plan content.
 2. Log what actually got posted using `POST /posts`.
@@ -1005,6 +1005,9 @@ From admin you can:
 18. Manage subscription/plan in `/admin/billing`.
 19. Invite collaborators in `/admin/team`.
 20. Send new users through `/onboarding` and `/admin/welcome`.
+21. Add media assets in `/admin/media`, run visual analysis, and copy rewritten captions/hooks.
+22. Recompute platform timing model in `/admin/timing`.
+23. Use `/admin/post-now` for real-time "post now or wait" recommendations.
 
 ## Deployment checklist (Vercel)
 
@@ -1147,3 +1150,99 @@ and uses the higher effective plan for feature gating.
 2. Add tenant/domain + branding in `/admin/tenant/settings`.
 3. Verify host resolves tenant branding on `/` and `/pricing`.
 4. Keep auth/security routes unchanged (branding does not affect auth/RLS).
+
+## Phase 12: Visual Content Intelligence + Predictive Timing + Post-Now Coach
+
+Phase 12 adds image-aware feedback, explainable timing predictions, and a real-time posting assistant.
+
+### 1) New env variables
+
+- `OPENAI_TEXT_MODEL` (text generation model; fallback to `OPENAI_MODEL`)
+- `OPENAI_VISION_MODEL` (vision-capable model for image analysis)
+- `MEDIA_BUCKET` (Supabase Storage bucket name, default `media`)
+- `FEATURE_AUTOPILOT_VISUAL` (optional visual hint pass inside autopilot)
+
+### 2) New Supabase tables
+
+- `media_assets`
+- `media_analysis`
+- `post_timing_model`
+
+All use owner-based RLS (`owner_id = auth.uid()`), with indexes for recent reads and per-platform lookups.
+
+### 3) New prompts
+
+- `prompts/visual_review.md`
+- `prompts/post_now.md`
+
+### 4) Media + visual analysis APIs
+
+- `POST /api/media/upload-url?brandId=...`
+  - body: `{ fileName, contentType, kind?, locationId? }`
+  - returns signed upload URL + public URL + `assetId`
+- `POST /api/media/assets?brandId=...`
+  - register URL/uploaded media metadata
+- `GET /api/media/assets?brandId=...&limit=...`
+- `POST /api/media/analyze?brandId=...`
+  - body: `{ assetId OR imageUrl, platform, goals, imageContext? }`
+  - runs vision model, validates JSON output, stores in `media_analysis`
+
+Example:
+
+```bash
+curl -X POST "http://localhost:3001/api/media/analyze?brandId=main-street-nutrition" \
+  -H "Authorization: Bearer local:owner@example.com|owner@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "imageUrl":"https://example.com/drink-photo.jpg",
+    "platform":"instagram",
+    "goals":["new_customers","repeat_customers"],
+    "imageContext":"new seasonal flavor close-up"
+  }'
+```
+
+### 5) Timing model APIs
+
+- `POST /api/timing/recompute?brandId=...`
+  - body: `{ platform, rangeDays? }`
+  - computes explainable timing model from posts+metrics with recency decay
+- `GET /api/timing/model?brandId=...&platform=...`
+
+Model includes:
+- weighted engagement by hour/day
+- best posting windows
+- fallback markers when data is sparse
+
+### 6) Post-now coach API
+
+- `POST /api/post-now?brandId=...`
+  - body: `{ platform, todayNotes?, draftCaption? }`
+  - loads/recomputes timing model + recent performance summary and returns:
+    - post-now boolean
+    - confidence
+    - best time today
+    - suggested hook/caption/on-screen text
+
+Example:
+
+```bash
+curl -X POST "http://localhost:3001/api/post-now?brandId=main-street-nutrition" \
+  -H "Authorization: Bearer local:owner@example.com|owner@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"instagram","todayNotes":"after-school crowd is picking up"}'
+```
+
+### 7) Admin pages
+
+- `/admin/media?brandId=...`
+  - save media URLs
+  - run analysis per asset
+  - copy caption rewrites, hooks, on-screen text
+- `/admin/timing?brandId=...`
+  - recompute and inspect timing model per platform
+- `/admin/post-now?brandId=...`
+  - real-time recommendation with copy-ready caption
+
+### 8) Optional autopilot enhancement
+
+When `FEATURE_AUTOPILOT_VISUAL=true`, autopilot attempts a quick visual pass against the latest media asset and can inject stronger on-screen text suggestions into tomorrow-ready output.

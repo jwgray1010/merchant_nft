@@ -287,6 +287,38 @@ create table if not exists public.tenant_branding (
   hide_mainstreetai_branding boolean not null default false
 );
 
+create table if not exists public.media_assets (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  location_ref uuid references public.locations(id) on delete set null,
+  kind text not null check (kind in ('image','video','thumbnail')),
+  source text not null check (source in ('upload','url','generated')),
+  url text not null,
+  width int,
+  height int,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.media_analysis (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  asset_ref uuid not null references public.media_assets(id) on delete cascade,
+  platform text not null,
+  analysis jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.post_timing_model (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  platform text not null,
+  model jsonb not null,
+  computed_at timestamptz not null default now()
+);
+
 alter table public.posts add column if not exists status text not null default 'posted';
 alter table public.posts add column if not exists provider_meta jsonb;
 alter table public.subscriptions add column if not exists tenant_ref uuid references public.tenants(id) on delete set null;
@@ -373,6 +405,24 @@ create unique index if not exists tenant_branding_tenant_unique
 
 create index if not exists subscriptions_owner_tenant_status_idx
   on public.subscriptions(owner_id, tenant_ref, status, plan);
+
+create index if not exists media_assets_owner_brand_created_idx
+  on public.media_assets(owner_id, brand_ref, created_at desc);
+
+create index if not exists media_assets_owner_brand_kind_idx
+  on public.media_assets(owner_id, brand_ref, kind, created_at desc);
+
+create index if not exists media_analysis_owner_brand_created_idx
+  on public.media_analysis(owner_id, brand_ref, created_at desc);
+
+create index if not exists media_analysis_asset_ref_idx
+  on public.media_analysis(owner_id, asset_ref, created_at desc);
+
+create unique index if not exists post_timing_model_owner_brand_platform_unique
+  on public.post_timing_model(owner_id, brand_ref, platform);
+
+create index if not exists post_timing_model_owner_brand_computed_idx
+  on public.post_timing_model(owner_id, brand_ref, computed_at desc);
 
 -- Keep updated_at fresh on brands updates.
 create or replace function public.set_updated_at()
@@ -478,6 +528,9 @@ alter table public.brand_voice_profile enable row level security;
 alter table public.locations enable row level security;
 alter table public.tenants enable row level security;
 alter table public.tenant_branding enable row level security;
+alter table public.media_assets enable row level security;
+alter table public.media_analysis enable row level security;
+alter table public.post_timing_model enable row level security;
 
 drop policy if exists brands_owner_select on public.brands;
 create policy brands_owner_select on public.brands
@@ -675,6 +728,24 @@ create policy tenant_branding_owner_all on public.tenant_branding
 for all
 using (public.is_tenant_owner(tenant_ref))
 with check (public.is_tenant_owner(tenant_ref));
+
+drop policy if exists media_assets_owner_all on public.media_assets;
+create policy media_assets_owner_all on public.media_assets
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists media_analysis_owner_all on public.media_analysis;
+create policy media_analysis_owner_all on public.media_analysis
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists post_timing_model_owner_all on public.post_timing_model;
+create policy post_timing_model_owner_all on public.post_timing_model
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
 
 alter table public.outbox drop constraint if exists outbox_type_check;
 alter table public.outbox add constraint outbox_type_check

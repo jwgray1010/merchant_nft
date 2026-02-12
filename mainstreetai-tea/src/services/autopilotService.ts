@@ -1,5 +1,6 @@
 import { runPrompt } from "../ai/runPrompt";
 import { requirePlan } from "../billing/requirePlan";
+import { FEATURES } from "../config/featureFlags";
 import { isEmailEnabled, isTwilioEnabled } from "../integrations/env";
 import {
   autopilotRunRequestSchema,
@@ -24,6 +25,7 @@ import {
   zonedDateTimeToUtcIso,
 } from "../utils/timezone";
 import { getLocationById, listLocations } from "./locationStore";
+import { quickAutopilotVisualHints } from "./visualIntelligenceService";
 
 const AUTOPILOT_RECENT_RUN_WINDOW_HOURS = 20;
 const INSIGHTS_CACHE_STALE_HOURS = 24;
@@ -227,6 +229,12 @@ export async function runAutopilotForBrand(input: {
     scheduledItems: number;
     outboxQueued: number;
     output: AutopilotDailyOutput;
+    visualHints?: {
+      assetId: string;
+      onScreenTextOptions: string[];
+      croppingSuggestions: string[];
+      hookIdeas: string[];
+    };
   }>;
 }> {
   const adapter = getAdapter();
@@ -283,11 +291,17 @@ export async function runAutopilotForBrand(input: {
     scheduledItems: number;
     outboxQueued: number;
     output: AutopilotDailyOutput;
+    visualHints?: {
+      assetId: string;
+      onScreenTextOptions: string[];
+      croppingSuggestions: string[];
+      hookIdeas: string[];
+    };
   }> = [];
 
   for (const location of targets) {
     const timezone = timezoneOrDefault(location?.timezone ?? settings.timezone);
-    const generated = await runPrompt({
+    let generated = await runPrompt({
       promptFile: "autopilot_daily.md",
       brandProfile: brand,
       userId: input.userId,
@@ -324,6 +338,33 @@ export async function runAutopilotForBrand(input: {
     });
 
     const channels = settings.channels.length > 0 ? settings.channels : [generated.post.platform];
+    const visualPlatform = channels.includes("instagram")
+      ? "instagram"
+      : channels.includes("facebook")
+        ? "facebook"
+        : channels.includes("tiktok")
+          ? "tiktok"
+          : channels.includes("google_business")
+            ? "gbp"
+            : "other";
+    const visualHints = FEATURES.autopilotVisual
+      ? await quickAutopilotVisualHints({
+          userId: input.userId,
+          brandId: input.brandId,
+          platform: visualPlatform,
+          goals: settings.goals,
+          locationId: location?.id,
+        }).catch(() => null)
+      : null;
+    if (visualHints?.onScreenTextOptions?.length) {
+      generated = autopilotDailyOutputSchema.parse({
+        ...generated,
+        post: {
+          ...generated.post,
+          onScreenText: visualHints.onScreenTextOptions.slice(0, 3),
+        },
+      });
+    }
     const postTime = inferBestPostTime(settings, generated.post.bestPostTime);
     const scheduledForIso = zonedDateTimeToUtcIso({
       date: targetDate,
@@ -518,6 +559,7 @@ export async function runAutopilotForBrand(input: {
       {
         date: targetDate,
         generated,
+        visualHints: visualHints ?? undefined,
         scheduledFor: scheduledForIso,
         queuedCount: outboxQueued,
         scheduledItems,
@@ -532,6 +574,7 @@ export async function runAutopilotForBrand(input: {
       scheduledItems,
       outboxQueued,
       output: generated,
+      visualHints: visualHints ?? undefined,
     });
   }
 
