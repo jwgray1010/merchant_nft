@@ -1005,7 +1005,7 @@ router.get("/", async (req, res, next) => {
               ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Right-now timing check")}
               ${cardLink(withSelection("/app/media", context), "📷", "Media", "Improve a photo post")}
               ${cardLink(withSelection("/app/insights", context), "📈", "Insights", "See what to repeat")}
-              ${cardLink(withSelection("/app/schedule", context), "📍", "Schedule", "Plan upcoming posts")}
+              ${cardLink(withSelection("/app/town", context), "📍", "Town", "View local network flow")}
             </div>
           </section>`
         : null;
@@ -1030,7 +1030,7 @@ router.get("/", async (req, res, next) => {
             <div class="action-grid">
               ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Check this moment")}
               ${cardLink(withSelection("/app/media", context), "📷", "Media", "Polish your visual post")}
-              ${cardLink(withSelection("/app/plan-week", context), "📍", "Plan Week", "Map your next 7 days")}
+              ${cardLink(withSelection("/app/town", context), "📍", "Town", "See local network flow")}
               ${cardLink(withSelection("/app/insights", context), "📈", "Insights", "Repeat what works")}
             </div>
           </section>
