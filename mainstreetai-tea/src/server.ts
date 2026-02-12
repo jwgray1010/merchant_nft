@@ -18,6 +18,7 @@ import brandRouter from "./routes/brand";
 import bufferOAuthRouter from "./routes/bufferOAuth";
 import emailDigestRouter from "./routes/emailDigest";
 import easyModeRouter from "./routes/easyMode";
+import dailyRouter from "./routes/daily";
 import eventsRouter from "./routes/events";
 import gbpRouter from "./routes/gbp";
 import gbpOAuthRouter from "./routes/gbpOAuth";
@@ -39,6 +40,7 @@ import postsRouter from "./routes/posts";
 import promoRouter from "./routes/promo";
 import publishRouter from "./routes/publish";
 import publicRouter from "./routes/public";
+import rescueRouter from "./routes/rescue";
 import scheduleIcsRouter from "./routes/scheduleIcs";
 import scheduleRouter from "./routes/schedule";
 import signRouter from "./routes/sign";
@@ -91,6 +93,8 @@ app.use("/schedule.ics", verifyAuth, resolveBrandAccessFromQuery(), scheduleIcsR
 app.use("/schedule", verifyAuth, resolveBrandAccessFromQuery(), scheduleRouter);
 app.use("/today", verifyAuth, resolveBrandAccessFromQuery(), todayRouter);
 app.use("/sign.pdf", verifyAuth, resolveBrandAccessFromQuery(), signRouter);
+app.use("/daily", verifyAuth, resolveBrandAccessFromQuery(), dailyRouter);
+app.use("/rescue", verifyAuth, resolveBrandAccessFromQuery(), rescueRouter);
 app.use(
   "/promo",
   verifyAuth,
@@ -146,6 +150,8 @@ app.use("/api/voice", verifyAuth, resolveBrandAccessFromQuery(), voiceRouter);
 app.use("/api/media", verifyAuth, resolveBrandAccessFromQuery(), mediaRouter);
 app.use("/api/timing", verifyAuth, resolveBrandAccessFromQuery(), timingRouter);
 app.use("/api/post-now", verifyAuth, resolveBrandAccessFromQuery(), postNowRouter);
+app.use("/api/daily", verifyAuth, resolveBrandAccessFromQuery(), dailyRouter);
+app.use("/api/rescue", verifyAuth, resolveBrandAccessFromQuery(), rescueRouter);
 app.use("/api/tenant", verifyAuth, tenantRouter);
 app.use("/api/jobs/outbox", jobsOutboxRouter);
 app.use("/api/jobs/digests", jobsDigestsRouter);

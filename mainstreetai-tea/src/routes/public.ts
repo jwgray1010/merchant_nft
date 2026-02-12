@@ -210,12 +210,15 @@ router.get("/onboarding", (_req, res) => {
         <div class="grid">
           <div><label>Business Type</label>
             <select name="businessType">
-              <option value="loaded-tea">loaded-tea</option>
               <option value="cafe">cafe</option>
-              <option value="retail">retail</option>
-              <option value="service">service</option>
               <option value="restaurant">restaurant</option>
+              <option value="retail">retail</option>
+              <option value="salon">salon</option>
+              <option value="barber">barber</option>
               <option value="gym">gym</option>
+              <option value="auto">auto</option>
+              <option value="service">service</option>
+              <option value="loaded-tea">loaded-tea</option>
             </select>
           </div>
         </div>
@@ -263,7 +266,20 @@ router.post("/onboarding/complete", async (req, res, next) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const businessName = String(body.businessName ?? "").trim();
     const location = String(body.location ?? "").trim();
-    const template = String(body.businessType ?? body.template ?? "service").trim().toLowerCase();
+    const businessType = String(body.businessType ?? body.template ?? "service").trim().toLowerCase();
+    const templateMap: Record<string, "loaded-tea" | "cafe" | "service" | "retail" | "restaurant" | "gym"> = {
+      "loaded-tea": "loaded-tea",
+      cafe: "cafe",
+      restaurant: "restaurant",
+      retail: "retail",
+      service: "service",
+      salon: "service",
+      barber: "service",
+      auto: "service",
+      gym: "gym",
+      fitness: "gym",
+    };
+    const template = templateMap[businessType] ?? "service";
     const topAudience = String(body.topAudience ?? "").trim();
     if (!businessName || !location) {
       return res
@@ -277,7 +293,7 @@ router.post("/onboarding/complete", async (req, res, next) => {
       brandId,
       businessName,
       location,
-      template: template as "loaded-tea" | "cafe" | "service" | "retail" | "restaurant" | "gym",
+      template,
     });
 
     const audiences = topAudience ? [topAudience, ...baseBrand.audiences].slice(0, 6) : baseBrand.audiences;
@@ -309,7 +325,7 @@ router.post("/onboarding/complete", async (req, res, next) => {
       await adapter.upsertAutopilotSettings(user.id, brand.brandId, autopilot);
     }
 
-    return res.redirect(`/app/tomorrow?brandId=${encodeURIComponent(brand.brandId)}`);
+    return res.redirect(`/app?brandId=${encodeURIComponent(brand.brandId)}`);
   } catch (error) {
     return next(error);
   }

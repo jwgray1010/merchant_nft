@@ -1266,3 +1266,34 @@ Highlights:
 - Plain-English labels (e.g. “Automatic Help”, “Planned Post”, “How did it perform?”).
 - Smart defaults from session + brand settings (brand, location, audience, timing).
 - Optional coach bubble: “Need an idea today?” for quick actions.
+
+## Phase UX+: Ridiculously Simple Mode (one-button daily system)
+
+New one-button growth APIs:
+
+- `POST /api/daily?brandId=...&locationId=...`  
+  Body (optional): `{ "notes": "...", "goal": "new_customers|repeat_customers|slow_hours" }`
+- `POST /api/rescue?brandId=...`  
+  Body (optional): `{ "whatHappened": "...", "timeLeftToday": "..." }`
+- `GET /api/daily/latest?brandId=...`
+- `POST /api/daily/checkin?brandId=...`  
+  Body: `{ "outcome":"slow|okay|busy", "redemptions": number optional }`
+
+New prompts:
+- `prompts/daily_one_button.md`
+- `prompts/rescue_one_button.md`
+
+Easy Mode home (`/app`) now focuses on:
+- **✅ Make Me Money Today** (primary action)
+- **🛟 Fix a Slow Day** (secondary action)
+- Quick links: Post Now, Upload Photo, Plan My Week, Insights
+
+Output is intentionally simple:
+1. Today’s Special
+2. One ready post
+3. One printable sign
+4. Optional SMS
+
+Printable daily sign:
+- `GET /app/sign/today?brandId=...`
+- `GET /app/sign/today?brandId=...&pdf=1`

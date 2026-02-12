@@ -1,9 +1,16 @@
 import { Router, type Request, type Response } from "express";
+import PDFDocument from "pdfkit";
 import { requirePlan } from "../billing/requirePlan";
 import { resolveBrandAccess } from "../auth/brandAccess";
 import { getStorageMode, getAdapter } from "../storage/getAdapter";
 import { extractAuthToken, resolveAuthUser } from "../supabase/verifyAuth";
 import { getSupabaseAdminClient } from "../supabase/supabaseAdmin";
+import {
+  dailyCheckinStatus,
+  getLatestDailyPack,
+  runDailyOneButton,
+  submitDailyCheckin,
+} from "../services/dailyOneButtonService";
 import { listLocations } from "../services/locationStore";
 import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
@@ -11,6 +18,7 @@ import type { BrandProfile } from "../schemas/brandSchema";
 import type { LocationRecord } from "../schemas/locationSchema";
 import type { AutopilotSettings } from "../schemas/autopilotSettingsSchema";
 import type { AutopilotDailyOutput } from "../schemas/autopilotRunSchema";
+import type { DailyOutput } from "../schemas/dailyOneButtonSchema";
 
 const router = Router();
 
@@ -24,6 +32,7 @@ type BrandSummary = {
 type EasyContext = {
   actorUserId: string;
   ownerUserId: string | null;
+  role: "owner" | "admin" | "member";
   brands: BrandSummary[];
   selectedBrandId: string | null;
   selectedBrand: BrandProfile | null;
@@ -210,6 +219,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
     return {
       actorUserId: authUser.id,
       ownerUserId: null,
+      role: "owner",
       brands,
       selectedBrandId: null,
       selectedBrand: null,
@@ -227,6 +237,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
     return {
       actorUserId: authUser.id,
       ownerUserId: null,
+      role: "owner",
       brands,
       selectedBrandId: null,
       selectedBrand: null,
@@ -252,6 +263,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
     return {
       actorUserId: authUser.id,
       ownerUserId: access.ownerId,
+      role: access.role,
       brands,
       selectedBrandId: null,
       selectedBrand: null,
@@ -298,6 +310,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
   return {
     actorUserId: authUser.id,
     ownerUserId: access.ownerId,
+    role: access.role,
     brands,
     selectedBrandId: access.brandId,
     selectedBrand: brand,
@@ -312,14 +325,18 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
 }
 
 function renderBottomNav(context: EasyContext, active: "home" | "create" | "analyze" | "schedule" | "settings"): string {
-  const entries = [
+  const baseEntries = [
     { key: "home", icon: "🏠", href: withSelection("/app", context), label: "Home" },
     { key: "create", icon: "✨", href: withSelection("/app/create", context), label: "Create" },
     { key: "analyze", icon: "🔎", href: withSelection("/app/analyze", context), label: "Analyze" },
     { key: "schedule", icon: "📅", href: withSelection("/app/schedule", context), label: "Schedule" },
     { key: "settings", icon: "⚙️", href: withSelection("/app/settings", context), label: "Settings" },
   ] as const;
-  return `<nav class="bottom-nav">
+  const entries =
+    context.role === "member"
+      ? baseEntries.filter((entry) => entry.key !== "settings")
+      : baseEntries;
+  return `<nav class="bottom-nav" style="grid-template-columns: repeat(${entries.length}, 1fr);">
     ${entries
       .map((entry) => {
         const activeClass = entry.key === active ? "active" : "";
@@ -339,6 +356,9 @@ function renderHeader(context: EasyContext, currentPath: string): string {
       <a class="primary-button" href="/onboarding">Start onboarding</a>
     </div>`;
   }
+  const greetingHour = new Date().getHours();
+  const greeting =
+    greetingHour < 12 ? "Good morning" : greetingHour < 18 ? "Good afternoon" : "Good evening";
   const brandOptions = context.brands
     .map((brand) => {
       const selected = brand.brandId === context.selectedBrandId ? "selected" : "";
@@ -355,13 +375,17 @@ function renderHeader(context: EasyContext, currentPath: string): string {
     }),
   ].join("");
   return `<header class="rounded-2xl p-6 shadow-sm bg-white">
-    <p class="muted">MainStreetAI Easy Mode</p>
+    <p class="muted">${escapeHtml(greeting)}, ${escapeHtml(context.selectedBrand.businessName)}</p>
     <h1 class="text-xl">${escapeHtml(context.selectedBrand.businessName)}</h1>
     <p class="muted">${escapeHtml(context.selectedBrand.location)}</p>
     <form method="GET" action="${escapeHtml(currentPath)}" class="selector-grid">
-      <label class="field-label">Business
-        <select name="brandId" onchange="this.form.submit()">${brandOptions}</select>
-      </label>
+      ${
+        context.brands.length > 1
+          ? `<label class="field-label">Business
+              <select name="brandId" onchange="this.form.submit()">${brandOptions}</select>
+            </label>`
+          : `<input type="hidden" name="brandId" value="${escapeHtml(context.selectedBrand.brandId)}" />`
+      }
       <label class="field-label">Location
         <select name="locationId" onchange="this.form.submit()">${locationOptions}</select>
       </label>
@@ -377,7 +401,7 @@ function renderCoachBubble(context: EasyContext): string {
       <h3>Need an idea today?</h3>
       <p class="muted">Pick one quick action:</p>
       <a class="primary-button" href="${escapeHtml(withSelection("/app/post-now", context))}">⚡ Post Now?</a>
-      <a class="primary-button" href="${escapeHtml(withSelection("/app/promo", context))}">🟢 Make Today’s Special</a>
+      <button class="primary-button" id="coach-run-daily" type="button">✅ Make Me Money Today</button>
       <a class="secondary-button" href="#" id="coach-close">Close</a>
     </div>
   </div>`;
@@ -467,11 +491,19 @@ function easyLayout(input: {
         });
       }
       setupCopyButtons();
+      window.__setupCopyButtons = setupCopyButtons;
       const coachOpen = document.getElementById("coach-open");
       const coachModal = document.getElementById("coach-modal");
       const coachClose = document.getElementById("coach-close");
+      const coachRunDaily = document.getElementById("coach-run-daily");
       coachOpen?.addEventListener("click", () => coachModal?.classList.remove("hidden"));
       coachClose?.addEventListener("click", (event) => { event.preventDefault(); coachModal?.classList.add("hidden"); });
+      coachRunDaily?.addEventListener("click", () => {
+        const url = new URL(window.location.href);
+        url.pathname = "/app";
+        url.searchParams.set("runDaily", "1");
+        window.location.href = url.toString();
+      });
       coachModal?.addEventListener("click", (event) => {
         if (event.target === coachModal) coachModal.classList.add("hidden");
       });
@@ -535,34 +567,281 @@ async function smsSuggestion(ownerUserId: string, brandId: string): Promise<stri
   return "Hey! We have fresh specials today. Stop by and see what’s new.";
 }
 
+function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
+  return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
+    <h3>Your daily money move</h3>
+    <details class="output-card" open>
+      <summary><strong>Today’s Special</strong></summary>
+      <p id="daily-special" class="output-value" style="margin-top:8px;"><strong>${escapeHtml(
+        pack.todaySpecial.promoName,
+      )}</strong><br/>${escapeHtml(pack.todaySpecial.offer)}<br/>${escapeHtml(pack.todaySpecial.timeWindow)}</p>
+      <p class="muted">${escapeHtml(pack.todaySpecial.whyThisWorks)}</p>
+    </details>
+    <details class="output-card" open>
+      <summary><strong>Ready-to-post caption</strong></summary>
+      <p id="daily-caption" class="output-value" style="margin-top:8px;"><strong>${escapeHtml(
+        pack.post.hook,
+      )}</strong><br/>${escapeHtml(pack.post.caption)}<br/>${escapeHtml(pack.post.onScreenText.join(" | "))}</p>
+      <p class="muted">Best time: ${escapeHtml(pack.post.bestTime)} · ${escapeHtml(pack.post.platform)}</p>
+    </details>
+    <details class="output-card" open>
+      <summary><strong>In-store sign</strong></summary>
+      <p id="daily-sign" class="output-value" style="margin-top:8px;"><strong>${escapeHtml(
+        pack.sign.headline,
+      )}</strong><br/>${escapeHtml(pack.sign.body)}${
+        pack.sign.finePrint ? `<br/><span class="muted">${escapeHtml(pack.sign.finePrint)}</span>` : ""
+      }</p>
+      <a class="secondary-button" style="margin-top:6px;" href="${escapeHtml(signUrl)}" id="open-sign-print">Print sign</a>
+    </details>
+    ${
+      pack.optionalSms.enabled
+        ? `<details class="output-card">
+            <summary><strong>Optional SMS</strong></summary>
+            <p id="daily-sms" class="output-value" style="margin-top:8px;">${escapeHtml(
+              pack.optionalSms.message,
+            )}</p>
+          </details>`
+        : ""
+    }
+    <div class="grid" style="grid-template-columns:1fr; margin-top:8px;">
+      <button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>
+      <button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>
+      ${
+        pack.optionalSms.enabled
+          ? `<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>`
+          : ""
+      }
+      <button class="secondary-button" id="share-daily" type="button">Share…</button>
+      <a class="secondary-button" id="print-daily-sign" href="${escapeHtml(signUrl)}">Printable Sign</a>
+    </div>
+  </section>`;
+}
+
 router.get("/", async (req, res, next) => {
   try {
     const context = await resolveContext(req, res);
     if (!context) {
       return;
     }
-    const body =
-      context.selectedBrandId && context.selectedBrand
-        ? `<div class="rounded-2xl p-6 shadow-sm bg-white">
-             <h2 class="text-xl">Today’s quick actions</h2>
-             <p class="muted">Best post window: ${escapeHtml(context.bestPostTimeLabel)} · Default audience: ${escapeHtml(
-               context.defaultAudience,
-             )}</p>
-           </div>
-           <div class="grid">
-             ${cardLink(withSelection("/app/promo", context), "🟢", "Today’s Promo", "Make today’s special in one tap")}
-             ${cardLink(withSelection("/app/social", context), "🎥", "Create Social Post", "Caption + hooks fast")}
-             ${cardLink(withSelection("/app/post-now", context), "⚡", "Post Now?", "Should you post right now?")}
-             ${cardLink(withSelection("/app/tomorrow", context), "📅", "Tomorrow Ready", "See tomorrow’s ready pack")}
-             ${cardLink(withSelection("/app/media", context), "📸", "Analyze Photo", "Improve image posts")}
-             ${cardLink(withSelection("/app/sms", context), "💬", "Send SMS", "Reach opted-in customers")}
-             ${cardLink(withSelection("/app/insights", context), "📊", "Insights", "What’s working right now")}
-           </div>`
-        : `<div class="rounded-2xl p-6 shadow-sm bg-white">
-             <h2 class="text-xl">Let’s set up your first business</h2>
-             <p class="muted">Use quick onboarding and Easy Mode will fill defaults for you automatically.</p>
-             <a class="primary-button" href="/onboarding">Start onboarding</a>
-           </div>`;
+    if (!context.selectedBrandId || !context.selectedBrand || !context.ownerUserId) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Home",
+            context,
+            active: "home",
+            currentPath: "/app",
+            body: `<div class="rounded-2xl p-6 shadow-sm bg-white">
+              <h2 class="text-xl">Let’s set up your first business</h2>
+              <p class="muted">Use quick onboarding and Easy Mode will fill defaults automatically.</p>
+              <a class="primary-button" href="/onboarding">Start onboarding</a>
+            </div>`,
+            notice: optionalText(req.query.notice),
+          }),
+        );
+    }
+
+    const [latest, checkin] = await Promise.all([
+      getLatestDailyPack(context.ownerUserId, context.selectedBrandId),
+      dailyCheckinStatus(context.ownerUserId, context.selectedBrandId),
+    ]);
+    const signUrl = withSelection("/app/sign/today", context);
+
+    const staffView =
+      context.role === "member"
+        ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
+            <h2 class="text-xl">Today’s Pack</h2>
+            <p class="muted">Copy and post. No extra setup needed.</p>
+          </section>
+          ${
+            latest
+              ? renderDailyPackSection(latest.output, signUrl)
+              : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack yet. Ask an owner to tap “Make Me Money Today”.</p></section>`
+          }
+          <section class="rounded-2xl p-6 shadow-sm bg-white">
+            <p class="muted">Quick actions</p>
+            <div class="two-col">
+              <a class="secondary-button" href="${escapeHtml(withSelection("/app/post-now", context))}">Post Now?</a>
+              <a class="secondary-button" href="${escapeHtml(withSelection("/app/media", context))}">Upload Photo</a>
+              <a class="secondary-button" href="${escapeHtml(withSelection("/app/insights", context))}">Insights</a>
+              <a class="secondary-button" href="${escapeHtml(withSelection("/app/schedule", context))}">Planned Posts</a>
+            </div>
+          </section>`
+        : null;
+
+    const ownerView =
+      context.role !== "member"
+        ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
+            <h2 class="text-xl">One thing today</h2>
+            <p class="muted">No dashboard. One move. Real-world output.</p>
+            <details style="margin-top:10px;">
+              <summary class="muted">Optional note for today</summary>
+              <textarea id="daily-notes" placeholder="Only if needed: weather, staffing, special event, etc."></textarea>
+            </details>
+            <button id="run-daily" class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="button">✅ Make Me Money Today</button>
+            <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">🛟 Fix a Slow Day</button>
+            <p id="daily-status" class="muted" style="margin-top:8px;"></p>
+          </section>
+          <section class="rounded-2xl p-6 shadow-sm bg-white">
+            <div class="two-col">
+              <a class="secondary-button" href="${escapeHtml(withSelection("/app/post-now", context))}">Post Now?</a>
+              <a class="secondary-button" href="${escapeHtml(withSelection("/app/media", context))}">Upload Photo</a>
+              <a class="secondary-button" href="${escapeHtml(withSelection("/app/plan-week", context))}">Plan My Week</a>
+              <a class="secondary-button" href="${escapeHtml(withSelection("/app/insights", context))}">Insights</a>
+            </div>
+          </section>
+          <section id="rescue-output"></section>
+          <section id="daily-pack-wrapper">
+            ${
+              latest
+                ? renderDailyPackSection(latest.output, signUrl)
+                : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Tap “Make Me Money Today” to create today’s special, post, and sign.</p></section>`
+            }
+          </section>
+          ${
+            checkin.pending
+              ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
+                  <h3>How did it go?</h3>
+                  <p class="muted">One tap helps MainStreetAI learn your real patterns.</p>
+                  <div class="two-col">
+                    <button class="secondary-button checkin-btn" data-outcome="slow" type="button">Slow</button>
+                    <button class="secondary-button checkin-btn" data-outcome="okay" type="button">Okay</button>
+                    <button class="secondary-button checkin-btn" data-outcome="busy" type="button">Busy</button>
+                  </div>
+                  <label class="field-label" style="margin-top:8px;">Redemptions (optional)
+                    <input id="checkin-redemptions" type="number" min="0" step="1" />
+                  </label>
+                  <p id="checkin-status" class="muted"></p>
+                </section>`
+              : ""
+          }
+          <script>
+            const dailyEndpoint = ${JSON.stringify(withSelection("/api/daily", context))};
+            const rescueEndpoint = ${JSON.stringify(withSelection("/api/rescue", context))};
+            const checkinEndpoint = ${JSON.stringify(withSelection("/api/daily/checkin", context))};
+            const signUrl = ${JSON.stringify(signUrl)};
+            function esc(value) {
+              return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+            }
+            function renderDailyPack(pack) {
+              const smsSection = pack.optionalSms?.enabled
+                ? '<details class="output-card"><summary><strong>Optional SMS</strong></summary><p id="daily-sms" class="output-value" style="margin-top:8px;">' + esc(pack.optionalSms.message || "") + '</p></details>'
+                : '';
+              return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
+                '<h3>Your daily money move</h3>' +
+                '<details class="output-card" open><summary><strong>Today\\'s Special</strong></summary><p id="daily-special" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.todaySpecial?.promoName || "") + '</strong><br/>' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></details>' +
+                '<details class="output-card" open><summary><strong>Ready-to-post caption</strong></summary><p id="daily-caption" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.post?.hook || "") + '</strong><br/>' + esc(pack.post?.caption || "") + '<br/>' + esc((pack.post?.onScreenText || []).join(" | ")) + '</p><p class="muted">Best time: ' + esc(pack.post?.bestTime || "") + ' · ' + esc(pack.post?.platform || "") + '</p></details>' +
+                '<details class="output-card" open><summary><strong>In-store sign</strong></summary><p id="daily-sign" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.sign?.headline || "") + '</strong><br/>' + esc(pack.sign?.body || "") + (pack.sign?.finePrint ? '<br/><span class="muted">' + esc(pack.sign.finePrint) + '</span>' : '') + '</p><a class="secondary-button" style="margin-top:6px;" href="' + esc(signUrl) + '">Print sign</a></details>' +
+                smsSection +
+                '<div class="grid" style="grid-template-columns:1fr; margin-top:8px;">' +
+                '<button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>' +
+                '<button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>' +
+                (pack.optionalSms?.enabled ? '<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>' : '') +
+                '<button class="secondary-button" id="share-daily" type="button">Share…</button>' +
+                '<a class="secondary-button" href="' + esc(signUrl) + '">Printable Sign</a>' +
+                '</div></section>';
+            }
+            async function runDailyPack() {
+              const status = document.getElementById("daily-status");
+              if (status) status.textContent = "Building your daily pack...";
+              const notes = document.getElementById("daily-notes")?.value || "";
+              const response = await fetch(dailyEndpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ notes: notes || undefined })
+              });
+              const json = await response.json().catch(() => ({}));
+              if (!response.ok) {
+                if (status) status.textContent = json.error || "Could not create daily pack.";
+                return;
+              }
+              const wrapper = document.getElementById("daily-pack-wrapper");
+              if (wrapper) wrapper.innerHTML = renderDailyPack(json);
+              if (status) status.textContent = "Done. Copy and post.";
+              window.__setupCopyButtons?.();
+              const shareButton = document.getElementById("share-daily");
+              shareButton?.addEventListener("click", async () => {
+                const text = [json.post?.hook, json.post?.caption, (json.post?.onScreenText || []).join(" | ")].filter(Boolean).join("\\n");
+                if (navigator.share) {
+                  await navigator.share({ title: "Today's Pack", text }).catch(() => {});
+                } else {
+                  await navigator.clipboard.writeText(text);
+                }
+              });
+            }
+            async function runRescuePack() {
+              const status = document.getElementById("daily-status");
+              if (status) status.textContent = "Building rescue plan...";
+              const notes = document.getElementById("daily-notes")?.value || "";
+              const response = await fetch(rescueEndpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ whatHappened: notes || undefined })
+              });
+              const json = await response.json().catch(() => ({}));
+              if (!response.ok) {
+                if (status) status.textContent = json.error || "Could not create rescue plan.";
+                return;
+              }
+              const target = document.getElementById("rescue-output");
+              if (target) {
+                target.innerHTML = '<section class="rounded-2xl p-6 shadow-sm bg-white"><h3>Slow Day Rescue</h3>' +
+                  '<div class="output-card"><p class="output-label">Offer</p><p class="output-value"><strong>' + esc(json.rescuePlan?.offer || "") + '</strong><br/>' + esc(json.rescuePlan?.timeWindow || "") + '</p></div>' +
+                  '<div class="output-card"><p class="output-label">Post</p><p id="rescue-caption" class="output-value"><strong>' + esc(json.post?.hook || "") + '</strong><br/>' + esc(json.post?.caption || "") + '<br/>' + esc((json.post?.onScreenText || []).join(" | ")) + '</p><button class="primary-button" data-copy-target="rescue-caption">Copy Rescue Post</button></div>' +
+                  '<div class="output-card"><p class="output-label">SMS</p><p id="rescue-sms" class="output-value">' + esc(json.sms?.message || "") + '</p><button class="secondary-button" data-copy-target="rescue-sms">Copy Rescue SMS</button></div>' +
+                  '<div class="output-card"><p class="output-label">3 quick actions</p><p class="output-value">' + esc((json.threeQuickActions || []).join(" | ")) + '</p></div></section>';
+              }
+              if (status) status.textContent = "Rescue plan ready.";
+              window.__setupCopyButtons?.();
+            }
+            document.getElementById("run-daily")?.addEventListener("click", runDailyPack);
+            document.getElementById("run-rescue")?.addEventListener("click", runRescuePack);
+            document.getElementById("share-daily")?.addEventListener("click", async () => {
+              const text = [
+                document.getElementById("daily-caption")?.textContent || "",
+                document.getElementById("daily-sign")?.textContent || "",
+                document.getElementById("daily-sms")?.textContent || "",
+              ]
+                .filter(Boolean)
+                .join("\\n\\n");
+              if (!text) return;
+              if (navigator.share) {
+                await navigator.share({ title: "Today's Pack", text }).catch(() => {});
+              } else {
+                await navigator.clipboard.writeText(text).catch(() => {});
+              }
+            });
+            document.querySelectorAll(".checkin-btn").forEach((button) => {
+              button.addEventListener("click", async () => {
+                const outcome = button.getAttribute("data-outcome");
+                const redemptionsRaw = document.getElementById("checkin-redemptions")?.value || "";
+                const redemptions = redemptionsRaw === "" ? undefined : Number.parseInt(redemptionsRaw, 10);
+                const status = document.getElementById("checkin-status");
+                if (status) status.textContent = "Saving...";
+                const response = await fetch(checkinEndpoint, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ outcome, redemptions })
+                });
+                const json = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                  if (status) status.textContent = json.error || "Could not save check-in.";
+                  return;
+                }
+                if (status) status.textContent = "Saved. Thank you.";
+              });
+            });
+            ${
+              optionalText(req.query.runDaily) === "1"
+                ? "setTimeout(() => document.getElementById('run-daily')?.click(), 80);"
+                : ""
+            }
+          </script>`
+        : null;
+
+    const body = context.role === "member" ? staffView ?? "" : ownerView ?? "";
+
     return res
       .type("html")
       .send(
@@ -875,6 +1154,83 @@ router.get("/social", async (req, res, next) => {
           context,
           active: "create",
           currentPath: "/app/social",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/plan-week", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    const endpoint = withSelection("/api/week-plan", context);
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Plan My Week</h2>
+      <p class="muted">One tap weekly plan, using your best patterns.</p>
+      <form id="week-form" style="display:grid;gap:10px;margin-top:10px;">
+        <label class="field-label">Notes (optional)
+          <textarea id="week-notes" placeholder="Any events or priorities this week?"></textarea>
+        </label>
+        <button class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="submit">Build Weekly Plan</button>
+      </form>
+      <p id="week-status" class="muted" style="margin-top:8px;"></p>
+    </section>
+    <section id="week-output" class="rounded-2xl p-6 shadow-sm bg-white" style="display:none;">
+      <div class="output-card"><p class="output-label">Theme</p><p id="week-theme" class="output-value"></p></div>
+      <div class="output-card"><p class="output-label">Daily plan</p><p id="week-days" class="output-value"></p></div>
+    </section>
+    <script>
+      function nextMonday() {
+        const now = new Date();
+        const day = now.getDay();
+        const delta = (8 - day) % 7 || 7;
+        const target = new Date(now.getTime() + delta * 24 * 60 * 60 * 1000);
+        return target.toISOString().slice(0, 10);
+      }
+      const form = document.getElementById("week-form");
+      const status = document.getElementById("week-status");
+      const output = document.getElementById("week-output");
+      form?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        status.textContent = "Building plan...";
+        const payload = {
+          startDate: nextMonday(),
+          goal: ${JSON.stringify(context.defaultGoal)},
+          focusAudience: ${JSON.stringify(context.defaultAudience)},
+          includeLocalEvents: true,
+          notes: document.getElementById("week-notes")?.value || undefined
+        };
+        const response = await fetch(${JSON.stringify(endpoint)}, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          status.textContent = json.error || "Could not build week plan.";
+          return;
+        }
+        status.textContent = "Plan ready.";
+        document.getElementById("week-theme").textContent = json.weekTheme || "";
+        document.getElementById("week-days").textContent = (json.dailyPlan || [])
+          .map((day) => (day.dayLabel || "") + ": " + (day.promoName || ""))
+          .join(" | ");
+        output.style.display = "block";
+      });
+    </script>`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Plan My Week",
+          context,
+          active: "create",
+          currentPath: "/app/plan-week",
           body,
         }),
       );
@@ -1332,11 +1688,101 @@ router.get("/tomorrow", async (req, res, next) => {
   }
 });
 
+router.get("/sign/today", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context || !context.ownerUserId || !context.selectedBrandId || !context.selectedBrand) {
+      return;
+    }
+    const latest = await getLatestDailyPack(context.ownerUserId, context.selectedBrandId);
+    if (!latest) {
+      return res
+        .status(404)
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Today Sign",
+            context,
+            active: "home",
+            currentPath: "/app/sign/today",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack found yet. Tap “Make Me Money Today” first.</p></section>`,
+          }),
+        );
+    }
+
+    if (String(req.query.pdf ?? "") === "1") {
+      const doc = new PDFDocument({ size: "LETTER", margin: 50 });
+      const safeBusinessName = context.selectedBrand.businessName.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${safeBusinessName}-today-sign.pdf"`);
+      doc.pipe(res);
+      doc.fontSize(30).text(context.selectedBrand.businessName, { align: "center" });
+      doc.moveDown(0.3);
+      doc.fontSize(16).fillColor("#555555").text(context.selectedBrand.location, { align: "center" });
+      doc.moveDown(1.4);
+      doc.fillColor("#000000");
+      doc.fontSize(28).text(latest.output.sign.headline, { align: "center" });
+      doc.moveDown(0.8);
+      doc.fontSize(20).text(latest.output.sign.body, { align: "center" });
+      doc.moveDown(1);
+      if (latest.output.sign.finePrint) {
+        doc.fontSize(12).fillColor("#444444").text(latest.output.sign.finePrint, { align: "center" });
+      }
+      doc.moveDown(2);
+      doc.fillColor("#111111");
+      doc.fontSize(12).text(`Today’s Special: ${latest.output.todaySpecial.promoName}`, { align: "center" });
+      doc.end();
+      return;
+    }
+
+    const pdfUrl = withSelection("/app/sign/today", context, { pdf: "1" });
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Printable Sign</h2>
+      <p class="muted">One tap print for your counter or window.</p>
+      <a class="primary-button" href="${escapeHtml(pdfUrl)}" target="_blank">Print / Save PDF</a>
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <p class="output-value"><strong>${escapeHtml(latest.output.sign.headline)}</strong><br/>${escapeHtml(
+        latest.output.sign.body,
+      )}</p>
+      ${latest.output.sign.finePrint ? `<p class="muted">${escapeHtml(latest.output.sign.finePrint)}</p>` : ""}
+      <iframe title="Today sign PDF" src="${escapeHtml(pdfUrl)}" style="width:100%;height:60vh;border:1px solid #d1d5db;border-radius:12px;"></iframe>
+    </section>`;
+
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Today Sign",
+          context,
+          active: "home",
+          currentPath: "/app/sign/today",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/settings", async (req, res, next) => {
   try {
     const context = await resolveContext(req, res);
     if (!context) {
       return;
+    }
+    if (context.role === "member") {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Settings",
+            context,
+            active: "home",
+            currentPath: "/app/settings",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Settings are owner/admin only. You can still copy and post today’s pack.</p></section>`,
+          }),
+        );
     }
     const autopilotOn = Boolean(context.autopilotSettings?.enabled);
     const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
@@ -1381,6 +1827,9 @@ router.post("/settings/automatic-help", async (req, res, next) => {
     if (!context || !context.ownerUserId || !context.selectedBrandId) {
       return;
     }
+    if (context.role === "member") {
+      return res.redirect(withNotice(withSelection("/app", context), "Only owners/admins can change settings."));
+    }
     const desired = String(req.body?.enabled ?? "").toLowerCase() === "true";
     if (desired) {
       const planCheck = await requirePlan(context.ownerUserId, context.selectedBrandId, "pro");
@@ -1404,6 +1853,9 @@ router.get("/settings/advanced", async (req, res, next) => {
     const context = await resolveContext(req, res);
     if (!context) {
       return;
+    }
+    if (context.role === "member") {
+      return res.redirect(withNotice(withSelection("/app", context), "Advanced settings are owner/admin only."));
     }
     const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
       <h2 class="text-xl">Advanced Settings</h2>

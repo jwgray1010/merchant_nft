@@ -56,6 +56,8 @@ export type HistoryEndpoint =
   | "events"
   | "week-plan"
   | "next-week-plan"
+  | "daily_one_button"
+  | "rescue_one_button"
   | "autopilot_run"
   | "alert-recommendations"
   | "publish"
