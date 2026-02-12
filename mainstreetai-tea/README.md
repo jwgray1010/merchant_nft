@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 12)
+# MainStreetAI Platform API (Phase 13)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -54,6 +54,7 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - Stripe subscriptions (starter/pro, trial-ready checkout)
   - Team members by brand (`owner|admin|member`)
   - Plan guards for premium features
+  - Community sponsorship seats for struggling businesses
   - Public marketing pages (`/`, `/pricing`, `/demo`)
   - Onboarding wizard (`/onboarding`)
   - Demo-mode write protection middleware
@@ -99,6 +100,7 @@ ENABLE_EMAIL_INTEGRATION=false
 OUTBOX_RUNNER_ENABLED=true
 APP_BASE_URL=http://localhost:3001
 CRON_SECRET=replace_with_random_cron_secret
+COMMUNITY_IMPACT_DASHBOARD_KEY=optional_sponsor_dashboard_key
 TOWN_STORY_CADENCE=daily
 DEMO_MODE=false
 
@@ -600,6 +602,7 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `GET /api/town/seasons?townId=...`
 - `POST /api/town/seasons?townId=...`
 - `DELETE /api/town/seasons?townId=...&seasonKey=...`
+- `GET /api/town/community-impact?townId=...`
 - `GET /api/alerts?brandId=...&status=open|all`
 - `POST /api/alerts/:id/ack?brandId=...`
 - `POST /api/alerts/:id/resolve?brandId=...`
@@ -1609,3 +1612,51 @@ Safety:
 - Seasonal guidance remains inclusive and category-level.
 - No business ranking, private metrics, or engagement numbers are exposed.
 - Team/school specifics are only referenced when provided via notes/identity context.
+
+## Phase 13: Community Impact Model (mission-driven sustainability)
+
+Phase 13 shifts platform economics toward local resilience:
+- Free tier remains genuinely useful (not crippled)
+- Starter/Pro keep the product sustainable
+- Community organizations can sponsor access for businesses that need help most
+
+New data model:
+- `brands.support_level`
+  - `growing_fast | steady | struggling | just_starting`
+- `community_sponsors`
+  - sponsor seats by town (`sponsored_seats`, active toggle)
+- `sponsored_memberships`
+  - active seat assignments from sponsor to brand
+
+Behavior updates:
+- Onboarding now captures optional support context ("struggling to get traffic", etc.)
+- Struggling businesses default Daily goal toward slow-hour recovery
+- Plan guard (`requirePlan`) now allows Starter-level access when active sponsored membership exists
+- If seats are full, plan-gate responses include a reduced-cost Starter path
+
+Town flywheel updates:
+- Town Mode prompt now receives network momentum context when local participation grows
+- Seasonal micro-routes apply a cross-flow boost as active-business density increases
+- Town Stories receive active-business context to emphasize shop-local momentum
+
+Community dashboard endpoint:
+- `GET /api/town/community-impact?townId=...`
+- Returns anonymized summary:
+  - `activeBusinesses`
+  - `townPulseEnergy`
+  - `topCategories`
+- Includes sponsorship seat pressure status (no private rankings, no business-level metrics)
+- Optional key hardening via `COMMUNITY_IMPACT_DASHBOARD_KEY` using header `x-community-impact-key`
+
+Safety guardrails:
+- Prompts and system policy now explicitly avoid predatory discounting and pricing wars
+- Guidance favors value adds, bundles, experience, and local identity
+
+### HOW TO GROW TOWN NETWORKS
+
+Position MainStreetAI as **Local Business Survival Infrastructure**:
+- Partner with local banks
+- Run Chamber of Commerce onboarding sessions
+- Coordinate with downtown associations
+- Connect through school district/community calendars
+- Use sponsorship seats to protect vulnerable main-street businesses first

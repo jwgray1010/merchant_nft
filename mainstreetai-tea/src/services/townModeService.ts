@@ -672,6 +672,8 @@ export async function buildTownBoostForDaily(input: {
       townRef: brandRow.town_ref,
       excludeBrandRef: brandRow.id,
     });
+    const activeBusinessCount = businesses.length + 1;
+    const clusterBoost = activeBusinessCount >= 4;
     const rotating = pickRotatingBusinesses(businesses);
     if (rotating.length === 0) {
       return null;
@@ -695,6 +697,10 @@ export async function buildTownBoostForDaily(input: {
         },
         otherLocalBusinesses,
         goal: input.goal,
+        networkMomentum: {
+          activeBusinesses: activeBusinessCount,
+          clusterBoost,
+        },
       },
       outputSchema: townModePromptOutputSchema,
     });
@@ -730,6 +736,8 @@ export async function buildTownBoostForDaily(input: {
     townRef: input.brand.townRef,
     excludeBrandRef: input.brand.brandId,
   });
+  const activeBusinessCount = businesses.length + 1;
+  const clusterBoost = activeBusinessCount >= 4;
   const rotating = pickRotatingBusinesses(businesses);
   if (rotating.length === 0) {
     return null;
@@ -753,6 +761,10 @@ export async function buildTownBoostForDaily(input: {
       },
       otherLocalBusinesses,
       goal: input.goal,
+      networkMomentum: {
+        activeBusinesses: activeBusinessCount,
+        clusterBoost,
+      },
     },
     outputSchema: townModePromptOutputSchema,
   });

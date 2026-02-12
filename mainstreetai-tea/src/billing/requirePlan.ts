@@ -1,6 +1,7 @@
 import { FEATURES } from "../config/featureFlags";
 import { type BillingPlan } from "../schemas/subscriptionSchema";
 import { getEffectivePlanForBrand, hasRequiredPlan } from "./subscriptions";
+import { getCommunitySupportStatusForBrand } from "../services/communityImpactService";
 
 export async function requirePlan(
   userId: string,
@@ -22,6 +23,21 @@ export async function requirePlan(
     };
   }
 
+  const sponsorship =
+    minPlan === "pro"
+      ? null
+      : await getCommunitySupportStatusForBrand({
+          ownerId: userId,
+          brandId,
+          autoAssign: true,
+        }).catch(() => null);
+  if (sponsorship?.sponsored && minPlan !== "pro") {
+    return {
+      ok: true,
+      plan: effectivePlan === "pro" ? "pro" : "starter",
+    };
+  }
+
   return {
     ok: false,
     plan: effectivePlan,
@@ -30,6 +46,15 @@ export async function requirePlan(
       error: "Upgrade required",
       requiredPlan: minPlan,
       currentPlan: effectivePlan,
+      sponsorship: sponsorship
+        ? {
+            supportLevel: sponsorship.supportLevel,
+            eligibleForSponsorship: sponsorship.eligibleForSponsorship,
+            activeSponsoredMembership: sponsorship.sponsored,
+            seatsRemaining: sponsorship.seatsRemaining,
+            reducedCostUpgradePath: sponsorship.reducedCostUpgradePath,
+          }
+        : undefined,
     },
   };
 }

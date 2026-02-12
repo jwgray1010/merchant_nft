@@ -17,7 +17,12 @@ import {
   type AutopilotGoal,
 } from "../schemas/autopilotSettingsSchema";
 import { autopilotRunRequestSchema } from "../schemas/autopilotRunSchema";
-import { brandProfileSchema, type BrandProfile, type BrandRegistryItem } from "../schemas/brandSchema";
+import {
+  brandProfileSchema,
+  brandSupportLevelSchema,
+  type BrandProfile,
+  type BrandRegistryItem,
+} from "../schemas/brandSchema";
 import {
   emailSubscriptionUpdateSchema,
   emailSubscriptionUpsertSchema,
@@ -67,6 +72,7 @@ const COMMUNITY_AUDIENCE_STYLES = [
   "creative",
   "mixed",
 ] as const;
+const SUPPORT_LEVELS = [...brandSupportLevelSchema.options] as Array<(typeof brandSupportLevelSchema.options)[number]>;
 
 const POST_PLATFORMS = ["facebook", "instagram", "tiktok", "other"] as const;
 const POST_MEDIA_TYPES = ["photo", "reel", "story", "text"] as const;
@@ -294,6 +300,18 @@ function renderBrandForm(
     const selected = brand?.type === typeValue ? "selected" : "";
     return `<option value="${typeValue}" ${selected}>${typeValue}</option>`;
   }).join("");
+  const supportLevelOptions = SUPPORT_LEVELS.map((supportLevel) => {
+    const selected = (brand?.supportLevel ?? "steady") === supportLevel ? "selected" : "";
+    const label =
+      supportLevel === "growing_fast"
+        ? "Growing fast"
+        : supportLevel === "just_starting"
+          ? "Just starting"
+          : supportLevel === "struggling"
+            ? "Struggling to get traffic"
+            : "Steady";
+    return `<option value="${supportLevel}" ${selected}>${escapeHtml(label)}</option>`;
+  }).join("");
   const localToneOptions = COMMUNITY_LOCAL_TONES.map((tone) => {
     const selected = communityVibe.localTone === tone ? "selected" : "";
     return `<option value="${tone}" ${selected}>${tone}</option>`;
@@ -331,6 +349,10 @@ function renderBrandForm(
         <div class="field">
           <label>Type</label>
           <select name="type">${typeOptions}</select>
+        </div>
+        <div class="field">
+          <label>Support level</label>
+          <select name="supportLevel">${supportLevelOptions}</select>
         </div>
       </div>
 
@@ -509,6 +531,9 @@ function parseBrandForm(body: Record<string, unknown>): BrandProfile {
     businessName: String(body.businessName ?? "").trim(),
     location: String(body.location ?? "").trim(),
     townRef: optionalText(body.townRef),
+    supportLevel: String(body.supportLevel ?? "steady")
+      .trim()
+      .toLowerCase(),
     type: String(body.type ?? "other"),
     voice: String(body.voice ?? "").trim(),
     audiences: parseStringList(body.audiences),

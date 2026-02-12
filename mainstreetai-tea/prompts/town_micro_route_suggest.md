@@ -17,6 +17,7 @@ Input JSON:
       "weight": number
     }
   ],
+  "activeBusinesses": "number",
   "townPulse": { ... },
   "goal": "new_customers|repeat_customers|slow_hours",
   "explicitPartners": [
@@ -38,3 +39,4 @@ Rules:
 - No rankings, private metrics, or analytics references.
 - Focus on category flow by default.
 - Only name a business when it appears in explicitPartners.
+- When activeBusinesses is high, subtly reinforce shared main-street momentum.

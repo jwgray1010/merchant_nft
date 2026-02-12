@@ -26,6 +26,7 @@ import {
 import { recomputeTownMicroRoutesForTown } from "../services/townMicroRoutesService";
 import { deleteTownSeason, listTownSeasons, resolveTownSeasonStateForTown, upsertTownSeason } from "../services/townSeasonService";
 import { generateTownStoryForTown, getLatestTownStory } from "../services/townStoriesService";
+import { summarizeCommunityImpactForTown } from "../services/communityImpactService";
 import { parseSeasonOverride } from "../town/seasonDetector";
 
 const router = Router();
@@ -37,6 +38,26 @@ function actorUserId(req: Request): string | null {
 
 function ownerOrAdmin(role: string | undefined): boolean {
   return role === "owner" || role === "admin";
+}
+
+function providedCommunityImpactKey(req: Request): string {
+  const header = req.headers["x-community-impact-key"];
+  if (typeof header === "string") {
+    return header.trim();
+  }
+  if (Array.isArray(header)) {
+    return String(header[0] ?? "").trim();
+  }
+  const query = typeof req.query.communityImpactKey === "string" ? req.query.communityImpactKey : "";
+  return query.trim();
+}
+
+function isCommunityImpactKeyValid(req: Request): boolean {
+  const configured = (process.env.COMMUNITY_IMPACT_DASHBOARD_KEY ?? "").trim();
+  if (!configured) {
+    return false;
+  }
+  return providedCommunityImpactKey(req) === configured;
 }
 
 router.get("/map", async (req, res, next) => {
@@ -120,6 +141,44 @@ router.post("/pulse/recompute", async (req, res, next) => {
       town: map.town,
       model: model.model,
       computedAt: model.computedAt,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/community-impact", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  const validImpactKey = isCommunityImpactKeyValid(req);
+  try {
+    if (!validImpactKey) {
+      const map = await getTownMapForUser({
+        actorUserId: actorId,
+        townId,
+      });
+      if (!map) {
+        return res.status(404).json({ error: "Town was not found or is not accessible" });
+      }
+    }
+    const summary = await summarizeCommunityImpactForTown({
+      townId,
+      userId: req.user?.id,
+    });
+    return res.json({
+      activeBusinesses: summary.activeBusinesses,
+      townPulseEnergy: summary.townPulseEnergy,
+      topCategories: summary.topCategories,
+      sponsorship: summary.sponsorship,
+      notifications: summary.sponsorship.waitlistNeeded
+        ? ["Sponsorship seats are full for current struggling-business demand."]
+        : [],
     });
   } catch (error) {
     return next(error);

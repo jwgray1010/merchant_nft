@@ -4,6 +4,10 @@ Input JSON:
 {
   "brand": { ... },
   "insightsSummary": { ...optional... },
+  "supportContext": {
+    "supportLevel": "growing_fast|steady|struggling|just_starting",
+    "prioritizeRescueIdeas": "boolean"
+  },
   "whatHappened": "optional string",
   "timeLeftToday": "optional string",
   "location": { ...optional... }
@@ -32,3 +36,5 @@ Rules:
 - Keep it local, practical, and non-corporate.
 - Focus on fast pivots: personal service, community tie-ins, word-of-mouth.
 - Avoid complex coupon rules.
+- Never recommend predatory discounts or race-to-the-bottom pricing.
+- Prefer bundle/value-add ideas that protect margin and can be executed by a small team.

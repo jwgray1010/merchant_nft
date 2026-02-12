@@ -18,6 +18,7 @@ import {
   suggestTownFromLocation,
   updateTownMembershipForBrand,
 } from "../services/townModeService";
+import { getCommunitySupportStatusForBrand } from "../services/communityImpactService";
 import {
   getTownGraph,
   listPreferredPartnerCategoriesForBrand,
@@ -64,6 +65,11 @@ type EasyContext = {
   defaultAudience: string;
   defaultGoal: "new_customers" | "repeat_customers" | "slow_hours";
   bestPostTimeLabel: string;
+  communitySupport: {
+    supported: boolean;
+    sponsorshipEligible: boolean;
+    seatsRemaining: number;
+  };
 };
 
 const GRAPH_CATEGORY_OPTIONS = [...townGraphCategorySchema.options] as TownGraphCategory[];
@@ -252,6 +258,11 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       defaultAudience: "general",
       defaultGoal: "repeat_customers",
       bestPostTimeLabel: "3:00 PM",
+      communitySupport: {
+        supported: false,
+        sponsorshipEligible: false,
+        seatsRemaining: 0,
+      },
     };
   }
 
@@ -270,6 +281,11 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       defaultAudience: "general",
       defaultGoal: "repeat_customers",
       bestPostTimeLabel: "3:00 PM",
+      communitySupport: {
+        supported: false,
+        sponsorshipEligible: false,
+        seatsRemaining: 0,
+      },
     };
   }
   req.brandAccess = access;
@@ -296,13 +312,28 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       defaultAudience: "general",
       defaultGoal: "repeat_customers",
       bestPostTimeLabel: "3:00 PM",
+      communitySupport: {
+        supported: false,
+        sponsorshipEligible: false,
+        seatsRemaining: 0,
+      },
     };
   }
 
-  const [locations, autopilotSettings, timingModel] = await Promise.all([
+  const [locations, autopilotSettings, timingModel, communitySupport] = await Promise.all([
     listLocations(access.ownerId, access.brandId).catch(() => []),
     adapter.getAutopilotSettings(access.ownerId, access.brandId).catch(() => null),
     getTimingModel(access.ownerId, access.brandId, "instagram").catch(() => null),
+    getCommunitySupportStatusForBrand({
+      ownerId: access.ownerId,
+      brandId: access.brandId,
+    }).catch(() => ({
+      supportLevel: "steady" as const,
+      eligibleForSponsorship: false,
+      sponsored: false,
+      seatsRemaining: 0,
+      reducedCostUpgradePath: "/pricing?plan=starter&mode=community",
+    })),
   ]);
   const rawLocationQuery = typeof req.query.locationId === "string" ? req.query.locationId : undefined;
   const queryLocationId = rawLocationQuery?.trim();
@@ -322,7 +353,9 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
     : null;
   const defaultAudience =
     autopilotSettings?.focusAudiences[0] ?? brand.audiences[0] ?? "general";
-  const defaultGoal = (autopilotSettings?.goals[0] ?? "repeat_customers") as
+  const defaultGoal = (
+    autopilotSettings?.goals[0] ?? (brand.supportLevel === "struggling" ? "slow_hours" : "repeat_customers")
+  ) as
     | "new_customers"
     | "repeat_customers"
     | "slow_hours";
@@ -344,6 +377,11 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
     defaultAudience,
     defaultGoal,
     bestPostTimeLabel,
+    communitySupport: {
+      supported: communitySupport.sponsored,
+      sponsorshipEligible: communitySupport.eligibleForSponsorship,
+      seatsRemaining: communitySupport.seatsRemaining,
+    },
   };
 }
 
@@ -399,10 +437,21 @@ function renderHeader(context: EasyContext, currentPath: string): string {
       return `<option value="${escapeHtml(location.id)}" ${selected}>${escapeHtml(location.name)}</option>`;
     }),
   ].join("");
+  const communitySupportBadge = context.communitySupport.supported
+    ? `<span class="neighborhood-chip">Supported by Local Community</span>`
+    : "";
+  const sponsorshipWaitlistNote =
+    !context.communitySupport.supported &&
+    context.communitySupport.sponsorshipEligible &&
+    context.communitySupport.seatsRemaining === 0
+      ? `<p class="muted" style="margin-top:8px;">Community sponsorship seats are currently full. Reduced-cost path is available in Billing.</p>`
+      : "";
   return `<header class="rounded-2xl p-6 shadow-sm bg-white">
     <p class="section-title">MainStreetAI Easy Mode</p>
     <h1 class="text-xl">${escapeHtml(greeting)}, ${escapeHtml(context.selectedBrand.businessName)}</h1>
     <p class="muted">${escapeHtml(context.selectedBrand.location)}</p>
+    ${communitySupportBadge ? `<div style="margin-top:8px;">${communitySupportBadge}</div>` : ""}
+    ${sponsorshipWaitlistNote}
     <form method="GET" action="${escapeHtml(currentPath)}" class="selector-grid">
       ${
         context.brands.length > 1
@@ -1145,6 +1194,11 @@ router.get("/", async (req, res, next) => {
       ? `<span class="neighborhood-chip">Season: ${escapeHtml(seasonTagLabel(activeSeason))}</span>`
       : "";
     const homeChipRow = `<div class="chip-row">${townPulseIndicator}${chipWindow}${chipSeason}</div>`;
+    const rescuePriority = context.selectedBrand.supportLevel === "struggling";
+    const rescueButtonLabel = rescuePriority ? "Fix a Slow Day (Priority)" : "Fix a Slow Day";
+    const rescuePriorityNote = rescuePriority
+      ? `<p class="muted" style="margin-top:8px;">Rescue-first suggestions are prioritized right now.</p>`
+      : "";
 
     const staffView =
       context.role === "member"
@@ -1183,7 +1237,10 @@ router.get("/", async (req, res, next) => {
             </details>
             ${routeWindowSelect}
             <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">✅ Make Me Money Today</button>
-            <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">Fix a Slow Day</button>
+            <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">${escapeHtml(
+              rescueButtonLabel,
+            )}</button>
+            ${rescuePriorityNote}
             <p class="muted" style="margin-top:10px;">Made for local owners. Built for real life.</p>
             <p id="daily-status" class="muted" style="margin-top:8px;"></p>
           </section>
@@ -1311,6 +1368,20 @@ router.get("/", async (req, res, next) => {
                 '<button class="secondary-button touch-target" data-copy-target="daily-sign">Copy Sign</button>' +
                 '</div></section>';
             }
+            function planStatusMessage(json, fallback) {
+              const base = json?.error || fallback;
+              const sponsor = json?.sponsorship;
+              if (!sponsor || !sponsor.reducedCostUpgradePath) {
+                return base;
+              }
+              if (sponsor.eligibleForSponsorship && sponsor.seatsRemaining === 0) {
+                return base + " Community sponsorship seats are full right now. Reduced-cost Starter path is available in Billing.";
+              }
+              if (sponsor.eligibleForSponsorship) {
+                return base + " Community sponsorship may be available in your town.";
+              }
+              return base + " Reduced-cost Starter path is available in Billing.";
+            }
             async function runDailyPack() {
               const status = document.getElementById("daily-status");
               if (status) status.textContent = "Making today\\'s plan...";
@@ -1337,7 +1408,7 @@ router.get("/", async (req, res, next) => {
               });
               const json = await response.json().catch(() => ({}));
               if (!response.ok) {
-                if (status) status.textContent = json.error || "Could not make today\\'s plan.";
+                if (status) status.textContent = planStatusMessage(json, "Could not make today\\'s plan.");
                 return;
               }
               if (wrapper) wrapper.innerHTML = renderDailyPack(json);
@@ -1376,7 +1447,7 @@ router.get("/", async (req, res, next) => {
               });
               const json = await response.json().catch(() => ({}));
               if (!response.ok) {
-                if (status) status.textContent = json.error || "Could not build a rescue plan.";
+                if (status) status.textContent = planStatusMessage(json, "Could not build a rescue plan.");
                 return;
               }
               const target = document.getElementById("rescue-output");

@@ -16,6 +16,7 @@ create table if not exists public.brands (
   business_name text not null,
   location text not null,
   town_ref uuid references public.towns(id) on delete set null,
+  support_level text not null default 'steady' check (support_level in ('growing_fast','steady','struggling','just_starting')),
   type text not null,
   voice text not null,
   audiences jsonb not null default '[]'::jsonb,
@@ -36,6 +37,16 @@ alter table public.brands
 
 alter table public.brands
   add column if not exists town_ref uuid references public.towns(id) on delete set null;
+
+alter table public.brands
+  add column if not exists support_level text not null default 'steady';
+
+alter table public.brands
+  drop constraint if exists brands_support_level_check;
+
+alter table public.brands
+  add constraint brands_support_level_check
+  check (support_level in ('growing_fast','steady','struggling','just_starting'));
 
 create unique index if not exists brands_owner_brand_id_unique
   on public.brands(owner_id, brand_id);
@@ -141,6 +152,23 @@ create table if not exists public.town_route_season_weights (
   from_category text not null check (from_category in ('cafe','fitness','salon','retail','service','food','other')),
   to_category text not null check (to_category in ('cafe','fitness','salon','retail','service','food','other')),
   weight_delta numeric not null default 1,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.community_sponsors (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  sponsor_name text not null,
+  sponsored_seats int not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.sponsored_memberships (
+  id uuid primary key default gen_random_uuid(),
+  sponsor_ref uuid not null references public.community_sponsors(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  status text not null default 'active' check (status in ('active','paused','ended')),
   created_at timestamptz not null default now()
 );
 
@@ -521,6 +549,18 @@ create unique index if not exists town_route_season_weights_unique
 create index if not exists town_route_season_weights_town_window_idx
   on public.town_route_season_weights(town_ref, window, created_at desc);
 
+create index if not exists community_sponsors_town_active_idx
+  on public.community_sponsors(town_ref, active, created_at desc);
+
+create unique index if not exists community_sponsors_town_name_unique
+  on public.community_sponsors(town_ref, lower(sponsor_name));
+
+create unique index if not exists sponsored_memberships_brand_ref_unique
+  on public.sponsored_memberships(brand_ref);
+
+create index if not exists sponsored_memberships_sponsor_status_idx
+  on public.sponsored_memberships(sponsor_ref, status, created_at desc);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -752,6 +792,8 @@ alter table public.brand_partners enable row level security;
 alter table public.town_micro_routes enable row level security;
 alter table public.town_seasons enable row level security;
 alter table public.town_route_season_weights enable row level security;
+alter table public.community_sponsors enable row level security;
+alter table public.sponsored_memberships enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -979,6 +1021,49 @@ create policy town_route_season_weights_member_modify on public.town_route_seaso
 for all
 using (public.is_town_member(town_ref))
 with check (public.is_town_member(town_ref));
+
+drop policy if exists community_sponsors_member_select on public.community_sponsors;
+create policy community_sponsors_member_select on public.community_sponsors
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists community_sponsors_member_modify on public.community_sponsors;
+create policy community_sponsors_member_modify on public.community_sponsors
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists sponsored_memberships_member_select on public.sponsored_memberships;
+create policy sponsored_memberships_member_select on public.sponsored_memberships
+for select
+using (
+  exists (
+    select 1
+    from public.community_sponsors cs
+    where cs.id = sponsor_ref
+      and public.is_town_member(cs.town_ref)
+  )
+);
+
+drop policy if exists sponsored_memberships_member_modify on public.sponsored_memberships;
+create policy sponsored_memberships_member_modify on public.sponsored_memberships
+for all
+using (
+  exists (
+    select 1
+    from public.community_sponsors cs
+    where cs.id = sponsor_ref
+      and public.is_town_member(cs.town_ref)
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.community_sponsors cs
+    where cs.id = sponsor_ref
+      and public.is_town_member(cs.town_ref)
+  )
+);
 
 drop policy if exists history_owner_all on public.history;
 create policy history_owner_all on public.history

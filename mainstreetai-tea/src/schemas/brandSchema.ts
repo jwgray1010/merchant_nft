@@ -18,6 +18,13 @@ export const businessTypeSchema = z.enum([
   "other",
 ]);
 
+export const brandSupportLevelSchema = z.enum([
+  "growing_fast",
+  "steady",
+  "struggling",
+  "just_starting",
+]);
+
 export const brandConstraintsSchema = z.object({
   noHugeDiscounts: z.boolean(),
   keepPromosSimple: z.boolean(),
@@ -56,6 +63,7 @@ export const brandProfileSchema = z.object({
   businessName: z.string().min(1),
   location: z.string().min(1),
   townRef: z.string().min(1).optional(),
+  supportLevel: brandSupportLevelSchema.default("steady"),
   type: businessTypeSchema,
   voice: z.string().min(1),
   audiences: z.array(z.string()).default([]),
@@ -86,3 +94,4 @@ export const brandRegistrySchema = z.array(brandRegistryItemSchema);
 export type BrandProfile = z.infer<typeof brandProfileSchema>;
 export type BrandRegistryItem = z.infer<typeof brandRegistryItemSchema>;
 export type CommunityVibeProfile = z.infer<typeof communityVibeProfileSchema>;
+export type BrandSupportLevel = z.infer<typeof brandSupportLevelSchema>;

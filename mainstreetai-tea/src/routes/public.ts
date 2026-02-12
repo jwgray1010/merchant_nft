@@ -1,7 +1,8 @@
 import { Router, type Request } from "express";
 import { buildBrandFromTemplate } from "../data/templateStore";
 import { autopilotSettingsUpsertSchema } from "../schemas/autopilotSettingsSchema";
-import { brandProfileSchema } from "../schemas/brandSchema";
+import { brandProfileSchema, brandSupportLevelSchema } from "../schemas/brandSchema";
+import { assignSponsoredSeatForBrand } from "../services/communityImpactService";
 import { ensureTownMembershipForBrand, suggestTownFromLocation } from "../services/townModeService";
 import { getAdapter } from "../storage/getAdapter";
 import { extractAuthToken, resolveAuthUser } from "../supabase/verifyAuth";
@@ -148,20 +149,29 @@ router.get("/pricing", (_req, res) => {
     "Pricing",
     `
       <div class="card">
-        <h1>Simple pricing</h1>
-        <p class="muted">Use free trial to onboard, then pick a plan that matches your growth workflow.</p>
+        <h1>Community-first pricing</h1>
+        <p class="muted">Built so free access is genuinely useful, while paid plans keep the platform sustainable.</p>
       </div>
       <div class="grid">
         <div class="card">
-          <h2>Starter</h2>
-          <p>Manual generation + planning + scheduling essentials.</p>
-          <ul><li>Generate content and plans</li><li>History, posts, metrics, insights</li><li>Schedule + ICS export</li></ul>
+          <h2>Free (Community Access)</h2>
+          <p>Everyday essentials for local businesses.</p>
+          <ul><li>One-button Daily Pack</li><li>Town Mode + Local Boost</li><li>Post Now + learning loop</li></ul>
         </div>
         <div class="card">
-          <h2>Pro</h2>
-          <p>Autopilot and operator automation.</p>
-          <ul><li>Autopilot Growth Engine</li><li>SMS, GBP, email digests</li><li>Anomaly alerts and rescue actions</li></ul>
+          <h2>Starter (Owner Growth)</h2>
+          <p>Practical tools to improve consistency.</p>
+          <ul><li>Timing model + media analysis</li><li>Scheduling</li><li>Enhanced Town Pulse + Automatic Help</li></ul>
         </div>
+        <div class="card">
+          <h2>Pro (Power Users)</h2>
+          <p>Full automation + multi-channel operations.</p>
+          <ul><li>SMS campaigns + GBP posting</li><li>Multi-location workflows</li><li>Advanced voice profile tools</li></ul>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Community sponsorship</h2>
+        <p class="muted">Local banks, chambers, and economic groups can sponsor Starter access for businesses in need.</p>
       </div>
       <div class="card"><a class="button" href="/onboarding">Start Free</a></div>
     `,
@@ -197,7 +207,7 @@ router.get("/onboarding", (_req, res) => {
     "Onboarding Wizard",
     `
       <div class="card">
-        <h1>Quick Setup (5 steps)</h1>
+        <h1>Quick Setup (6 steps)</h1>
         <p class="muted">Simple and fast. You can change details later in Settings.</p>
       </div>
       <form method="POST" action="/onboarding/complete" class="card">
@@ -253,7 +263,20 @@ router.get("/onboarding", (_req, res) => {
           </div>
         </div>
 
-        <h2>Step 5: Final setup options</h2>
+        <h2>Step 5: What describes your situation right now?</h2>
+        <div class="grid">
+          <div>
+            <label>Current situation (optional)</label>
+            <select name="supportLevel">
+              <option value="steady">Steady</option>
+              <option value="growing_fast">Growing fast</option>
+              <option value="struggling">Struggling to get traffic</option>
+              <option value="just_starting">Just starting</option>
+            </select>
+          </div>
+        </div>
+
+        <h2>Step 6: Final setup options</h2>
         <label><input type="checkbox" name="connectSocials" /> Remind me to connect Buffer/GBP after setup</label>
         <br/>
         <label><input type="checkbox" name="enableAutopilot" /> Yes, turn on Automatic Help</label>
@@ -297,6 +320,8 @@ router.post("/onboarding/complete", async (req, res, next) => {
     const template = templateMap[businessType] ?? "service";
     const topAudience = String(body.topAudience ?? "").trim();
     const communityFeel = String(body.communityFeel ?? "down-to-earth").trim().toLowerCase();
+    const supportLevelRaw = String(body.supportLevel ?? "steady").trim().toLowerCase();
+    const supportLevel = brandSupportLevelSchema.safeParse(supportLevelRaw);
     if (!businessName || !location) {
       return res
         .status(400)
@@ -340,6 +365,7 @@ router.post("/onboarding/complete", async (req, res, next) => {
       ...baseBrand,
       voice,
       audiences,
+      supportLevel: supportLevel.success ? supportLevel.data : "steady",
       offersWeCanUse: offers,
       communityVibeProfile: {
         localTone,
@@ -365,13 +391,23 @@ router.post("/onboarding/complete", async (req, res, next) => {
       });
     }
 
+    if (brand.supportLevel === "struggling") {
+      await assignSponsoredSeatForBrand({
+        ownerId: user.id,
+        brandId: brand.brandId,
+      }).catch(() => null);
+    }
+
     if (body.enableAutopilot === "on" || body.enableAutopilot === "true") {
       const autopilot = autopilotSettingsUpsertSchema.parse({
         enabled: true,
         cadence: "daily",
         hour: 7,
         timezone: "America/Chicago",
-        goals: ["repeat_customers", "slow_hours"],
+        goals:
+          brand.supportLevel === "struggling"
+            ? ["slow_hours", "repeat_customers"]
+            : ["repeat_customers", "slow_hours"],
         channels: ["facebook", "instagram"],
       });
       await adapter.upsertAutopilotSettings(user.id, brand.brandId, autopilot);

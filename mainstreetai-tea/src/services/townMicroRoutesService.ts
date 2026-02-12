@@ -43,6 +43,7 @@ import {
   listTownRouteSeasonWeights,
   resolveTownSeasonStateForTown,
 } from "./townSeasonService";
+import { countActiveBusinessesForTown } from "./communityImpactService";
 
 const LOCAL_ROOT = path.resolve(process.cwd(), "data", "local_mode");
 const MICRO_ROUTE_STALE_HOURS = 28;
@@ -549,6 +550,12 @@ export async function recomputeTownMicroRoutesForTown(input: {
     userId: input.userId,
   }).catch(() => null);
   const pulse = pulseModel?.model ?? null;
+  const activeBusinessCount = await countActiveBusinessesForTown({
+    townId: input.townId,
+    userId: input.userId,
+  }).catch(() => 0);
+  const crossFlowBoost =
+    activeBusinessCount >= 4 ? Math.min(1.38, 1 + (activeBusinessCount - 3) * 0.04) : 1;
   let updated = 0;
   for (const window of TOWN_MICRO_ROUTE_WINDOWS) {
     const adjustedEdges = applySeasonWeightDeltasToEdges({
@@ -560,7 +567,13 @@ export async function recomputeTownMicroRoutesForTown(input: {
       seasonWeights,
       seasonTags,
       window,
-    });
+    }).map((edge) => ({
+      ...edge,
+      weight:
+        edge.from === edge.to
+          ? edge.weight
+          : Math.max(0.01, Number((edge.weight * crossFlowBoost).toFixed(3))),
+    }));
     const candidates = buildRouteCandidates({
       edges: adjustedEdges,
       window,
@@ -693,6 +706,7 @@ async function prepareTownRouteContextForDaily(input: {
   town: TownRecord;
   window: TownMicroRouteWindow;
   topRoutes: z.infer<typeof townMicroRoutePathSchema>[];
+  activeBusinesses: number;
   seasonTags: TownSeasonKey[];
   seasonNotes: Record<string, string>;
   townPulse: TownPulseModelData;
@@ -732,6 +746,10 @@ async function prepareTownRouteContextForDaily(input: {
   const rowSeasonTags = parseSeasonTags(routeRow.routes.seasonTags);
   const detectedSeasonTags = seasonState?.detected.seasonTags ?? [];
   const seasonTags = [...new Set([...detectedSeasonTags, ...rowSeasonTags])];
+  const activeBusinesses = await countActiveBusinessesForTown({
+    townId: input.brand.townRef,
+    userId: input.userId,
+  }).catch(() => 0);
   const townPulse = input.townPulse ?? defaultTownPulse();
   const topRoutes = adjustTopRoutesForGoal({
     topRoutes: routeRow.routes.topRoutes,
@@ -743,6 +761,7 @@ async function prepareTownRouteContextForDaily(input: {
     town,
     window,
     topRoutes,
+    activeBusinesses,
     seasonTags,
     seasonNotes: (seasonState?.detected.seasonNotes ?? {}) as Record<string, string>,
     townPulse,
@@ -798,6 +817,7 @@ export async function buildTownMicroRouteForDaily(input: {
       },
       window: context.window,
       topRoutes: context.topRoutes,
+      activeBusinesses: context.activeBusinesses,
       townPulse: context.townPulse,
       goal: input.goal,
       seasonTags: context.seasonTags,
@@ -889,6 +909,8 @@ export async function buildTownSeasonalBoostForDaily(input: {
       window: context.window,
       seasonTags,
       topRoutes: context.topRoutes,
+      activeBusinesses: context.activeBusinesses,
+      clusterFocus: context.activeBusinesses >= 4 ? "high" : "normal",
       seasonNotes: context.seasonNotes,
       townPulse: context.townPulse,
       goal: input.goal,

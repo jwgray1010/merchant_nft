@@ -18,6 +18,7 @@ import { townPulseModelDataSchema } from "../schemas/townPulseSchema";
 import { getStorageMode, getAdapter } from "../storage/getAdapter";
 import { getSupabaseAdminClient } from "../supabase/supabaseAdmin";
 import { getTownPulseModel, listActiveTownPulseTargets, recomputeTownPulseModel } from "./townPulseService";
+import { countActiveBusinessesForTown } from "./communityImpactService";
 
 const LOCAL_ROOT = path.resolve(process.cwd(), "data", "local_mode");
 
@@ -157,6 +158,7 @@ function syntheticBrandProfileForTown(town: TownRecord): BrandProfile {
     businessName: `${town.name} Local Story`,
     location: town.region ? `${town.name}, ${town.region}` : town.name,
     townRef: town.id,
+    supportLevel: "steady",
     type: "other",
     voice: "Warm, community-first, and neighborly.",
     audiences: ["locals", "neighbors", "families"],
@@ -488,6 +490,10 @@ export async function generateTownStoryForTown(input: {
   const townPulse = pulse?.model ?? fallbackTownPulseModel();
   const season = seasonFromDate();
   const energyLevel = deriveEnergyLevel(townPulse);
+  const activeBusinesses = await countActiveBusinessesForTown({
+    townId: input.townId,
+    userId: input.userId,
+  }).catch(() => 0);
   const promptOutput = await runPrompt({
     promptFile: "town_stories.md",
     brandProfile: syntheticBrandProfileForTown(town),
@@ -502,6 +508,8 @@ export async function generateTownStoryForTown(input: {
       townPulse,
       season,
       energyLevel,
+      activeBusinesses,
+      shopLocalMomentum: activeBusinesses >= 4 ? "building" : "warming",
       storyType,
     },
     outputSchema: townStoryContentSchema,

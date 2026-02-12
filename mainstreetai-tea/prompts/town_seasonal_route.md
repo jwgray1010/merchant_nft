@@ -18,6 +18,8 @@ Input JSON:
       "weight": number
     }
   ],
+  "activeBusinesses": "number",
+  "clusterFocus": "normal|high",
   "seasonNotes": {
     "football": "Home games Friday nights"
   },
@@ -39,3 +41,4 @@ Rules:
 - No private metrics, rankings, or analytics references.
 - Use general phrasing like "game night", "school pickup", "holiday shopping", "summer downtown day".
 - Do not mention specific schools or teams unless they are present in seasonNotes or localIdentityTags.
+- If clusterFocus is "high", prioritize route language that supports small-business clusters and main-street walkability.

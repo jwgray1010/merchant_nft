@@ -328,7 +328,9 @@ export async function runDailyOneButton(input: {
     }).catch(() => null),
   ]);
   const timezone = timezoneOrDefault(location?.timezone ?? settings?.timezone ?? "America/Chicago");
-  const chosenGoal = parsedRequest.goal ?? defaultGoalFromClock(timezone);
+  const chosenGoal =
+    parsedRequest.goal ??
+    (brand.supportLevel === "struggling" ? "slow_hours" : defaultGoalFromClock(timezone));
   const preferred = preferredPlatformFromSettings(settings?.channels);
   const chosenPlatform = await selectPlatform({
     userId: input.userId,
@@ -374,6 +376,10 @@ export async function runDailyOneButton(input: {
       townPulse: townPulseModel?.model,
       notes: parsedRequest.notes,
       goal: chosenGoal,
+      supportContext: {
+        supportLevel: brand.supportLevel,
+        prioritizeRescueIdeas: brand.supportLevel === "struggling",
+      },
       bestPlatform: chosenPlatform,
       upcomingEventTieIn: upcomingEvents[0] ?? null,
       location: location
@@ -770,6 +776,10 @@ export async function runRescueOneButton(input: {
     input: {
       brand,
       insightsSummary: insightsCache.insights,
+      supportContext: {
+        supportLevel: brand.supportLevel,
+        prioritizeRescueIdeas: brand.supportLevel === "struggling",
+      },
       whatHappened: parsedRequest.whatHappened,
       timeLeftToday: parsedRequest.timeLeftToday,
       location: location

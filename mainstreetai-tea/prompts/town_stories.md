@@ -17,6 +17,8 @@ Input JSON:
   },
   "season": "winter|spring|summer|fall",
   "energyLevel": "low|medium|high",
+  "activeBusinesses": "number",
+  "shopLocalMomentum": "warming|building",
   "storyType": "daily|weekly|event"
 }
 
@@ -37,3 +39,4 @@ Rules:
 - Never name or imply any specific business.
 - Never compare businesses or imply endorsements.
 - Keep language inclusive so every local business feels represented.
+- If activeBusinesses is high, emphasize "shop local momentum" and shared downtown energy.

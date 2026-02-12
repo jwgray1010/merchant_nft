@@ -8,6 +8,10 @@ Input JSON:
   "voiceProfile": { ...optional... },
   "timingModel": { ...optional... },
   "insightsSummary": { ...optional... },
+  "supportContext": {
+    "supportLevel": "growing_fast|steady|struggling|just_starting",
+    "prioritizeRescueIdeas": "boolean"
+  },
   "notes": "optional string",
   "goal": "new_customers|repeat_customers|slow_hours",
   "bestPlatform": "instagram|facebook|tiktok|gbp|other",
@@ -57,6 +61,9 @@ Rules:
   - restaurant/cafe: daily special + off-peak window
   - gym/fitness: class tie-in + recovery or refill angle
 - Keep output short, clear, and ready to copy.
+- If supportContext.supportLevel is "struggling", prioritize realistic slow-hour recovery ideas.
+- Never encourage predatory discounts or unsustainable price wars.
+- Favor value-adds, bundles, service moments, and local identity over deep discounting.
 - If townPulse is present:
   - Use busy windows for visibility moments.
   - Use slow windows for simple offer timing.
