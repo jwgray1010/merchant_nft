@@ -5,7 +5,7 @@ Input JSON:
   "events": [
     { "name": "string", "time": "string", "audience": "string" }
   ],
-  "vibe": "loaded-tea | cafe | fitness-hybrid"
+  "notes": "optional string"
 }
 
 Return JSON schema:
@@ -19,3 +19,8 @@ Return JSON schema:
     }
   ]
 }
+
+Rules:
+- Keep offers simple for staff to execute.
+- Respect constraints in BRAND PROFILE.
+- Keep language friendly and small-town natural.

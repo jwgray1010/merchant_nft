@@ -1,34 +1,13 @@
 import { Router } from "express";
-import { z } from "zod";
+import { getBrand } from "../data/brandStore";
 import { runPrompt } from "../ai/runPrompt";
+import { brandIdSchema } from "../schemas/brandSchema";
+import { socialOutputSchema, socialRequestSchema } from "../schemas/socialRequestSchema";
 
 const router = Router();
 
-const socialInputSchema = z.object({
-  todaySpecial: z.string().min(1),
-  vibe: z.enum(["loaded-tea", "cafe", "fitness-hybrid"]),
-  audience: z.enum(["teachers", "parents", "teens", "gym", "general"]),
-  tone: z.enum(["fun", "cozy", "hype", "calm"]),
-});
-
-const socialOutputSchema = z.object({
-  hookLines: z.array(z.string()).length(3),
-  caption: z.string(),
-  reelScript: z.object({
-    shots: z.array(z.string()).length(4),
-    onScreenText: z.array(z.string()).length(3),
-    voiceover: z.string(),
-  }),
-  postVariants: z.object({
-    facebook: z.string(),
-    instagram: z.string(),
-    tiktok: z.string(),
-  }),
-  hashtags: z.array(z.string()).length(5),
-});
-
 router.post("/", async (req, res, next) => {
-  const parsed = socialInputSchema.safeParse(req.body);
+  const parsed = socialRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
       error: "Invalid request body",
@@ -36,9 +15,30 @@ router.post("/", async (req, res, next) => {
     });
   }
 
+  const rawBrandId = req.query.brandId;
+  if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
+    return res.status(400).json({
+      error: "Missing brandId query parameter. Example: /social?brandId=main-street-nutrition",
+    });
+  }
+
+  const parsedBrandId = brandIdSchema.safeParse(rawBrandId);
+  if (!parsedBrandId.success) {
+    return res.status(400).json({
+      error: "Invalid brandId query parameter",
+      details: parsedBrandId.error.flatten(),
+    });
+  }
+
   try {
+    const brand = await getBrand(parsedBrandId.data);
+    if (!brand) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+
     const result = await runPrompt({
       promptFile: "social.md",
+      brandProfile: brand,
       input: parsed.data,
       outputSchema: socialOutputSchema,
     });

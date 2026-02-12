@@ -1,10 +1,12 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import type { BrandProfile } from "../schemas/brandSchema";
 import { getModelName, getOpenAIClient } from "./openaiClient";
 
 type RunPromptOptions<TOutput> = {
   promptFile: string;
+  brandProfile: BrandProfile;
   input: unknown;
   outputSchema: z.ZodType<TOutput>;
 };
@@ -16,6 +18,11 @@ function getPromptsDir(): string {
 async function loadPrompt(fileName: string): Promise<string> {
   const promptPath = path.join(getPromptsDir(), fileName);
   return readFile(promptPath, "utf8");
+}
+
+function isResponseFormatUnsupported(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return /response_format/i.test(message) && /unsupported|not supported|invalid/i.test(message);
 }
 
 function parseModelJson(raw: string): unknown {
@@ -42,8 +49,74 @@ function parseModelJson(raw: string): unknown {
   }
 }
 
+function buildComposedPrompt(
+  systemPrompt: string,
+  taskPrompt: string,
+  brandProfile: BrandProfile,
+  input: unknown,
+): string {
+  return [
+    systemPrompt.trim(),
+    "",
+    "BRAND PROFILE (JSON, pretty printed)",
+    JSON.stringify(brandProfile, null, 2),
+    "",
+    "TASK PROMPT",
+    taskPrompt.trim(),
+    "",
+    "USER INPUT (JSON)",
+    JSON.stringify(input, null, 2),
+    "",
+    "Return JSON ONLY. Do not include markdown fences or extra commentary.",
+  ].join("\n");
+}
+
+async function requestModel(prompt: string): Promise<string> {
+  const openai = getOpenAIClient();
+  const model = getModelName();
+  const baseRequest = {
+    model,
+    messages: [{ role: "user" as const, content: prompt }],
+  };
+
+  try {
+    const completion = await openai.chat.completions.create({
+      ...baseRequest,
+      response_format: { type: "json_object" },
+    });
+
+    const raw = completion.choices[0]?.message?.content;
+    if (!raw) {
+      throw new Error("Model returned an empty response");
+    }
+    return raw;
+  } catch (error) {
+    if (!isResponseFormatUnsupported(error)) {
+      throw error;
+    }
+  }
+
+  const completion = await openai.chat.completions.create(baseRequest);
+  const raw = completion.choices[0]?.message?.content;
+  if (!raw) {
+    throw new Error("Model returned an empty response");
+  }
+  return raw;
+}
+
+function formatValidationError(error: unknown): string {
+  if (error instanceof z.ZodError) {
+    return JSON.stringify(error.issues, null, 2);
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Unknown parse/validation error";
+}
+
 export async function runPrompt<TOutput>({
   promptFile,
+  brandProfile,
   input,
   outputSchema,
 }: RunPromptOptions<TOutput>): Promise<TOutput> {
@@ -52,28 +125,28 @@ export async function runPrompt<TOutput>({
     loadPrompt(promptFile),
   ]);
 
-  const openai = getOpenAIClient();
+  const composedPrompt = buildComposedPrompt(systemPrompt, taskPrompt, brandProfile, input);
+  const firstRaw = await requestModel(composedPrompt);
 
-  const completion = await openai.chat.completions.create({
-    model: getModelName(),
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: systemPrompt.trim(),
-      },
-      {
-        role: "user",
-        content: `${taskPrompt.trim()}\n\nInput JSON:\n${JSON.stringify(input, null, 2)}\n\nReturn only valid JSON.`,
-      },
-    ],
-  });
+  try {
+    const firstParsed = parseModelJson(firstRaw);
+    return outputSchema.parse(firstParsed);
+  } catch (firstError) {
+    const repairPrompt = [
+      composedPrompt,
+      "",
+      "The previous response was invalid or did not match schema.",
+      "Validation/parsing error details:",
+      formatValidationError(firstError),
+      "",
+      "Previous response:",
+      firstRaw,
+      "",
+      "Retry now. Return ONLY valid JSON that matches the schema from TASK PROMPT.",
+    ].join("\n");
 
-  const raw = completion.choices[0]?.message?.content;
-  if (!raw) {
-    throw new Error("Model returned an empty response");
+    const repairRaw = await requestModel(repairPrompt);
+    const repairedParsed = parseModelJson(repairRaw);
+    return outputSchema.parse(repairedParsed);
   }
-
-  const parsed = parseModelJson(raw);
-  return outputSchema.parse(parsed);
 }

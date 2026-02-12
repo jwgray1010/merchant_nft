@@ -1,12 +1,11 @@
-Task: Create a daily in-store promotion for a tea shop.
+Task: Create a daily promotion for a local small business.
 
 Input JSON:
 {
   "dateLabel": "Thursday",
-  "weather": "cold / hot / rainy / windy / nice",
-  "slowHours": "e.g., 1-3pm",
+  "weather": "cold | hot | rainy | windy | nice",
+  "slowHours": "optional, e.g., 1-3pm",
   "inventoryNotes": "optional",
-  "vibe": "loaded-tea | cafe | fitness-hybrid",
   "goal": "new_customers | repeat_customers | slow_hours"
 }
 
@@ -23,4 +22,8 @@ Return JSON schema:
   "upsellSuggestion": string
 }
 
-Make it realistic for a small shop. No huge discounts.
+Rules:
+- Keep it realistic for small business staffing.
+- Use offers from the BRAND PROFILE when possible.
+- Respect constraints in the BRAND PROFILE.
+- No huge discounts.

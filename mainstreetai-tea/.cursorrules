@@ -1,8 +1,8 @@
-You are building an MVP called MainStreetAI for a local tea shop in Independence, KS.
+You are building MainStreetAI as a multi-business platform for local small businesses.
 
 Priorities:
-1) Ship a working MVP with 3 endpoints: /promo, /social, /events
-2) Keep it simple: Express + OpenAI SDK + minimal validation
+1) Ship a working API with brand profiles and 5 endpoints: /brands, /promo, /social, /events, /week-plan
+2) Keep it simple: Express + OpenAI SDK + local JSON storage + minimal validation
 3) Output must sound small-town friendly, not corporate.
 4) Avoid big refactors; prefer small, testable changes.
 

@@ -2,12 +2,15 @@ import { Router } from "express";
 import { getBrand } from "../data/brandStore";
 import { runPrompt } from "../ai/runPrompt";
 import { brandIdSchema } from "../schemas/brandSchema";
-import { eventsOutputSchema, eventsRequestSchema } from "../schemas/eventsRequestSchema";
+import {
+  weekPlanOutputSchema,
+  weekPlanRequestSchema,
+} from "../schemas/weekPlanRequestSchema";
 
 const router = Router();
 
 router.post("/", async (req, res, next) => {
-  const parsed = eventsRequestSchema.safeParse(req.body);
+  const parsed = weekPlanRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
       error: "Invalid request body",
@@ -18,7 +21,8 @@ router.post("/", async (req, res, next) => {
   const rawBrandId = req.query.brandId;
   if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
     return res.status(400).json({
-      error: "Missing brandId query parameter. Example: /events?brandId=main-street-nutrition",
+      error:
+        "Missing brandId query parameter. Example: /week-plan?brandId=main-street-nutrition",
     });
   }
 
@@ -37,10 +41,10 @@ router.post("/", async (req, res, next) => {
     }
 
     const result = await runPrompt({
-      promptFile: "events.md",
+      promptFile: "week_plan.md",
       brandProfile: brand,
       input: parsed.data,
-      outputSchema: eventsOutputSchema,
+      outputSchema: weekPlanOutputSchema,
     });
 
     return res.json(result);

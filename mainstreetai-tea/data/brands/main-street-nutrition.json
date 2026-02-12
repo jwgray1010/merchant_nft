@@ -1,0 +1,23 @@
+{
+  "brandId": "main-street-nutrition",
+  "businessName": "Main Street Nutrition",
+  "location": "Independence, KS",
+  "type": "loaded-tea",
+  "voice": "Friendly, upbeat, and neighbor-next-door.",
+  "audiences": ["teachers", "families", "teens", "gym members"],
+  "productsOrServices": ["Loaded teas", "Protein shakes", "Energy add-ons"],
+  "hours": "Mon-Fri 7:00am-6:00pm, Sat 9:00am-3:00pm, Sun closed",
+  "typicalRushTimes": "7:00am-9:00am and 3:00pm-6:00pm",
+  "slowHours": "1:00pm-3:00pm weekdays",
+  "offersWeCanUse": [
+    "Buy one drink, get second 50% off",
+    "$1 off any energy add-on",
+    "Loyalty punch card bonus day"
+  ],
+  "constraints": {
+    "noHugeDiscounts": true,
+    "keepPromosSimple": true,
+    "avoidCorporateLanguage": true,
+    "avoidControversy": true
+  }
+}

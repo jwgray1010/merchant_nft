@@ -1,32 +1,13 @@
 import { Router } from "express";
-import { z } from "zod";
+import { getBrand } from "../data/brandStore";
 import { runPrompt } from "../ai/runPrompt";
+import { brandIdSchema } from "../schemas/brandSchema";
+import { promoOutputSchema, promoRequestSchema } from "../schemas/promoRequestSchema";
 
 const router = Router();
 
-const promoInputSchema = z.object({
-  dateLabel: z.string().min(1),
-  weather: z.enum(["cold", "hot", "rainy", "windy", "nice"]),
-  slowHours: z.string().min(1),
-  inventoryNotes: z.string().optional(),
-  vibe: z.enum(["loaded-tea", "cafe", "fitness-hybrid"]),
-  goal: z.enum(["new_customers", "repeat_customers", "slow_hours"]),
-});
-
-const promoOutputSchema = z.object({
-  promoName: z.string(),
-  offer: z.string(),
-  when: z.string(),
-  whoItsFor: z.string(),
-  inStoreSign: z.string(),
-  socialCaption: z.string(),
-  smsText: z.string(),
-  staffNotes: z.string(),
-  upsellSuggestion: z.string(),
-});
-
 router.post("/", async (req, res, next) => {
-  const parsed = promoInputSchema.safeParse(req.body);
+  const parsed = promoRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
       error: "Invalid request body",
@@ -34,10 +15,36 @@ router.post("/", async (req, res, next) => {
     });
   }
 
+  const rawBrandId = req.query.brandId;
+  if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
+    return res.status(400).json({
+      error: "Missing brandId query parameter. Example: /promo?brandId=main-street-nutrition",
+    });
+  }
+
+  const parsedBrandId = brandIdSchema.safeParse(rawBrandId);
+  if (!parsedBrandId.success) {
+    return res.status(400).json({
+      error: "Invalid brandId query parameter",
+      details: parsedBrandId.error.flatten(),
+    });
+  }
+
   try {
+    const brand = await getBrand(parsedBrandId.data);
+    if (!brand) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+
+    const promptInput = {
+      ...parsed.data,
+      slowHours: parsed.data.slowHours ?? brand.slowHours,
+    };
+
     const result = await runPrompt({
       promptFile: "promo.md",
-      input: parsed.data,
+      brandProfile: brand,
+      input: promptInput,
       outputSchema: promoOutputSchema,
     });
 

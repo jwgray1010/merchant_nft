@@ -1,10 +1,9 @@
-Task: Create social content for today (Facebook + Instagram + TikTok/Reels).
+Task: Create social content for today (Facebook + Instagram + TikTok/Reels) for a local small business.
 
 Input JSON:
 {
   "todaySpecial": "string",
-  "vibe": "loaded-tea | cafe | fitness-hybrid",
-  "audience": "teachers | parents | teens | gym | general",
+  "audience": "string",
   "tone": "fun | cozy | hype | calm"
 }
 
@@ -25,4 +24,7 @@ Return JSON schema:
   "hashtags": [string, string, string, string, string]
 }
 
-Keep it local and human.
+Rules:
+- Keep it local and human.
+- Avoid corporate language.
+- Align with BRAND PROFILE voice, audiences, and constraints.
