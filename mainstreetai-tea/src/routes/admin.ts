@@ -1,15 +1,36 @@
 import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
+import {
+  connectBufferIntegration,
+  createGoogleBusinessConnectUrl,
+  getGoogleBusinessProvider,
+  getTwilioProvider,
+  publishWithBuffer,
+} from "../integrations/providerFactory";
+import {
+  isBufferEnabled,
+  isEmailEnabled,
+  isGoogleBusinessEnabled,
+  isTwilioEnabled,
+} from "../integrations/env";
 import { AVAILABLE_TEMPLATE_NAMES, buildBrandFromTemplate } from "../data/templateStore";
+import { processDueOutbox } from "../jobs/outboxProcessor";
+import { bufferConnectSchema } from "../schemas/bufferSchema";
 import { brandProfileSchema, type BrandProfile, type BrandRegistryItem } from "../schemas/brandSchema";
+import { emailDigestSendSchema } from "../schemas/emailDigestSchema";
+import { gbpPostSchema } from "../schemas/gbpSchema";
 import { historyRecordSchema, type HistoryRecord } from "../schemas/historySchema";
 import { metricsRequestSchema, storedMetricsSchema, type StoredMetrics } from "../schemas/metricsSchema";
+import { outboxRecordSchema, type OutboxRecord } from "../schemas/outboxSchema";
+import { publishRequestSchema } from "../schemas/publishSchema";
 import { postRequestSchema, storedPostSchema, type StoredPost } from "../schemas/postSchema";
 import {
   scheduleCreateRequestSchema,
   scheduleStatusSchema,
   scheduleUpdateRequestSchema,
 } from "../schemas/scheduleSchema";
+import { smsCampaignSchema, smsSendSchema } from "../schemas/smsSchema";
+import { buildDigestPreview } from "../services/digestService";
 import { buildTodayTasks } from "../services/todayService";
 import { getStorageMode, getAdapter } from "../storage/getAdapter";
 import { extractAuthToken, resolveAuthUser } from "../supabase/verifyAuth";
@@ -159,7 +180,10 @@ function renderLayout(
       <div class="nav">
         <a class="button secondary small" href="/admin">Home</a>
         <a class="button secondary small" href="/admin/brands">Brands</a>
+        <a class="button secondary small" href="/admin/integrations">Integrations</a>
+        <a class="button secondary small" href="/admin/sms">SMS</a>
         <a class="button secondary small" href="/admin/schedule">Schedule</a>
+        <a class="button secondary small" href="/admin/outbox">Outbox</a>
         <a class="button secondary small" href="/admin/local-events">Local Events</a>
         <a class="button secondary small" href="/admin/today">Today</a>
         <a class="button secondary small" href="/admin/logout">Logout</a>
@@ -780,6 +804,10 @@ router.get("/", async (req, res, next) => {
       <div class="row" style="margin-top: 10px;">
         <a class="button secondary" href="/admin/posts?brandId=${encodeURIComponent(selectedBrandId)}">Posting Log</a>
         <a class="button secondary" href="/admin/metrics?brandId=${encodeURIComponent(selectedBrandId)}">Metrics Log</a>
+        <a class="button secondary" href="/admin/integrations?brandId=${encodeURIComponent(selectedBrandId)}">Integrations</a>
+        <a class="button secondary" href="/admin/sms?brandId=${encodeURIComponent(selectedBrandId)}">SMS</a>
+        <a class="button secondary" href="/admin/gbp?brandId=${encodeURIComponent(selectedBrandId)}">GBP Post</a>
+        <a class="button secondary" href="/admin/outbox?brandId=${encodeURIComponent(selectedBrandId)}">Outbox</a>
         <a class="button secondary" href="/admin/schedule?brandId=${encodeURIComponent(selectedBrandId)}">Schedule</a>
         <a class="button secondary" href="/admin/local-events?brandId=${encodeURIComponent(selectedBrandId)}">Local Events</a>
         <a class="button secondary" href="/admin/today?brandId=${encodeURIComponent(selectedBrandId)}">Today's Checklist</a>
@@ -1981,6 +2009,650 @@ router.get("/today", async (req, res, next) => {
     );
 
     return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/integrations", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+
+    let rows = `<tr><td colspan="4" class="muted">Select a business to view integration status.</td></tr>`;
+    if (selectedBrandId) {
+      const integrations = await adapter.listIntegrations(userId, selectedBrandId);
+      const byProvider = new Map(integrations.map((entry) => [entry.provider, entry]));
+      const providers: Array<{
+        name: string;
+        enabled: boolean;
+        href: string;
+      }> = [
+        { name: "buffer", enabled: isBufferEnabled(), href: `/admin/integrations/buffer?brandId=${encodeURIComponent(selectedBrandId)}` },
+        { name: "twilio", enabled: isTwilioEnabled(), href: `/admin/sms?brandId=${encodeURIComponent(selectedBrandId)}` },
+        { name: "google_business", enabled: isGoogleBusinessEnabled(), href: `/admin/integrations/gbp?brandId=${encodeURIComponent(selectedBrandId)}` },
+        { name: "sendgrid", enabled: isEmailEnabled(), href: `/admin/email-digest?brandId=${encodeURIComponent(selectedBrandId)}` },
+      ];
+
+      rows = providers
+        .map((provider) => {
+          const record = byProvider.get(provider.name as (typeof integrations)[number]["provider"]);
+          return `<tr>
+            <td>${escapeHtml(provider.name)}</td>
+            <td>${provider.enabled ? "enabled" : "disabled"}</td>
+            <td>${escapeHtml(record?.status ?? "disconnected")}</td>
+            <td><a class="button small secondary" href="${provider.href}">Open</a></td>
+          </tr>`;
+        })
+        .join("");
+    }
+
+    const notice =
+      status === "connected"
+        ? { type: "success" as const, text: "Integration updated." }
+        : status === "queued"
+          ? { type: "success" as const, text: "Outbox job queued." }
+          : undefined;
+
+    const html = renderLayout(
+      "Integrations",
+      `
+      <div class="card">
+        <h1>Integrations</h1>
+        <p class="muted">Connect providers and run test actions.</p>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/integrations")}
+      </div>
+
+      <div class="card">
+        <table>
+          <thead><tr><th>Provider</th><th>Flag</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      `,
+      notice,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/integrations/buffer", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+
+    const existing =
+      selectedBrandId !== null
+        ? await adapter.getIntegration(userId, selectedBrandId, "buffer")
+        : null;
+
+    const notice =
+      status === "connected"
+        ? { type: "success" as const, text: "Buffer connected." }
+        : status === "sent"
+          ? { type: "success" as const, text: "Test publish sent." }
+          : status === "queued"
+            ? { type: "success" as const, text: "Publish queued in outbox." }
+            : undefined;
+
+    const html = renderLayout(
+      "Buffer Integration",
+      `
+      <div class="card">
+        <h1>Buffer</h1>
+        <p class="muted">Flag: ${isBufferEnabled() ? "enabled" : "disabled"}</p>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/integrations/buffer")}
+      </div>
+
+      <div class="card">
+        <h2>Connect Buffer</h2>
+        ${
+          selectedBrandId
+            ? `<form method="POST" action="/admin/integrations/buffer/connect?brandId=${encodeURIComponent(selectedBrandId)}">
+                <div class="field"><label>Access Token</label><input name="accessToken" required /></div>
+                <div class="grid">
+                  <div class="field"><label>Default Channel ID</label><input name="defaultChannelId" value="${escapeHtml(String((existing?.config as { defaultChannelId?: string } | undefined)?.defaultChannelId ?? ""))}" /></div>
+                  <div class="field"><label>Instagram Channel ID</label><input name="instagramChannelId" value="${escapeHtml(String(((existing?.config as { channelIdByPlatform?: Record<string, string> } | undefined)?.channelIdByPlatform?.instagram ?? "")))}" /></div>
+                  <div class="field"><label>Facebook Channel ID</label><input name="facebookChannelId" value="${escapeHtml(String(((existing?.config as { channelIdByPlatform?: Record<string, string> } | undefined)?.channelIdByPlatform?.facebook ?? "")))}" /></div>
+                  <div class="field"><label>TikTok Channel ID</label><input name="tiktokChannelId" value="${escapeHtml(String(((existing?.config as { channelIdByPlatform?: Record<string, string> } | undefined)?.channelIdByPlatform?.tiktok ?? "")))}" /></div>
+                </div>
+                <button type="submit">Save Buffer Connection</button>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+      </div>
+
+      <div class="card">
+        <h2>Test Publish</h2>
+        ${
+          selectedBrandId
+            ? `<form method="POST" action="/admin/integrations/buffer/test-publish?brandId=${encodeURIComponent(selectedBrandId)}">
+                <div class="grid">
+                  <div class="field">
+                    <label>Platform</label>
+                    <select name="platform">${POST_PLATFORMS.map((entry) => `<option>${entry}</option>`).join("")}</select>
+                  </div>
+                  <div class="field"><label>Media URL (optional)</label><input name="mediaUrl" /></div>
+                </div>
+                <div class="field"><label>Caption</label><textarea name="caption" required></textarea></div>
+                <button type="submit">Publish Test Post</button>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+      </div>
+      `,
+      notice,
+    );
+
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/integrations/buffer/connect", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Buffer Integration", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = bufferConnectSchema.parse({
+      accessToken: String(body.accessToken ?? ""),
+      defaultChannelId: optionalText(body.defaultChannelId),
+      channelIdByPlatform: {
+        instagram: optionalText(body.instagramChannelId),
+        facebook: optionalText(body.facebookChannelId),
+        tiktok: optionalText(body.tiktokChannelId),
+      },
+    });
+
+    await connectBufferIntegration(userId, brandId, parsed);
+    return res.redirect(`/admin/integrations/buffer?brandId=${encodeURIComponent(brandId)}&status=connected`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/integrations/buffer/test-publish", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Buffer Integration", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = publishRequestSchema.parse({
+      platform: String(body.platform ?? ""),
+      caption: String(body.caption ?? ""),
+      mediaUrl: optionalText(body.mediaUrl),
+    });
+
+    await publishWithBuffer(userId, brandId, parsed);
+    return res.redirect(`/admin/integrations/buffer?brandId=${encodeURIComponent(brandId)}&status=sent`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/integrations/gbp", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+
+    const existing =
+      selectedBrandId !== null
+        ? await adapter.getIntegration(userId, selectedBrandId, "google_business")
+        : null;
+
+    const notice =
+      status === "connected"
+        ? { type: "success" as const, text: "Google Business connected." }
+        : undefined;
+
+    const html = renderLayout(
+      "Google Business Integration",
+      `
+      <div class="card">
+        <h1>Google Business Profile</h1>
+        <p class="muted">Flag: ${isGoogleBusinessEnabled() ? "enabled" : "disabled"}</p>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/integrations/gbp")}
+      </div>
+
+      <div class="card">
+        <h2>Connect OAuth</h2>
+        ${
+          selectedBrandId
+            ? `<form method="POST" action="/admin/integrations/gbp/connect?brandId=${encodeURIComponent(selectedBrandId)}">
+                <div class="field"><label>Location Name (example: accounts/123/locations/456)</label><input name="locationName" value="${escapeHtml(String((existing?.config as { locationName?: string } | undefined)?.locationName ?? ""))}" required /></div>
+                <button type="submit">Start Google OAuth</button>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+      </div>
+      `,
+      notice,
+    );
+
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/integrations/gbp/connect", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("GBP Integration", "<h1>Missing brandId query parameter.</h1>"));
+    }
+    const locationName = optionalText((req.body as Record<string, unknown> | undefined)?.locationName);
+    if (!locationName) {
+      return res.status(400).type("html").send(renderLayout("GBP Integration", "<h1>Missing locationName.</h1>"));
+    }
+
+    const authUrl = createGoogleBusinessConnectUrl(userId, brandId, locationName);
+    return res.redirect(authUrl);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/sms", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+
+    const notice =
+      status === "sent"
+        ? { type: "success" as const, text: "SMS sent." }
+        : status === "queued"
+          ? { type: "success" as const, text: "SMS campaign queued." }
+          : undefined;
+
+    const html = renderLayout(
+      "SMS",
+      `
+      <div class="card">
+        <h1>SMS</h1>
+        <p class="muted">Flag: ${isTwilioEnabled() ? "enabled" : "disabled"}</p>
+        <p class="muted"><strong>Important:</strong> Only message explicit opt-in recipients. Do not spam.</p>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/sms")}
+      </div>
+
+      <div class="card">
+        <h2>Send Test SMS</h2>
+        ${
+          selectedBrandId
+            ? `<form method="POST" action="/admin/sms/send?brandId=${encodeURIComponent(selectedBrandId)}">
+                <div class="grid">
+                  <div class="field"><label>To (E.164)</label><input name="to" placeholder="+15555550123" required /></div>
+                </div>
+                <div class="field"><label>Message</label><textarea name="message" required></textarea></div>
+                <button type="submit">Send SMS</button>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+      </div>
+
+      <div class="card">
+        <h2>Campaign Queue</h2>
+        ${
+          selectedBrandId
+            ? `<form method="POST" action="/admin/sms/campaign?brandId=${encodeURIComponent(selectedBrandId)}">
+                <div class="grid">
+                  <div class="field"><label>List Name</label><select name="listName">${["teachers", "vip", "gym", "general"].map((entry) => `<option>${entry}</option>`).join("")}</select></div>
+                </div>
+                <div class="field"><label>Recipients (one per line, E.164)</label><textarea name="recipients" required></textarea></div>
+                <div class="field"><label>Message</label><textarea name="message" required></textarea></div>
+                <button type="submit">Queue Campaign</button>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+      </div>
+      `,
+      notice,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/sms/send", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("SMS", "<h1>Missing brandId query parameter.</h1>"));
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = smsSendSchema.parse({
+      to: String(body.to ?? ""),
+      message: String(body.message ?? ""),
+    });
+
+    const provider = await getTwilioProvider(userId, brandId);
+    const result = await provider.sendSms(parsed);
+    await getAdapter().addHistory(userId, brandId, "sms-send", parsed, result);
+
+    return res.redirect(`/admin/sms?brandId=${encodeURIComponent(brandId)}&status=sent`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/sms/campaign", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("SMS", "<h1>Missing brandId query parameter.</h1>"));
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const recipients = String(body.recipients ?? "")
+      .split(/\s+/g)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== "");
+    const parsed = smsCampaignSchema.parse({
+      listName: String(body.listName ?? ""),
+      recipients,
+      message: String(body.message ?? ""),
+    });
+
+    await getTwilioProvider(userId, brandId);
+    await Promise.all(
+      parsed.recipients.map((to) =>
+        getAdapter().enqueueOutbox(userId, brandId, "sms_send", {
+          to,
+          message: parsed.message,
+          listName: parsed.listName,
+          optInRequired: true,
+        }),
+      ),
+    );
+
+    return res.redirect(`/admin/sms?brandId=${encodeURIComponent(brandId)}&status=queued`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/gbp", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+
+    const notice =
+      status === "sent"
+        ? { type: "success" as const, text: "Google Business post created." }
+        : undefined;
+
+    const html = renderLayout(
+      "Google Business Post",
+      `
+      <div class="card">
+        <h1>Google Business Post</h1>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/gbp")}
+      </div>
+
+      <div class="card">
+        <h2>Create Post</h2>
+        ${
+          selectedBrandId
+            ? `<form method="POST" action="/admin/gbp/post?brandId=${encodeURIComponent(selectedBrandId)}">
+                <div class="field"><label>Summary</label><textarea name="summary" required></textarea></div>
+                <div class="grid">
+                  <div class="field"><label>CTA (optional)</label><input name="cta" /></div>
+                  <div class="field"><label>URL (optional)</label><input name="url" /></div>
+                </div>
+                <button type="submit">Post to GBP</button>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+        <p class="muted">Need to connect first? <a href="/admin/integrations/gbp${selectedBrandId ? `?brandId=${encodeURIComponent(selectedBrandId)}` : ""}">Open GBP integration</a></p>
+      </div>
+      `,
+      notice,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/gbp/post", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("GBP", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = gbpPostSchema.parse({
+      summary: String(body.summary ?? ""),
+      cta: optionalText(body.cta),
+      url: optionalText(body.url),
+    });
+
+    const provider = await getGoogleBusinessProvider(userId, brandId);
+    const result = await provider.createPost(parsed);
+    await getAdapter().addHistory(userId, brandId, "gbp-post", parsed, result);
+
+    return res.redirect(`/admin/gbp?brandId=${encodeURIComponent(brandId)}&status=sent`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/email-digest", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+
+    let previewHtml = `<p class="muted">Select a business and generate a preview.</p>`;
+    if (selectedBrandId && status === "preview") {
+      const preview = await buildDigestPreview(userId, selectedBrandId, "weekly");
+      previewHtml = `<div style="border:1px solid #e5e7eb; border-radius:8px; padding:10px;">${preview.html}</div>`;
+    }
+
+    const notice =
+      status === "queued"
+        ? { type: "success" as const, text: "Digest job queued and processed." }
+        : undefined;
+
+    const html = renderLayout(
+      "Email Digest",
+      `
+      <div class="card">
+        <h1>Email Digests</h1>
+        <p class="muted">Flag: ${isEmailEnabled() ? "enabled" : "disabled"}</p>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/email-digest")}
+      </div>
+
+      <div class="card">
+        <h2>Preview</h2>
+        ${
+          selectedBrandId
+            ? `<form method="GET" action="/admin/email-digest">
+                <input type="hidden" name="brandId" value="${escapeHtml(selectedBrandId)}" />
+                <input type="hidden" name="status" value="preview" />
+                <button type="submit">Generate Preview</button>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+        <div style="margin-top:12px;">${previewHtml}</div>
+      </div>
+
+      <div class="card">
+        <h2>Send Digest</h2>
+        ${
+          selectedBrandId
+            ? `<form method="POST" action="/admin/email-digest/send?brandId=${encodeURIComponent(selectedBrandId)}">
+                <div class="grid">
+                  <div class="field"><label>To Email</label><input type="email" name="to" required /></div>
+                  <div class="field"><label>Cadence</label><select name="cadence"><option>weekly</option><option>daily</option></select></div>
+                </div>
+                <button type="submit">Queue + Send Digest</button>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+      </div>
+      `,
+      notice,
+    );
+
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/email-digest/send", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Email Digest", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const parsed = emailDigestSendSchema.parse({
+      to: String((req.body as Record<string, unknown> | undefined)?.to ?? ""),
+      cadence: String((req.body as Record<string, unknown> | undefined)?.cadence ?? ""),
+    });
+
+    const outbox = await getAdapter().enqueueOutbox(userId, brandId, "email_send", {
+      template: "digest",
+      cadence: parsed.cadence,
+      to: parsed.to,
+    });
+    await processDueOutbox(25);
+
+    return res.redirect(`/admin/email-digest?brandId=${encodeURIComponent(brandId)}&status=queued&outboxId=${encodeURIComponent(outbox.id)}`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/outbox", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+
+    let rows = `<tr><td colspan="8" class="muted">Select a business to view outbox records.</td></tr>`;
+    if (selectedBrandId) {
+      const records = await adapter.listOutbox(userId, selectedBrandId, 100);
+      const parsedRecords = records
+        .map((record) => outboxRecordSchema.safeParse(record))
+        .filter((entry): entry is { success: true; data: OutboxRecord } => entry.success)
+        .map((entry) => entry.data);
+
+      rows =
+        parsedRecords.length > 0
+          ? parsedRecords
+              .map(
+                (record) => `<tr>
+                  <td><code>${escapeHtml(record.id)}</code></td>
+                  <td>${escapeHtml(record.type)}</td>
+                  <td>${escapeHtml(record.status)}</td>
+                  <td>${record.attempts}</td>
+                  <td>${escapeHtml(record.scheduledFor ?? "-")}</td>
+                  <td>${escapeHtml(record.lastError ?? "-")}</td>
+                  <td>${escapeHtml(formatDateTime(record.createdAt))}</td>
+                  <td>
+                    <form method="POST" action="/admin/outbox/${encodeURIComponent(record.id)}/retry?brandId=${encodeURIComponent(selectedBrandId)}">
+                      <button class="button small secondary" type="submit">Retry</button>
+                    </form>
+                  </td>
+                </tr>`,
+              )
+              .join("")
+          : `<tr><td colspan="8" class="muted">No outbox records yet.</td></tr>`;
+    }
+
+    const notice =
+      status === "retried"
+        ? { type: "success" as const, text: "Outbox item retried." }
+        : undefined;
+
+    const html = renderLayout(
+      "Outbox",
+      `
+      <div class="card">
+        <h1>Outbox</h1>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/outbox")}
+      </div>
+
+      <div class="card">
+        <h2>Queued / Sent / Failed</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Attempts</th><th>Scheduled</th><th>Last Error</th><th>Created</th><th>Action</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      `,
+      notice,
+    );
+
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/outbox/:id/retry", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Outbox", "<h1>Missing brandId query parameter.</h1>"));
+    }
+    const id = req.params.id?.trim();
+    if (!id) {
+      return res.status(400).type("html").send(renderLayout("Outbox", "<h1>Missing outbox id.</h1>"));
+    }
+
+    const existing = await getAdapter().getOutboxById(userId, brandId, id);
+    if (!existing) {
+      return res.status(404).type("html").send(renderLayout("Outbox", "<h1>Outbox record not found.</h1>"));
+    }
+
+    await getAdapter().updateOutbox(id, {
+      status: "queued",
+      scheduledFor: new Date().toISOString(),
+      lastError: null,
+    });
+    await processDueOutbox(25);
+
+    return res.redirect(`/admin/outbox?brandId=${encodeURIComponent(brandId)}&status=retried`);
   } catch (error) {
     return next(error);
   }

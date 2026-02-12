@@ -8,6 +8,7 @@ const weekPlanDaySchema = z.object({
   offer: z.string(),
   timeWindow: z.string(),
   inStoreSign: z.string(),
+  smsText: z.string().optional(),
   post: z.object({
     hook: z.string(),
     caption: z.string(),

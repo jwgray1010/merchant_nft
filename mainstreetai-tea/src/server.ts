@@ -1,21 +1,28 @@
 import "dotenv/config";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
+import { startJobRunner } from "./jobs/runner";
 import { createGenerationHistoryMiddleware } from "./middleware/generationHistory";
 import { verifyAuth } from "./supabase/verifyAuth";
 import adminRouter from "./routes/admin";
 import brandRouter from "./routes/brand";
+import emailDigestRouter from "./routes/emailDigest";
 import eventsRouter from "./routes/events";
+import gbpRouter from "./routes/gbp";
 import historyRouter from "./routes/history";
+import integrationsRouter from "./routes/integrations";
 import insightsRouter from "./routes/insights";
 import localEventsRouter from "./routes/localEvents";
 import metricsRouter from "./routes/metrics";
 import nextWeekPlanRouter from "./routes/nextWeekPlan";
+import outboxRouter from "./routes/outbox";
 import postsRouter from "./routes/posts";
 import promoRouter from "./routes/promo";
+import publishRouter from "./routes/publish";
 import scheduleIcsRouter from "./routes/scheduleIcs";
 import scheduleRouter from "./routes/schedule";
 import signRouter from "./routes/sign";
+import smsRouter from "./routes/sms";
 import socialRouter from "./routes/social";
 import todayRouter from "./routes/today";
 import weekPlanRouter from "./routes/weekPlan";
@@ -38,6 +45,12 @@ app.use("/local-events", verifyAuth, localEventsRouter);
 app.use("/posts", verifyAuth, postsRouter);
 app.use("/metrics", verifyAuth, metricsRouter);
 app.use("/insights", verifyAuth, insightsRouter);
+app.use("/integrations", verifyAuth, integrationsRouter);
+app.use("/publish", verifyAuth, publishRouter);
+app.use("/sms", verifyAuth, smsRouter);
+app.use("/gbp", verifyAuth, gbpRouter);
+app.use("/email", verifyAuth, emailDigestRouter);
+app.use("/outbox", verifyAuth, outboxRouter);
 app.use("/schedule.ics", verifyAuth, scheduleIcsRouter);
 app.use("/schedule", verifyAuth, scheduleRouter);
 app.use("/today", verifyAuth, todayRouter);
@@ -66,3 +79,5 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 app.listen(port, () => {
   console.log(`MainStreetAI API listening on port ${port}`);
 });
+
+startJobRunner();

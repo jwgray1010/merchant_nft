@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 7)
+# MainStreetAI Platform API (Phase 8)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -44,6 +44,12 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - per-user data isolation
 - Supabase migration + RLS policy file:
   - `supabase/schema.sql`
+- Integrations (optional via env flags):
+  - Buffer publish / scheduling handoff
+  - Twilio SMS sends + campaign queue
+  - Google Business Profile posting
+  - SendGrid email digests
+  - Outbox queue + job runner retry/backoff
 
 All OpenAI calls are centralized in:
 - `src/ai/openaiClient.ts`
@@ -74,6 +80,29 @@ SUPABASE_SERVICE_ROLE_KEY=
 LOCAL_DEV_USER_ID=local-dev-user
 ```
 
+Optional integration envs:
+
+```env
+INTEGRATION_SECRET_KEY=replace_with_long_random_secret_32plus_chars
+
+ENABLE_BUFFER_INTEGRATION=false
+ENABLE_TWILIO_INTEGRATION=false
+ENABLE_GBP_INTEGRATION=false
+ENABLE_EMAIL_INTEGRATION=false
+OUTBOX_RUNNER_ENABLED=true
+
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_FROM_NUMBER=
+
+SENDGRID_API_KEY=
+DIGEST_FROM_EMAIL=
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:3001/integrations/gbp/callback
+```
+
 ## Storage modes
 
 - `STORAGE_MODE=local` (default): no Supabase required, local token format is used.
@@ -89,6 +118,7 @@ All multi-tenant API endpoints require auth:
 - `/schedule`, `/schedule.ics`, `/today`
 - `/local-events`
 - `/sign.pdf`
+- `/integrations`, `/publish`, `/sms`, `/gbp`, `/email`, `/outbox`
 
 ### Local mode auth token
 
@@ -437,6 +467,126 @@ curl "http://localhost:3001/history/<historyId>?brandId=main-street-nutrition" -
 curl -L "http://localhost:3001/sign.pdf?brandId=main-street-nutrition&historyId=<historyId>" -H "$AUTH_HEADER" --output sign.pdf
 ```
 
+## Integrations (Phase 8)
+
+### Start with Buffer only (quickstart)
+
+1. Set env:
+
+```env
+ENABLE_BUFFER_INTEGRATION=true
+INTEGRATION_SECRET_KEY=replace_with_long_random_secret_32plus_chars
+```
+
+2. Connect Buffer for a brand:
+
+```bash
+curl -X POST "http://localhost:3001/integrations/buffer/connect?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accessToken":"<buffer-access-token>",
+    "defaultChannelId":"<buffer-channel-id>"
+  }'
+```
+
+3. Publish now:
+
+```bash
+curl -X POST "http://localhost:3001/publish?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform":"instagram",
+    "caption":"Afternoon pick-me-up is ready!",
+    "mediaUrl":"https://example.com/reel-cover.jpg"
+  }'
+```
+
+4. Publish using a scheduled item:
+
+```bash
+curl -X POST "http://localhost:3001/publish?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform":"instagram",
+    "caption":"Scheduled post from planner",
+    "scheduleId":"<schedule-id>"
+  }'
+```
+
+If schedule time is in the future, it is queued in outbox.
+
+### Integration endpoints
+
+- `GET /integrations?brandId=...`
+- `POST /integrations/buffer/connect?brandId=...`
+- `POST /integrations/gbp/connect?brandId=...`
+- `GET /integrations/gbp/callback`
+- `POST /publish?brandId=...`
+- `POST /sms/send?brandId=...`
+- `POST /sms/campaign?brandId=...`
+- `POST /gbp/post?brandId=...`
+- `POST /email/digest/preview?brandId=...`
+- `POST /email/digest/send?brandId=...`
+- `GET /outbox?brandId=...`
+- `POST /outbox/:id/retry?brandId=...`
+
+### SMS examples (Twilio)
+
+```bash
+curl -X POST "http://localhost:3001/sms/send?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"to":"+15555550123","message":"Teachers get a free flavor add-on today!"}'
+```
+
+```bash
+curl -X POST "http://localhost:3001/sms/campaign?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"listName":"teachers","recipients":["+15555550123","+15555550124"],"message":"After-school combo starts at 3pm!"}'
+```
+
+### Google Business examples
+
+Start OAuth:
+
+```bash
+curl -X POST "http://localhost:3001/integrations/gbp/connect?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"locationName":"accounts/<account-id>/locations/<location-id>"}'
+```
+
+Create GBP post:
+
+```bash
+curl -X POST "http://localhost:3001/gbp/post?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"summary":"Fresh daily specials are ready!","cta":"LEARN_MORE","url":"https://example.com"}'
+```
+
+### Email digest examples
+
+Preview:
+
+```bash
+curl -X POST "http://localhost:3001/email/digest/preview?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER"
+```
+
+Queue/send:
+
+```bash
+curl -X POST "http://localhost:3001/email/digest/send?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"to":"owner@example.com","cadence":"weekly"}'
+```
+
 ## Admin UI (no frontend framework)
 
 Open:
@@ -455,8 +605,12 @@ From admin you can:
 - view today's checklist
 - manage recurring and one-off local events
 - onboard new brands quickly from templates
+- connect Buffer/Twilio/GBP/Email integrations
+- send SMS campaigns and GBP posts
+- preview and queue email digests
+- monitor and retry outbox jobs
 
-## Phase 3 + 4 + 5 + 6 + 7 Workflow
+## Phase 3 + 4 + 5 + 6 + 7 + 8 Workflow
 
 1. Generate promo/social/week-plan content.
 2. Log what actually got posted using `POST /posts`.
@@ -467,6 +621,11 @@ From admin you can:
 7. Plan upcoming posts in `/admin/schedule` and export reminders via `.ics`.
 8. Check `/admin/today` each morning for a practical to-do list.
 9. Keep `/admin/local-events` updated so promos and plans stay community-aware.
+10. Connect integrations in `/admin/integrations`.
+11. Publish through Buffer with `/publish` or `/admin/integrations/buffer`.
+12. Send opt-in SMS via `/admin/sms`.
+13. Post to Google Business from `/admin/gbp`.
+14. Queue digest emails and monitor `/admin/outbox`.
 
 ## Notes
 
@@ -476,3 +635,6 @@ From admin you can:
 - Model responses are parsed as JSON and validated, with one repair retry if needed.
 - In `supabase` mode, verify your JWT subject matches table `owner_id` values.
 - If every query returns empty in Supabase mode, re-check RLS policies and bearer token validity.
+- Never expose `SUPABASE_SERVICE_ROLE_KEY` or `INTEGRATION_SECRET_KEY` to browser code.
+- Only send SMS to explicit opt-in recipients.
+- Use sensible frequency caps and avoid spam behavior for SMS/email campaigns.

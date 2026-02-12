@@ -1,7 +1,17 @@
 import type { BrandProfile } from "../schemas/brandSchema";
 import type { HistoryRecord } from "../schemas/historySchema";
+import type {
+  IntegrationProvider,
+  IntegrationRecord,
+  IntegrationStatus,
+} from "../schemas/integrationSchema";
 import type { LocalEvents, LocalEventsUpsert } from "../schemas/localEventsSchema";
 import type { MetricsRequest, StoredMetrics } from "../schemas/metricsSchema";
+import type {
+  OutboxRecord,
+  OutboxType,
+  OutboxUpdate,
+} from "../schemas/outboxSchema";
 import type { PostRequest, StoredPost } from "../schemas/postSchema";
 import type {
   ScheduleCreateRequest,
@@ -9,7 +19,16 @@ import type {
   ScheduleUpdateRequest,
 } from "../schemas/scheduleSchema";
 
-export type HistoryEndpoint = "promo" | "social" | "events" | "week-plan" | "next-week-plan";
+export type HistoryEndpoint =
+  | "promo"
+  | "social"
+  | "events"
+  | "week-plan"
+  | "next-week-plan"
+  | "publish"
+  | "sms-send"
+  | "gbp-post"
+  | "email-digest";
 
 export interface StorageAdapter {
   listBrands(userId: string): Promise<BrandProfile[]>;
@@ -64,4 +83,31 @@ export interface StorageAdapter {
     payload: LocalEventsUpsert,
   ): Promise<LocalEvents>;
   deleteLocalEvent(userId: string, brandId: string, eventId: string): Promise<boolean>;
+
+  upsertIntegration(
+    userId: string,
+    brandId: string,
+    provider: IntegrationProvider,
+    status: IntegrationStatus,
+    config: Record<string, unknown>,
+    secretsEnc?: string | null,
+  ): Promise<IntegrationRecord>;
+  getIntegration(
+    userId: string,
+    brandId: string,
+    provider: IntegrationProvider,
+  ): Promise<IntegrationRecord | null>;
+  listIntegrations(userId: string, brandId: string): Promise<IntegrationRecord[]>;
+
+  enqueueOutbox(
+    userId: string,
+    brandId: string,
+    type: OutboxType,
+    payload: Record<string, unknown>,
+    scheduledFor?: string | null,
+  ): Promise<OutboxRecord>;
+  listOutbox(userId: string, brandId: string, limit: number): Promise<OutboxRecord[]>;
+  listDueOutbox(nowIso: string, limit: number): Promise<OutboxRecord[]>;
+  updateOutbox(id: string, updates: OutboxUpdate): Promise<OutboxRecord | null>;
+  getOutboxById(userId: string, brandId: string, id: string): Promise<OutboxRecord | null>;
 }

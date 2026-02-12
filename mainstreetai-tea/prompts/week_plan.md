@@ -30,6 +30,7 @@ Return JSON schema:
       "offer": string,
       "timeWindow": string,
       "inStoreSign": string,
+      "smsText": "optional short SMS promo line",
       "post": {
         "hook": string,
         "caption": string,

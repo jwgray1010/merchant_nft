@@ -1,6 +1,19 @@
 import { historyRecordSchema, type HistoryRecord } from "../../schemas/historySchema";
+import {
+  integrationRecordSchema,
+  type IntegrationProvider,
+  type IntegrationRecord,
+  type IntegrationStatus,
+} from "../../schemas/integrationSchema";
 import { localEventsSchema, localEventsUpsertSchema, type LocalEvents, type LocalEventsUpsert } from "../../schemas/localEventsSchema";
 import { metricsRequestSchema, storedMetricsSchema, type MetricsRequest, type StoredMetrics } from "../../schemas/metricsSchema";
+import {
+  outboxRecordSchema,
+  outboxUpdateSchema,
+  type OutboxRecord,
+  type OutboxType,
+  type OutboxUpdate,
+} from "../../schemas/outboxSchema";
 import { postRequestSchema, storedPostSchema, type PostRequest, type StoredPost } from "../../schemas/postSchema";
 import {
   scheduleCreateRequestSchema,
@@ -41,6 +54,32 @@ type HistoryRow = {
   request: unknown;
   response: unknown;
   created_at: string;
+};
+
+type IntegrationRow = {
+  id: string;
+  owner_id: string;
+  brand_ref: string;
+  provider: string;
+  status: string;
+  config: unknown;
+  secrets_enc: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type OutboxRow = {
+  id: string;
+  owner_id: string;
+  brand_ref: string;
+  type: string;
+  payload: unknown;
+  status: string;
+  attempts: number;
+  last_error: string | null;
+  scheduled_for: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 function isUniqueViolation(error: unknown): boolean {
@@ -87,6 +126,42 @@ function toHistoryRecord(brandId: string, row: HistoryRow): HistoryRecord {
     createdAt: row.created_at,
     request: row.request,
     response: row.response,
+  });
+}
+
+function toIntegrationRecord(brandId: string, row: IntegrationRow): IntegrationRecord {
+  return integrationRecordSchema.parse({
+    id: row.id,
+    ownerId: row.owner_id,
+    brandId,
+    provider: row.provider,
+    status: row.status,
+    config:
+      typeof row.config === "object" && row.config !== null && !Array.isArray(row.config)
+        ? row.config
+        : {},
+    secretsEnc: row.secrets_enc,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function toOutboxRecord(brandId: string, row: OutboxRow): OutboxRecord {
+  return outboxRecordSchema.parse({
+    id: row.id,
+    ownerId: row.owner_id,
+    brandId,
+    type: row.type,
+    payload:
+      typeof row.payload === "object" && row.payload !== null && !Array.isArray(row.payload)
+        ? row.payload
+        : {},
+    status: row.status,
+    attempts: row.attempts ?? 0,
+    lastError: row.last_error ?? undefined,
+    scheduledFor: row.scheduled_for ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   });
 }
 
@@ -667,5 +742,240 @@ export class SupabaseAdapter implements StorageAdapter {
       throw error;
     }
     return Boolean(data);
+  }
+
+  async upsertIntegration(
+    userId: string,
+    brandId: string,
+    provider: IntegrationProvider,
+    status: IntegrationStatus,
+    config: Record<string, unknown>,
+    secretsEnc?: string | null,
+  ): Promise<IntegrationRecord> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+
+    const { data: existing, error: existingError } = await this.table("integrations")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("provider", provider)
+      .maybeSingle();
+    if (existingError) {
+      throw existingError;
+    }
+
+    if (existing) {
+      const { data, error } = await this.table("integrations")
+        .update({
+          status,
+          config,
+          secrets_enc: secretsEnc ?? (existing as { secrets_enc?: string | null }).secrets_enc ?? null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", (existing as { id: string }).id)
+        .select("*")
+        .single();
+      if (error) {
+        throw error;
+      }
+      return toIntegrationRecord(brandId, data as IntegrationRow);
+    }
+
+    const { data, error } = await this.table("integrations")
+      .insert({
+        owner_id: userId,
+        brand_ref: brandRow.id,
+        provider,
+        status,
+        config,
+        secrets_enc: secretsEnc ?? null,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    return toIntegrationRecord(brandId, data as IntegrationRow);
+  }
+
+  async getIntegration(
+    userId: string,
+    brandId: string,
+    provider: IntegrationProvider,
+  ): Promise<IntegrationRecord | null> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("integrations")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("provider", provider)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toIntegrationRecord(brandId, data as IntegrationRow);
+  }
+
+  async listIntegrations(userId: string, brandId: string): Promise<IntegrationRecord[]> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("integrations")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .order("provider", { ascending: true });
+    if (error) {
+      throw error;
+    }
+    return ((data ?? []) as IntegrationRow[]).map((row) => toIntegrationRecord(brandId, row));
+  }
+
+  async enqueueOutbox(
+    userId: string,
+    brandId: string,
+    type: OutboxType,
+    payload: Record<string, unknown>,
+    scheduledFor?: string | null,
+  ): Promise<OutboxRecord> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("outbox")
+      .insert({
+        owner_id: userId,
+        brand_ref: brandRow.id,
+        type,
+        payload,
+        status: "queued",
+        attempts: 0,
+        scheduled_for: scheduledFor ?? null,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+
+    return toOutboxRecord(brandId, data as OutboxRow);
+  }
+
+  async listOutbox(userId: string, brandId: string, limit: number): Promise<OutboxRecord[]> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("outbox")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .order("created_at", { ascending: false })
+      .limit(Math.max(0, limit));
+    if (error) {
+      throw error;
+    }
+
+    return ((data ?? []) as OutboxRow[]).map((row) => toOutboxRecord(brandId, row));
+  }
+
+  async listDueOutbox(nowIso: string, limit: number): Promise<OutboxRecord[]> {
+    const { data, error } = await this.table("outbox")
+      .select("*, brands!inner(brand_id)")
+      .eq("status", "queued")
+      .or(`scheduled_for.lte.${new Date(nowIso).toISOString()},scheduled_for.is.null`)
+      .order("scheduled_for", { ascending: true, nullsFirst: true })
+      .order("created_at", { ascending: true })
+      .limit(Math.max(0, limit));
+    if (error) {
+      throw error;
+    }
+
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const mapped: OutboxRecord[] = [];
+    for (const row of rows) {
+      const brands = row.brands as { brand_id?: unknown } | null;
+      if (!brands || typeof brands.brand_id !== "string") {
+        continue;
+      }
+      const parsed = outboxRecordSchema.safeParse({
+        id: row.id,
+        ownerId: row.owner_id,
+        brandId: brands.brand_id,
+        type: row.type,
+        payload:
+          typeof row.payload === "object" && row.payload !== null && !Array.isArray(row.payload)
+            ? row.payload
+            : {},
+        status: row.status,
+        attempts: row.attempts ?? 0,
+        lastError: row.last_error ?? undefined,
+        scheduledFor: row.scheduled_for ?? null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+      if (parsed.success) {
+        mapped.push(parsed.data);
+      }
+    }
+    return mapped;
+  }
+
+  async updateOutbox(id: string, updates: OutboxUpdate): Promise<OutboxRecord | null> {
+    const parsedUpdates = outboxUpdateSchema.parse(updates);
+    const payload: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (parsedUpdates.status !== undefined) payload.status = parsedUpdates.status;
+    if (parsedUpdates.attempts !== undefined) payload.attempts = parsedUpdates.attempts;
+    if (parsedUpdates.lastError !== undefined) payload.last_error = parsedUpdates.lastError;
+    if (parsedUpdates.scheduledFor !== undefined) payload.scheduled_for = parsedUpdates.scheduledFor;
+
+    const { data, error } = await this.table("outbox")
+      .update(payload)
+      .eq("id", id)
+      .select("*, brands!inner(brand_id)")
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+
+    const row = data as Record<string, unknown>;
+    const brands = row.brands as { brand_id?: unknown } | null;
+    if (!brands || typeof brands.brand_id !== "string") {
+      return null;
+    }
+    return outboxRecordSchema.parse({
+      id: row.id,
+      ownerId: row.owner_id,
+      brandId: brands.brand_id,
+      type: row.type,
+      payload:
+        typeof row.payload === "object" && row.payload !== null && !Array.isArray(row.payload)
+          ? row.payload
+          : {},
+      status: row.status,
+      attempts: row.attempts ?? 0,
+      lastError: row.last_error ?? undefined,
+      scheduledFor: row.scheduled_for ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  }
+
+  async getOutboxById(userId: string, brandId: string, id: string): Promise<OutboxRecord | null> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("outbox")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("id", id)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toOutboxRecord(brandId, data as OutboxRow);
   }
 }

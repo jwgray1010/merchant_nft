@@ -7,6 +7,10 @@ export const generationEndpointSchema = z.enum([
   "events",
   "week-plan",
   "next-week-plan",
+  "publish",
+  "sms-send",
+  "gbp-post",
+  "email-digest",
 ]);
 
 export const historyRecordSchema = z.object({

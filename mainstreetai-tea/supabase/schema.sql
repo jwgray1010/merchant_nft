@@ -91,6 +91,32 @@ create table if not exists public.local_events (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.integrations (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  provider text not null check (provider in ('buffer','meta','twilio','gmail','sendgrid','google_business')),
+  status text not null default 'connected',
+  config jsonb not null default '{}'::jsonb,
+  secrets_enc text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.outbox (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  type text not null check (type in ('post_publish','sms_send','gbp_post','email_send')),
+  payload jsonb not null default '{}'::jsonb,
+  status text not null check (status in ('queued','sent','failed')),
+  attempts int not null default 0,
+  last_error text,
+  scheduled_for timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists history_owner_brand_created_at_idx
   on public.history(owner_id, brand_ref, created_at desc);
 
@@ -102,6 +128,12 @@ create index if not exists schedule_owner_brand_scheduled_for_idx
 
 create index if not exists local_events_owner_brand_event_date_idx
   on public.local_events(owner_id, brand_ref, event_date);
+
+create unique index if not exists integrations_owner_brand_provider_unique
+  on public.integrations(owner_id, brand_ref, provider);
+
+create index if not exists outbox_owner_brand_scheduled_idx
+  on public.outbox(owner_id, brand_ref, scheduled_for, status, created_at);
 
 -- Keep updated_at fresh on brands updates.
 create or replace function public.set_updated_at()
@@ -119,6 +151,16 @@ create trigger brands_set_updated_at
 before update on public.brands
 for each row execute function public.set_updated_at();
 
+drop trigger if exists integrations_set_updated_at on public.integrations;
+create trigger integrations_set_updated_at
+before update on public.integrations
+for each row execute function public.set_updated_at();
+
+drop trigger if exists outbox_set_updated_at on public.outbox;
+create trigger outbox_set_updated_at
+before update on public.outbox
+for each row execute function public.set_updated_at();
+
 -- RLS: owner can only access own rows.
 alter table public.brands enable row level security;
 alter table public.history enable row level security;
@@ -126,6 +168,8 @@ alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
 alter table public.schedule enable row level security;
 alter table public.local_events enable row level security;
+alter table public.integrations enable row level security;
+alter table public.outbox enable row level security;
 
 drop policy if exists brands_owner_select on public.brands;
 create policy brands_owner_select on public.brands
@@ -169,6 +213,18 @@ with check (owner_id = auth.uid());
 
 drop policy if exists local_events_owner_all on public.local_events;
 create policy local_events_owner_all on public.local_events
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists integrations_owner_all on public.integrations;
+create policy integrations_owner_all on public.integrations
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists outbox_owner_all on public.outbox;
+create policy outbox_owner_all on public.outbox
 for all
 using (owner_id = auth.uid())
 with check (owner_id = auth.uid());

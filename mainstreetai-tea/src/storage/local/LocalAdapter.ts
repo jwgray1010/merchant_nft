@@ -4,12 +4,25 @@ import path from "node:path";
 import { brandProfileSchema, type BrandProfile } from "../../schemas/brandSchema";
 import { historyRecordSchema, type HistoryRecord } from "../../schemas/historySchema";
 import {
+  integrationRecordSchema,
+  type IntegrationProvider,
+  type IntegrationRecord,
+  type IntegrationStatus,
+} from "../../schemas/integrationSchema";
+import {
   localEventsSchema,
   localEventsUpsertSchema,
   type LocalEvents,
   type LocalEventsUpsert,
 } from "../../schemas/localEventsSchema";
 import { metricsRequestSchema, storedMetricsSchema, type MetricsRequest, type StoredMetrics } from "../../schemas/metricsSchema";
+import {
+  outboxRecordSchema,
+  outboxUpdateSchema,
+  type OutboxRecord,
+  type OutboxType,
+  type OutboxUpdate,
+} from "../../schemas/outboxSchema";
 import { postRequestSchema, storedPostSchema, type PostRequest, type StoredPost } from "../../schemas/postSchema";
 import {
   scheduleCreateRequestSchema,
@@ -73,6 +86,22 @@ export class LocalAdapter implements StorageAdapter {
     return path.join(this.userDir(userId), "local_events", `${brandId}.json`);
   }
 
+  private integrationsDir(userId: string, brandId: string): string {
+    return path.join(this.userDir(userId), "integrations", brandId);
+  }
+
+  private integrationPath(userId: string, brandId: string, provider: IntegrationProvider): string {
+    return path.join(this.integrationsDir(userId, brandId), `${provider}.json`);
+  }
+
+  private outboxDir(userId: string): string {
+    return path.join(this.userDir(userId), "outbox");
+  }
+
+  private outboxPath(userId: string, outboxId: string): string {
+    return path.join(this.outboxDir(userId), `${outboxId}.json`);
+  }
+
   private async ensureDir(dirPath: string): Promise<void> {
     await mkdir(dirPath, { recursive: true });
   }
@@ -93,6 +122,32 @@ export class LocalAdapter implements StorageAdapter {
       }
       throw error;
     }
+  }
+
+  private async listUserDirectories(): Promise<string[]> {
+    let entries: Array<{ name: string; isDirectory(): boolean }>;
+    try {
+      entries = await readdir(this.rootDir, { withFileTypes: true });
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  }
+
+  private async findOutboxFileById(id: string): Promise<string | null> {
+    const userDirs = await this.listUserDirectories();
+    for (const userDirName of userDirs) {
+      const candidatePath = path.join(this.rootDir, userDirName, "outbox", `${id}.json`);
+      const parsed = await this.readJson<unknown>(candidatePath);
+      if (parsed) {
+        return candidatePath;
+      }
+    }
+    return null;
   }
 
   async listBrands(userId: string): Promise<BrandProfile[]> {
@@ -173,7 +228,13 @@ export class LocalAdapter implements StorageAdapter {
       rm(this.metricsDir(userId, brandId), { recursive: true, force: true }),
       rm(this.scheduleDir(userId, brandId), { recursive: true, force: true }),
       rm(this.localEventsPath(userId, brandId), { force: true }),
+      rm(this.integrationsDir(userId, brandId), { recursive: true, force: true }),
     ]);
+
+    const outboxRecords = await this.listOutbox(userId, brandId, 1000);
+    await Promise.allSettled(
+      outboxRecords.map((record) => rm(this.outboxPath(userId, record.id), { force: true })),
+    );
     return true;
   }
 
@@ -509,5 +570,223 @@ export class LocalAdapter implements StorageAdapter {
     await this.ensureDir(targetDir);
     await this.atomicWriteJson(this.localEventsPath(userId, brandId), next);
     return true;
+  }
+
+  async upsertIntegration(
+    userId: string,
+    brandId: string,
+    provider: IntegrationProvider,
+    status: IntegrationStatus,
+    config: Record<string, unknown>,
+    secretsEnc?: string | null,
+  ): Promise<IntegrationRecord> {
+    const filePath = this.integrationPath(userId, brandId, provider);
+    const existing = await this.readJson<unknown>(filePath);
+    const existingParsed = integrationRecordSchema.safeParse(existing);
+    const nowIso = new Date().toISOString();
+
+    const next = integrationRecordSchema.parse({
+      id: existingParsed.success ? existingParsed.data.id : randomUUID(),
+      ownerId: userId,
+      brandId,
+      provider,
+      status,
+      config,
+      secretsEnc: secretsEnc ?? (existingParsed.success ? existingParsed.data.secretsEnc ?? null : null),
+      createdAt: existingParsed.success ? existingParsed.data.createdAt : nowIso,
+      updatedAt: nowIso,
+    });
+
+    await this.ensureDir(this.integrationsDir(userId, brandId));
+    await this.atomicWriteJson(filePath, next);
+    return next;
+  }
+
+  async getIntegration(
+    userId: string,
+    brandId: string,
+    provider: IntegrationProvider,
+  ): Promise<IntegrationRecord | null> {
+    const raw = await this.readJson<unknown>(this.integrationPath(userId, brandId, provider));
+    if (!raw) {
+      return null;
+    }
+    const parsed = integrationRecordSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
+  }
+
+  async listIntegrations(userId: string, brandId: string): Promise<IntegrationRecord[]> {
+    const dir = this.integrationsDir(userId, brandId);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const items = await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map(async (entry) => {
+          const raw = await readFile(path.join(dir, entry), "utf8");
+          return integrationRecordSchema.safeParse(JSON.parse(raw));
+        }),
+    );
+
+    return items
+      .filter((result): result is { success: true; data: IntegrationRecord } => result.success)
+      .map((result) => result.data)
+      .sort((a, b) => a.provider.localeCompare(b.provider));
+  }
+
+  async enqueueOutbox(
+    userId: string,
+    brandId: string,
+    type: OutboxType,
+    payload: Record<string, unknown>,
+    scheduledFor?: string | null,
+  ): Promise<OutboxRecord> {
+    const nowIso = new Date().toISOString();
+    const record = outboxRecordSchema.parse({
+      id: randomUUID(),
+      ownerId: userId,
+      brandId,
+      type,
+      payload,
+      status: "queued",
+      attempts: 0,
+      lastError: undefined,
+      scheduledFor: scheduledFor ?? null,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+
+    await this.ensureDir(this.outboxDir(userId));
+    await this.atomicWriteJson(this.outboxPath(userId, record.id), record);
+    return record;
+  }
+
+  async listOutbox(userId: string, brandId: string, limit: number): Promise<OutboxRecord[]> {
+    const dir = this.outboxDir(userId);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const items = await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map(async (entry) => {
+          const raw = await readFile(path.join(dir, entry), "utf8");
+          return outboxRecordSchema.safeParse(JSON.parse(raw));
+        }),
+    );
+
+    return items
+      .filter((result): result is { success: true; data: OutboxRecord } => result.success)
+      .map((result) => result.data)
+      .filter((record) => record.brandId === brandId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, Math.max(0, limit));
+  }
+
+  async listDueOutbox(nowIso: string, limit: number): Promise<OutboxRecord[]> {
+    const nowMs = new Date(nowIso).getTime();
+    if (!Number.isFinite(nowMs)) {
+      return [];
+    }
+
+    const userDirNames = await this.listUserDirectories();
+    const allRecords: OutboxRecord[] = [];
+    for (const userDirName of userDirNames) {
+      const outboxDir = path.join(this.rootDir, userDirName, "outbox");
+      let entries: string[];
+      try {
+        entries = await readdir(outboxDir);
+      } catch (error) {
+        if (isNotFound(error)) {
+          continue;
+        }
+        throw error;
+      }
+
+      for (const entry of entries.filter((name) => name.endsWith(".json"))) {
+        const raw = await readFile(path.join(outboxDir, entry), "utf8");
+        const parsed = outboxRecordSchema.safeParse(JSON.parse(raw));
+        if (!parsed.success) {
+          continue;
+        }
+        const record = parsed.data;
+        if (record.status !== "queued") {
+          continue;
+        }
+        if (!record.scheduledFor) {
+          allRecords.push(record);
+          continue;
+        }
+        const scheduledMs = new Date(record.scheduledFor).getTime();
+        if (Number.isFinite(scheduledMs) && scheduledMs <= nowMs) {
+          allRecords.push(record);
+        }
+      }
+    }
+
+    return allRecords
+      .sort((a, b) => {
+        const aSort = a.scheduledFor ?? a.createdAt;
+        const bSort = b.scheduledFor ?? b.createdAt;
+        return aSort.localeCompare(bSort);
+      })
+      .slice(0, Math.max(0, limit));
+  }
+
+  async updateOutbox(id: string, updates: OutboxUpdate): Promise<OutboxRecord | null> {
+    const parsedUpdates = outboxUpdateSchema.parse(updates);
+    const filePath = await this.findOutboxFileById(id);
+    if (!filePath) {
+      return null;
+    }
+
+    const existing = await this.readJson<unknown>(filePath);
+    if (!existing) {
+      return null;
+    }
+
+    const parsedExisting = outboxRecordSchema.parse(existing);
+    const merged = outboxRecordSchema.parse({
+      ...parsedExisting,
+      ...parsedUpdates,
+      lastError:
+        parsedUpdates.lastError === null
+          ? undefined
+          : parsedUpdates.lastError ?? parsedExisting.lastError,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await this.atomicWriteJson(filePath, merged);
+    return merged;
+  }
+
+  async getOutboxById(userId: string, brandId: string, id: string): Promise<OutboxRecord | null> {
+    const raw = await this.readJson<unknown>(this.outboxPath(userId, id));
+    if (!raw) {
+      return null;
+    }
+    const parsed = outboxRecordSchema.safeParse(raw);
+    if (!parsed.success) {
+      return null;
+    }
+    if (parsed.data.brandId !== brandId) {
+      return null;
+    }
+    return parsed.data;
   }
 }
