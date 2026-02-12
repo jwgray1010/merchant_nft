@@ -2835,7 +2835,9 @@ router.get("/town", async (req, res, next) => {
         userId: context.ownerUserId,
       }).catch(() => ({
         activeCount: map?.businesses.length ?? 0,
-        featuresUnlocked: [],
+        featuresUnlocked: [] as string[],
+        launchMessage: undefined,
+        momentumLine: undefined,
       })),
       listTownAmbassadors({
         townId: membership.town.id,
