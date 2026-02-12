@@ -1,6 +1,29 @@
 import { Router } from "express";
 import { resolveBrandAccess } from "../auth/brandAccess";
 import { getSubscriptionForBrand } from "../billing/subscriptions";
+import {
+  locationCreateSchema,
+  locationUpdateSchema,
+  type LocationUpdate,
+} from "../schemas/locationSchema";
+import { tenantSettingsUpsertSchema } from "../schemas/tenantSchema";
+import { brandVoiceSampleCreateSchema } from "../schemas/voiceSchema";
+import {
+  addLocation,
+  deleteLocation,
+  listLocations,
+  updateLocation,
+} from "../services/locationStore";
+import { getOwnerTenantSettings, upsertOwnerTenantSettings } from "../services/tenantStore";
+import {
+  addBrandVoiceSample,
+  getBrandVoiceProfile,
+  listBrandVoiceSamples,
+} from "../services/voiceStore";
+import {
+  canTrainBrandVoiceNow,
+  trainBrandVoiceProfile,
+} from "../services/voiceTrainingService";
 import { getAdapter } from "../storage/getAdapter";
 import { extractAuthToken, resolveAuthUser } from "../supabase/verifyAuth";
 
@@ -41,6 +64,9 @@ function render(title: string, body: string): string {
         <a class="button secondary" href="/admin">Admin Home</a>
         <a class="button secondary" href="/admin/billing">Billing</a>
         <a class="button secondary" href="/admin/team">Team</a>
+        <a class="button secondary" href="/admin/voice">Voice</a>
+        <a class="button secondary" href="/admin/locations">Locations</a>
+        <a class="button secondary" href="/admin/tenant/settings">Tenant</a>
         <a class="button secondary" href="/admin/welcome">Welcome</a>
       </div>
       ${body}
@@ -300,6 +326,489 @@ router.get("/team", async (req, res, next) => {
       `,
     );
     return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/voice", async (req, res, next) => {
+  try {
+    const actorId = req.user?.id;
+    if (!actorId) {
+      return res.redirect("/admin/login");
+    }
+    const brands = await getAdapter().listBrands(actorId);
+    const selectedBrandId =
+      typeof req.query.brandId === "string" && req.query.brandId.trim() !== ""
+        ? req.query.brandId.trim()
+        : brands[0]?.brandId ?? "";
+    const options = brands
+      .map((brand) => {
+        const selected = brand.brandId === selectedBrandId ? "selected" : "";
+        return `<option value="${escapeHtml(brand.brandId)}" ${selected}>${escapeHtml(
+          brand.businessName,
+        )}</option>`;
+      })
+      .join("");
+    if (!selectedBrandId) {
+      return res
+        .type("html")
+        .send(render("Voice", '<div class="card"><h1>Voice</h1><p>Create a brand first.</p></div>'));
+    }
+
+    const access = await resolveBrandAccess(actorId, selectedBrandId);
+    if (!access) {
+      return res.status(404).type("html").send(render("Voice", "<div class='card'><p>Brand not found.</p></div>"));
+    }
+    const [samples, profile] = await Promise.all([
+      listBrandVoiceSamples(access.ownerId, access.brandId, 50),
+      getBrandVoiceProfile(access.ownerId, access.brandId),
+    ]);
+    const notice =
+      typeof req.query.notice === "string" && req.query.notice.trim() !== ""
+        ? `<p class="muted">${escapeHtml(req.query.notice)}</p>`
+        : "";
+    const html = render(
+      "Voice",
+      `
+      <div class="card">
+        <h1>Brand Voice Training</h1>
+        <form method="GET" action="/admin/voice" class="row">
+          <label><strong>Brand</strong></label>
+          <select name="brandId" onchange="this.form.submit()">${options}</select>
+        </form>
+        ${notice}
+      </div>
+      <div class="card">
+        <h2>Add voice sample</h2>
+        <form method="POST" action="/admin/voice/samples" class="row" style="align-items:flex-start;">
+          <input type="hidden" name="brandId" value="${escapeHtml(access.brandId)}" />
+          <select name="source">
+            <option value="caption">caption</option>
+            <option value="sms">sms</option>
+            <option value="email">email</option>
+            <option value="manual">manual</option>
+          </select>
+          <input name="content" placeholder="Paste a real caption or message..." style="min-width:320px;" required />
+          <button class="button" type="submit">Add sample</button>
+        </form>
+        <p class="muted">Capture real customer-facing text. Up to 200 samples are retained automatically.</p>
+      </div>
+      <div class="card">
+        <h2>Train profile</h2>
+        <form method="POST" action="/admin/voice/train">
+          <input type="hidden" name="brandId" value="${escapeHtml(access.brandId)}" />
+          <button class="button" type="submit">Run training</button>
+        </form>
+        <p class="muted">Uses the latest 50 samples and updates style summary/rules for all future AI outputs.</p>
+      </div>
+      <div class="card">
+        <h2>Current profile</h2>
+        ${
+          profile
+            ? `<p><strong>Summary:</strong> ${escapeHtml(profile.styleSummary ?? "—")}</p>
+               <p><strong>Emoji style:</strong> ${escapeHtml(profile.emojiStyle ?? "—")}</p>
+               <p><strong>Energy:</strong> ${escapeHtml(profile.energyLevel ?? "—")}</p>
+               <p><strong>Phrases to repeat:</strong> ${escapeHtml(profile.phrasesToRepeat.join(" | ") || "—")}</p>
+               <p><strong>Phrases to avoid:</strong> ${escapeHtml(profile.doNotUse.join(" | ") || "—")}</p>`
+            : "<p class='muted'>No trained profile yet.</p>"
+        }
+      </div>
+      <div class="card">
+        <h2>Recent samples</h2>
+        <table>
+          <thead><tr><th>Created</th><th>Source</th><th>Content</th></tr></thead>
+          <tbody>
+            ${
+              samples.length > 0
+                ? samples
+                    .map(
+                      (sample) => `<tr>
+                        <td>${escapeHtml(sample.createdAt)}</td>
+                        <td>${escapeHtml(sample.source)}</td>
+                        <td>${escapeHtml(sample.content)}</td>
+                      </tr>`,
+                    )
+                    .join("")
+                : '<tr><td colspan="3" class="muted">No samples yet.</td></tr>'
+            }
+          </tbody>
+        </table>
+      </div>
+      `,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/voice/samples", async (req, res, next) => {
+  try {
+    const actorId = req.user?.id;
+    if (!actorId) {
+      return res.redirect("/admin/login");
+    }
+    const brandId = typeof req.body?.brandId === "string" ? req.body.brandId.trim() : "";
+    if (!brandId) {
+      return res.redirect("/admin/voice?notice=Missing%20brandId");
+    }
+    const access = await resolveBrandAccess(actorId, brandId);
+    if (!access || (access.role !== "owner" && access.role !== "admin")) {
+      return res.redirect(`/admin/voice?brandId=${encodeURIComponent(brandId)}&notice=Permission%20denied`);
+    }
+    const parsed = brandVoiceSampleCreateSchema.safeParse({
+      source: req.body?.source,
+      content: req.body?.content,
+    });
+    if (!parsed.success) {
+      return res.redirect(
+        `/admin/voice?brandId=${encodeURIComponent(brandId)}&notice=Invalid%20sample%20payload`,
+      );
+    }
+    await addBrandVoiceSample(access.ownerId, access.brandId, parsed.data);
+    return res.redirect(
+      `/admin/voice?brandId=${encodeURIComponent(brandId)}&notice=Voice%20sample%20saved`,
+    );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/voice/train", async (req, res, next) => {
+  try {
+    const actorId = req.user?.id;
+    if (!actorId) {
+      return res.redirect("/admin/login");
+    }
+    const brandId = typeof req.body?.brandId === "string" ? req.body.brandId.trim() : "";
+    if (!brandId) {
+      return res.redirect("/admin/voice?notice=Missing%20brandId");
+    }
+    const access = await resolveBrandAccess(actorId, brandId);
+    if (!access || (access.role !== "owner" && access.role !== "admin")) {
+      return res.redirect(`/admin/voice?brandId=${encodeURIComponent(brandId)}&notice=Permission%20denied`);
+    }
+    const rateLimit = canTrainBrandVoiceNow(access.ownerId, access.brandId);
+    if (!rateLimit.ok) {
+      return res.redirect(
+        `/admin/voice?brandId=${encodeURIComponent(brandId)}&notice=Try%20again%20in%20a%20few%20minutes`,
+      );
+    }
+    await trainBrandVoiceProfile({
+      userId: access.ownerId,
+      brandId: access.brandId,
+    });
+    return res.redirect(
+      `/admin/voice?brandId=${encodeURIComponent(brandId)}&notice=Voice%20profile%20trained`,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Voice training failed";
+    const brandId = typeof req.body?.brandId === "string" ? req.body.brandId.trim() : "";
+    if (brandId) {
+      return res.redirect(
+        `/admin/voice?brandId=${encodeURIComponent(brandId)}&notice=${encodeURIComponent(message)}`,
+      );
+    }
+    return next(error);
+  }
+});
+
+router.get("/locations", async (req, res, next) => {
+  try {
+    const actorId = req.user?.id;
+    if (!actorId) {
+      return res.redirect("/admin/login");
+    }
+    const brands = await getAdapter().listBrands(actorId);
+    const selectedBrandId =
+      typeof req.query.brandId === "string" && req.query.brandId.trim() !== ""
+        ? req.query.brandId.trim()
+        : brands[0]?.brandId ?? "";
+    const options = brands
+      .map((brand) => {
+        const selected = brand.brandId === selectedBrandId ? "selected" : "";
+        return `<option value="${escapeHtml(brand.brandId)}" ${selected}>${escapeHtml(
+          brand.businessName,
+        )}</option>`;
+      })
+      .join("");
+    if (!selectedBrandId) {
+      return res
+        .type("html")
+        .send(render("Locations", '<div class="card"><h1>Locations</h1><p>Create a brand first.</p></div>'));
+    }
+    const access = await resolveBrandAccess(actorId, selectedBrandId);
+    if (!access) {
+      return res
+        .status(404)
+        .type("html")
+        .send(render("Locations", "<div class='card'><p>Brand not found.</p></div>"));
+    }
+    const locations = await listLocations(access.ownerId, access.brandId);
+    const notice =
+      typeof req.query.notice === "string" && req.query.notice.trim() !== ""
+        ? `<p class="muted">${escapeHtml(req.query.notice)}</p>`
+        : "";
+    const html = render(
+      "Locations",
+      `
+      <div class="card">
+        <h1>Multi-location Manager</h1>
+        <form method="GET" action="/admin/locations" class="row">
+          <label><strong>Brand</strong></label>
+          <select name="brandId" onchange="this.form.submit()">${options}</select>
+        </form>
+        ${notice}
+      </div>
+      <div class="card">
+        <h2>Add location</h2>
+        <form method="POST" action="/admin/locations" class="row" style="align-items:flex-end;">
+          <input type="hidden" name="brandId" value="${escapeHtml(access.brandId)}" />
+          <label>Name<br/><input name="name" required /></label>
+          <label>Address<br/><input name="address" /></label>
+          <label>Timezone<br/><input name="timezone" value="America/Chicago" /></label>
+          <label>GBP location name<br/><input name="googleLocationName" placeholder="locations/123..." /></label>
+          <label>Buffer profile id<br/><input name="bufferProfileId" /></label>
+          <button class="button" type="submit">Add</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Existing locations</h2>
+        <table>
+          <thead><tr><th>Name</th><th>Address</th><th>Timezone</th><th>GBP</th><th>Buffer</th><th></th></tr></thead>
+          <tbody>
+            ${
+              locations.length > 0
+                ? locations
+                    .map(
+                      (location) => `
+                      <tr>
+                        <td>${escapeHtml(location.name)}</td>
+                        <td>${escapeHtml(location.address ?? "")}</td>
+                        <td>${escapeHtml(location.timezone)}</td>
+                        <td>${escapeHtml(location.googleLocationName ?? "")}</td>
+                        <td>${escapeHtml(location.bufferProfileId ?? "")}</td>
+                        <td>
+                          <form method="POST" action="/admin/locations/${escapeHtml(
+                            location.id,
+                          )}" class="row">
+                            <input type="hidden" name="brandId" value="${escapeHtml(access.brandId)}" />
+                            <input type="hidden" name="name" value="${escapeHtml(location.name)}" />
+                            <input type="hidden" name="address" value="${escapeHtml(location.address ?? "")}" />
+                            <input type="hidden" name="timezone" value="${escapeHtml(location.timezone)}" />
+                            <input type="hidden" name="googleLocationName" value="${escapeHtml(
+                              location.googleLocationName ?? "",
+                            )}" />
+                            <input type="hidden" name="bufferProfileId" value="${escapeHtml(
+                              location.bufferProfileId ?? "",
+                            )}" />
+                            <button class="button secondary" type="submit">Update</button>
+                          </form>
+                          <form method="POST" action="/admin/locations/${escapeHtml(
+                            location.id,
+                          )}/delete" style="margin-top:6px;">
+                            <input type="hidden" name="brandId" value="${escapeHtml(access.brandId)}" />
+                            <button class="button secondary" type="submit">Delete</button>
+                          </form>
+                        </td>
+                      </tr>`,
+                    )
+                    .join("")
+                : '<tr><td colspan="6" class="muted">No locations yet.</td></tr>'
+            }
+          </tbody>
+        </table>
+      </div>
+      `,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/locations", async (req, res, next) => {
+  try {
+    const actorId = req.user?.id;
+    if (!actorId) {
+      return res.redirect("/admin/login");
+    }
+    const brandId = typeof req.body?.brandId === "string" ? req.body.brandId.trim() : "";
+    if (!brandId) {
+      return res.redirect("/admin/locations?notice=Missing%20brandId");
+    }
+    const access = await resolveBrandAccess(actorId, brandId);
+    if (!access || (access.role !== "owner" && access.role !== "admin")) {
+      return res.redirect(`/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Permission%20denied`);
+    }
+    const parsed = locationCreateSchema.safeParse({
+      name: req.body?.name,
+      address: req.body?.address,
+      timezone: req.body?.timezone,
+      googleLocationName: req.body?.googleLocationName,
+      bufferProfileId: req.body?.bufferProfileId,
+    });
+    if (!parsed.success) {
+      return res.redirect(
+        `/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Invalid%20location%20payload`,
+      );
+    }
+    await addLocation(access.ownerId, access.brandId, parsed.data);
+    return res.redirect(
+      `/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Location%20added`,
+    );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/locations/:id", async (req, res, next) => {
+  try {
+    const actorId = req.user?.id;
+    if (!actorId) {
+      return res.redirect("/admin/login");
+    }
+    const brandId = typeof req.body?.brandId === "string" ? req.body.brandId.trim() : "";
+    const locationId = req.params.id?.trim();
+    if (!brandId || !locationId) {
+      return res.redirect("/admin/locations?notice=Missing%20params");
+    }
+    const access = await resolveBrandAccess(actorId, brandId);
+    if (!access || (access.role !== "owner" && access.role !== "admin")) {
+      return res.redirect(`/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Permission%20denied`);
+    }
+    const rawUpdates: LocationUpdate = {};
+    if (typeof req.body?.name === "string" && req.body.name.trim() !== "") {
+      rawUpdates.name = req.body.name.trim();
+    }
+    if (typeof req.body?.address === "string") {
+      rawUpdates.address = req.body.address;
+    }
+    if (typeof req.body?.timezone === "string") {
+      rawUpdates.timezone = req.body.timezone;
+    }
+    if (typeof req.body?.googleLocationName === "string") {
+      rawUpdates.googleLocationName = req.body.googleLocationName;
+    }
+    if (typeof req.body?.bufferProfileId === "string") {
+      rawUpdates.bufferProfileId = req.body.bufferProfileId;
+    }
+    const parsed = locationUpdateSchema.safeParse(rawUpdates);
+    if (!parsed.success) {
+      return res.redirect(
+        `/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Invalid%20location%20update`,
+      );
+    }
+    await updateLocation(access.ownerId, access.brandId, locationId, parsed.data);
+    return res.redirect(
+      `/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Location%20updated`,
+    );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/locations/:id/delete", async (req, res, next) => {
+  try {
+    const actorId = req.user?.id;
+    if (!actorId) {
+      return res.redirect("/admin/login");
+    }
+    const brandId = typeof req.body?.brandId === "string" ? req.body.brandId.trim() : "";
+    const locationId = req.params.id?.trim();
+    if (!brandId || !locationId) {
+      return res.redirect("/admin/locations?notice=Missing%20params");
+    }
+    const access = await resolveBrandAccess(actorId, brandId);
+    if (!access || (access.role !== "owner" && access.role !== "admin")) {
+      return res.redirect(`/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Permission%20denied`);
+    }
+    await deleteLocation(access.ownerId, access.brandId, locationId);
+    return res.redirect(
+      `/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Location%20deleted`,
+    );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/tenant/settings", async (req, res, next) => {
+  try {
+    const ownerId = req.user?.id;
+    if (!ownerId) {
+      return res.redirect("/admin/login");
+    }
+    const settings = await getOwnerTenantSettings(ownerId);
+    const notice =
+      typeof req.query.notice === "string" && req.query.notice.trim() !== ""
+        ? `<p class="muted">${escapeHtml(req.query.notice)}</p>`
+        : "";
+    const html = render(
+      "Tenant Settings",
+      `
+      <div class="card">
+        <h1>Tenant Branding (White-label)</h1>
+        ${notice}
+        <form method="POST" action="/admin/tenant/settings">
+          <div class="row" style="align-items:flex-end;">
+            <label>Name<br/><input name="name" value="${escapeHtml(settings?.name ?? "")}" /></label>
+            <label>Domain<br/><input name="domain" value="${escapeHtml(settings?.domain ?? "")}" placeholder="app.youragency.com" /></label>
+            <label>Support Email<br/><input name="supportEmail" value="${escapeHtml(settings?.supportEmail ?? "")}" /></label>
+          </div>
+          <div class="row" style="align-items:flex-end;margin-top:10px;">
+            <label>App Name<br/><input name="appName" value="${escapeHtml(settings?.appName ?? "MainStreetAI")}" /></label>
+            <label>Tagline<br/><input name="tagline" value="${escapeHtml(settings?.tagline ?? "")}" /></label>
+            <label>Primary Color<br/><input name="primaryColor" value="${escapeHtml(settings?.primaryColor ?? "#2563eb")}" /></label>
+          </div>
+          <div class="row" style="align-items:flex-end;margin-top:10px;">
+            <label>Logo URL<br/><input name="logoUrl" value="${escapeHtml(settings?.logoUrl ?? "")}" /></label>
+            <label><input type="checkbox" name="hideMainstreetaiBranding" ${
+              settings?.hideMainstreetaiBranding ? "checked" : ""
+            } /> Hide MainStreetAI branding</label>
+          </div>
+          <div style="margin-top:12px;">
+            <button class="button" type="submit">Save tenant settings</button>
+          </div>
+        </form>
+      </div>
+      `,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/tenant/settings", async (req, res, next) => {
+  try {
+    const ownerId = req.user?.id;
+    if (!ownerId) {
+      return res.redirect("/admin/login");
+    }
+    const payload = {
+      name: typeof req.body?.name === "string" ? req.body.name : undefined,
+      domain: typeof req.body?.domain === "string" ? req.body.domain : undefined,
+      logoUrl:
+        typeof req.body?.logoUrl === "string" && req.body.logoUrl.trim() !== ""
+          ? req.body.logoUrl
+          : undefined,
+      primaryColor: typeof req.body?.primaryColor === "string" ? req.body.primaryColor : undefined,
+      supportEmail:
+        typeof req.body?.supportEmail === "string" && req.body.supportEmail.trim() !== ""
+          ? req.body.supportEmail
+          : undefined,
+      appName: typeof req.body?.appName === "string" ? req.body.appName : undefined,
+      tagline: typeof req.body?.tagline === "string" ? req.body.tagline : undefined,
+      hideMainstreetaiBranding:
+        req.body?.hideMainstreetaiBranding === "on" || req.body?.hideMainstreetaiBranding === "true",
+    };
+    const parsed = tenantSettingsUpsertSchema.safeParse(payload);
+    if (!parsed.success) {
+      return res.redirect("/admin/tenant/settings?notice=Invalid%20settings%20payload");
+    }
+    await upsertOwnerTenantSettings(ownerId, parsed.data);
+    return res.redirect("/admin/tenant/settings?notice=Tenant%20settings%20saved");
   } catch (error) {
     return next(error);
   }

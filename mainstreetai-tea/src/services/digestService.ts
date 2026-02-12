@@ -135,6 +135,7 @@ export async function buildDigestPreview(
     ? await runPrompt({
         promptFile: "next_week_plan.md",
         brandProfile: brand,
+          userId,
         input: {
           startDate: nextMondayIsoDate(),
           goal: "repeat_customers",

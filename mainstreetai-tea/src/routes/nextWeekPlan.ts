@@ -6,6 +6,7 @@ import { nextWeekPlanRequestSchema } from "../schemas/nextWeekPlanRequestSchema"
 import { weekPlanOutputSchema } from "../schemas/weekPlanOutputSchema";
 import { getAdapter } from "../storage/getAdapter";
 import { getUpcomingLocalEvents } from "../services/localEventAwareness";
+import { getLocationById } from "../services/locationStore";
 import { generateInsightsForUser } from "../services/insightsService";
 
 const router = Router();
@@ -50,13 +51,42 @@ router.post("/", async (req, res, next) => {
     }
 
     const learning = await generateInsightsForUser(userId, brand);
+    const locationId =
+      typeof req.query.locationId === "string" && req.query.locationId.trim() !== ""
+        ? req.query.locationId.trim()
+        : null;
+    const location = locationId
+      ? await getLocationById(userId, parsedBrandId.data, locationId)
+      : null;
+    if (locationId && !location) {
+      return res.status(404).json({ error: `Location '${locationId}' was not found` });
+    }
 
     const result = await runPrompt({
       promptFile: "next_week_plan.md",
       brandProfile: brand,
+      userId,
+      locationContext: location
+        ? {
+            id: location.id,
+            name: location.name,
+            address: location.address,
+            timezone: location.timezone,
+          }
+        : undefined,
       input: {
         ...parsed.data,
         brand,
+        ...(location
+          ? {
+              location: {
+                id: location.id,
+                name: location.name,
+                address: location.address,
+                timezone: location.timezone,
+              },
+            }
+          : {}),
         insights: learning.insights,
         previousWeekPlans: learning.previousWeekPlans,
         recentTopPosts: learning.recentTopPosts,

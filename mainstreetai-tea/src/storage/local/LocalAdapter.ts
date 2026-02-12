@@ -339,6 +339,9 @@ export class LocalAdapter implements StorageAdapter {
       rm(this.autopilotSettingsPath(userId, brandId), { force: true }),
       rm(this.modelInsightsCacheDir(userId, brandId), { recursive: true, force: true }),
       rm(this.alertsDir(userId, brandId), { recursive: true, force: true }),
+      rm(path.join(this.userDir(userId), "locations", brandId), { recursive: true, force: true }),
+      rm(path.join(this.userDir(userId), "voice_samples", brandId), { recursive: true, force: true }),
+      rm(path.join(this.userDir(userId), "voice_profile", `${brandId}.json`), { force: true }),
     ]);
 
     const outboxRecords = await this.listOutbox(userId, brandId, 1000);

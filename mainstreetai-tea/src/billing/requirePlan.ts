@@ -1,6 +1,6 @@
 import { FEATURES } from "../config/featureFlags";
 import { type BillingPlan } from "../schemas/subscriptionSchema";
-import { getSubscriptionForBrand, hasRequiredPlan } from "./subscriptions";
+import { getEffectivePlanForBrand, hasRequiredPlan } from "./subscriptions";
 
 export async function requirePlan(
   userId: string,
@@ -14,22 +14,22 @@ export async function requirePlan(
     };
   }
 
-  const subscription = await getSubscriptionForBrand(userId, brandId);
-  if (hasRequiredPlan(subscription.plan, minPlan)) {
+  const effectivePlan = await getEffectivePlanForBrand(userId, brandId);
+  if (hasRequiredPlan(effectivePlan, minPlan)) {
     return {
       ok: true,
-      plan: subscription.plan,
+      plan: effectivePlan,
     };
   }
 
   return {
     ok: false,
-    plan: subscription.plan,
+    plan: effectivePlan,
     status: 402,
     body: {
       error: "Upgrade required",
       requiredPlan: minPlan,
-      currentPlan: subscription.plan,
+      currentPlan: effectivePlan,
     },
   };
 }

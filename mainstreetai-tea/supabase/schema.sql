@@ -234,8 +234,64 @@ create table if not exists public.team_members (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.brand_voice_samples (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  source text not null check (source in ('caption','sms','email','manual')),
+  content text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.brand_voice_profile (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  embedding jsonb,
+  style_summary text,
+  emoji_style text,
+  energy_level text check (energy_level in ('calm','friendly','hype','luxury')),
+  phrases_to_repeat text[] not null default '{}'::text[],
+  do_not_use text[] not null default '{}'::text[],
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.locations (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  name text not null,
+  address text,
+  timezone text not null default 'America/Chicago',
+  google_location_name text,
+  buffer_profile_id text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.tenants (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  name text,
+  domain text,
+  logo_url text,
+  primary_color text,
+  support_email text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.tenant_branding (
+  id uuid primary key default gen_random_uuid(),
+  tenant_ref uuid not null references public.tenants(id) on delete cascade,
+  app_name text not null default 'MainStreetAI',
+  tagline text,
+  hide_mainstreetai_branding boolean not null default false
+);
+
 alter table public.posts add column if not exists status text not null default 'posted';
 alter table public.posts add column if not exists provider_meta jsonb;
+alter table public.subscriptions add column if not exists tenant_ref uuid references public.tenants(id) on delete set null;
+alter table public.brand_voice_profile add column if not exists phrases_to_repeat text[] not null default '{}'::text[];
+alter table public.brand_voice_profile add column if not exists do_not_use text[] not null default '{}'::text[];
 
 create index if not exists history_owner_brand_created_at_idx
   on public.history(owner_id, brand_ref, created_at desc);
@@ -294,6 +350,30 @@ create unique index if not exists team_members_owner_brand_user_unique
 create index if not exists team_members_brand_user_idx
   on public.team_members(brand_ref, user_id, role);
 
+create index if not exists brand_voice_samples_owner_brand_created_idx
+  on public.brand_voice_samples(owner_id, brand_ref, created_at desc);
+
+create unique index if not exists brand_voice_profile_owner_brand_unique
+  on public.brand_voice_profile(owner_id, brand_ref);
+
+create unique index if not exists locations_brand_name_unique
+  on public.locations(brand_ref, name);
+
+create index if not exists locations_owner_brand_created_idx
+  on public.locations(owner_id, brand_ref, created_at desc);
+
+create unique index if not exists tenants_owner_unique
+  on public.tenants(owner_id);
+
+create unique index if not exists tenants_domain_unique
+  on public.tenants(domain);
+
+create unique index if not exists tenant_branding_tenant_unique
+  on public.tenant_branding(tenant_ref);
+
+create index if not exists subscriptions_owner_tenant_status_idx
+  on public.subscriptions(owner_id, tenant_ref, status, plan);
+
 -- Keep updated_at fresh on brands updates.
 create or replace function public.set_updated_at()
 returns trigger
@@ -330,6 +410,11 @@ create trigger subscriptions_set_updated_at
 before update on public.subscriptions
 for each row execute function public.set_updated_at();
 
+drop trigger if exists brand_voice_profile_set_updated_at on public.brand_voice_profile;
+create trigger brand_voice_profile_set_updated_at
+before update on public.brand_voice_profile
+for each row execute function public.set_updated_at();
+
 create or replace function public.is_brand_owner(_brand_ref uuid)
 returns boolean
 language sql
@@ -357,6 +442,19 @@ as $$
   );
 $$;
 
+create or replace function public.is_tenant_owner(_tenant_ref uuid)
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.tenants t
+    where t.id = _tenant_ref
+      and t.owner_id = auth.uid()
+  );
+$$;
+
 -- RLS: owner can only access own rows.
 alter table public.brands enable row level security;
 alter table public.history enable row level security;
@@ -375,6 +473,11 @@ alter table public.model_insights_cache enable row level security;
 alter table public.alerts enable row level security;
 alter table public.subscriptions enable row level security;
 alter table public.team_members enable row level security;
+alter table public.brand_voice_samples enable row level security;
+alter table public.brand_voice_profile enable row level security;
+alter table public.locations enable row level security;
+alter table public.tenants enable row level security;
+alter table public.tenant_branding enable row level security;
 
 drop policy if exists brands_owner_select on public.brands;
 create policy brands_owner_select on public.brands
@@ -542,6 +645,36 @@ using (
   owner_id = auth.uid()
   or public.has_team_role(brand_ref, array['owner','admin']::text[])
 );
+
+drop policy if exists brand_voice_samples_owner_all on public.brand_voice_samples;
+create policy brand_voice_samples_owner_all on public.brand_voice_samples
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists brand_voice_profile_owner_all on public.brand_voice_profile;
+create policy brand_voice_profile_owner_all on public.brand_voice_profile
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists locations_owner_all on public.locations;
+create policy locations_owner_all on public.locations
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists tenants_owner_all on public.tenants;
+create policy tenants_owner_all on public.tenants
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists tenant_branding_owner_all on public.tenant_branding;
+create policy tenant_branding_owner_all on public.tenant_branding
+for all
+using (public.is_tenant_owner(tenant_ref))
+with check (public.is_tenant_owner(tenant_ref));
 
 alter table public.outbox drop constraint if exists outbox_type_check;
 alter table public.outbox add constraint outbox_type_check

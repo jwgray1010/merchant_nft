@@ -209,6 +209,9 @@ function renderLayout(
         <a class="button secondary small" href="/admin/integrations">Integrations</a>
         <a class="button secondary small" href="/admin/sms">SMS</a>
         <a class="button secondary small" href="/admin/email">Email</a>
+        <a class="button secondary small" href="/admin/voice">Voice</a>
+        <a class="button secondary small" href="/admin/locations">Locations</a>
+        <a class="button secondary small" href="/admin/tenant/settings">Tenant</a>
         <a class="button secondary small" href="/admin/billing">Billing</a>
         <a class="button secondary small" href="/admin/team">Team</a>
         <a class="button secondary small" href="/admin/schedule">Schedule</a>

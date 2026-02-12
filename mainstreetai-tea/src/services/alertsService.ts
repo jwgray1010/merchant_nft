@@ -299,6 +299,7 @@ export async function detectAndQueueAlertsForBrand(input: {
     const recommendations = await runPrompt({
       promptFile: "anomaly_recommendations.md",
       brandProfile: brand,
+      userId: input.userId,
       input: {
         brand,
         signal: {

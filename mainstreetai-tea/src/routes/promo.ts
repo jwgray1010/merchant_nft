@@ -5,6 +5,7 @@ import { brandIdSchema } from "../schemas/brandSchema";
 import { promoOutputSchema, promoRequestSchema } from "../schemas/promoRequestSchema";
 import { getAdapter } from "../storage/getAdapter";
 import { getUpcomingLocalEvents } from "../services/localEventAwareness";
+import { getLocationById } from "../services/locationStore";
 
 const router = Router();
 
@@ -46,10 +47,30 @@ router.post("/", async (req, res, next) => {
     if (!planCheck.ok) {
       return res.status(planCheck.status).json(planCheck.body);
     }
+    const locationId =
+      typeof req.query.locationId === "string" && req.query.locationId.trim() !== ""
+        ? req.query.locationId.trim()
+        : null;
+    const location = locationId
+      ? await getLocationById(userId, parsedBrandId.data, locationId)
+      : null;
+    if (locationId && !location) {
+      return res.status(404).json({ error: `Location '${locationId}' was not found` });
+    }
 
     const promptInput = {
       ...parsed.data,
       slowHours: parsed.data.slowHours ?? brand.slowHours,
+      ...(location
+        ? {
+            location: {
+              id: location.id,
+              name: location.name,
+              address: location.address,
+              timezone: location.timezone,
+            },
+          }
+        : {}),
       ...(parsed.data.includeLocalEvents
         ? { localEvents: await getUpcomingLocalEvents(userId, parsedBrandId.data, 7) }
         : {}),
@@ -58,6 +79,15 @@ router.post("/", async (req, res, next) => {
     const result = await runPrompt({
       promptFile: "promo.md",
       brandProfile: brand,
+      userId,
+      locationContext: location
+        ? {
+            id: location.id,
+            name: location.name,
+            address: location.address,
+            timezone: location.timezone,
+          }
+        : undefined,
       input: promptInput,
       outputSchema: promoOutputSchema,
     });

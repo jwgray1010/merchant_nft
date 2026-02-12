@@ -12,6 +12,7 @@ import { smsSendRequestSchema } from "../schemas/smsSendSchema";
 import { getAdapter } from "../storage/getAdapter";
 import { getTwilioProvider } from "../integrations/providerFactory";
 import { normalizeUSPhone } from "../utils/phone";
+import { getLocationById } from "../services/locationStore";
 
 const router = Router();
 
@@ -221,6 +222,14 @@ router.post("/send", async (req, res, next) => {
     if (!planCheck.ok) {
       return res.status(planCheck.status).json(planCheck.body);
     }
+    const locationId =
+      typeof req.query.locationId === "string" && req.query.locationId.trim() !== ""
+        ? req.query.locationId.trim()
+        : null;
+    const location = locationId ? await getLocationById(userId, brandId, locationId) : null;
+    if (locationId && !location) {
+      return res.status(404).json({ error: `Location '${locationId}' was not found` });
+    }
 
     await getTwilioProvider(userId, brandId);
 
@@ -250,6 +259,8 @@ router.post("/send", async (req, res, next) => {
         body: parsedBody.data.message,
         purpose: parsedBody.data.purpose,
         smsMessageId: message.id,
+        locationId: location?.id,
+        locationName: location?.name,
       },
       new Date().toISOString(),
     );
@@ -312,6 +323,14 @@ router.post("/campaign", async (req, res, next) => {
     if (!planCheck.ok) {
       return res.status(planCheck.status).json(planCheck.body);
     }
+    const locationId =
+      typeof req.query.locationId === "string" && req.query.locationId.trim() !== ""
+        ? req.query.locationId.trim()
+        : null;
+    const location = locationId ? await getLocationById(userId, brandId, locationId) : null;
+    if (locationId && !location) {
+      return res.status(404).json({ error: `Location '${locationId}' was not found` });
+    }
 
     await getTwilioProvider(userId, brandId);
     const contacts = await adapter.listSmsContacts(userId, brandId, 5000);
@@ -359,6 +378,8 @@ router.post("/campaign", async (req, res, next) => {
       {
         listTag: parsedBody.data.listTag,
         body: parsedBody.data.message,
+        locationId: location?.id,
+        locationName: location?.name,
         recipients: smsMessages.map((message) => ({
           to: message.toPhone,
           smsMessageId: message.id,

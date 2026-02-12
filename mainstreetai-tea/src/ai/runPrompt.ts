@@ -2,11 +2,20 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { BrandProfile } from "../schemas/brandSchema";
+import type { BrandVoiceProfile } from "../schemas/voiceSchema";
+import { getBrandVoiceProfile } from "../services/voiceStore";
 import { getModelName, getOpenAIClient } from "./openaiClient";
 
 type RunPromptOptions<TOutput> = {
   promptFile: string;
   brandProfile: BrandProfile;
+  userId?: string;
+  locationContext?: {
+    id?: string;
+    name?: string;
+    address?: string;
+    timezone?: string;
+  };
   input: unknown;
   outputSchema: z.ZodType<TOutput>;
 };
@@ -53,13 +62,54 @@ function buildComposedPrompt(
   systemPrompt: string,
   taskPrompt: string,
   brandProfile: BrandProfile,
+  voiceProfile: BrandVoiceProfile | null,
+  locationContext:
+    | {
+        id?: string;
+        name?: string;
+        address?: string;
+        timezone?: string;
+      }
+    | undefined,
   input: unknown,
 ): string {
+  const voiceSection = voiceProfile
+    ? [
+        "",
+        "BRAND VOICE PROFILE",
+        `- Style summary: ${voiceProfile.styleSummary ?? "Not trained yet"}`,
+        `- Emoji style: ${voiceProfile.emojiStyle ?? "Natural/minimal"}`,
+        `- Energy level: ${voiceProfile.energyLevel ?? "friendly"}`,
+        `- Phrases to repeat: ${(voiceProfile.phrasesToRepeat ?? []).join(" | ") || "none"}`,
+        `- Phrases to avoid: ${(voiceProfile.doNotUse ?? []).join(" | ") || "none"}`,
+      ].join("\n")
+    : "";
+
+  const locationSection = locationContext
+    ? [
+        "",
+        "LOCATION CONTEXT",
+        JSON.stringify(
+          {
+            id: locationContext.id,
+            name: locationContext.name,
+            address: locationContext.address,
+            timezone: locationContext.timezone,
+          },
+          null,
+          2,
+        ),
+        `Speak as if this content is for location: ${locationContext.name}.`,
+      ].join("\n")
+    : "";
+
   return [
     systemPrompt.trim(),
     "",
     "BRAND PROFILE (JSON, pretty printed)",
     JSON.stringify(brandProfile, null, 2),
+    voiceSection,
+    locationSection,
     "",
     "TASK PROMPT",
     taskPrompt.trim(),
@@ -114,18 +164,43 @@ function formatValidationError(error: unknown): string {
   return "Unknown parse/validation error";
 }
 
+async function safeLoadVoiceProfile(
+  userId: string | undefined,
+  brandId: string,
+): Promise<BrandVoiceProfile | null> {
+  if (!userId) {
+    return null;
+  }
+  try {
+    return await getBrandVoiceProfile(userId, brandId);
+  } catch {
+    // Missing Phase 11 tables should not break content generation.
+    return null;
+  }
+}
+
 export async function runPrompt<TOutput>({
   promptFile,
   brandProfile,
+  userId,
+  locationContext,
   input,
   outputSchema,
 }: RunPromptOptions<TOutput>): Promise<TOutput> {
-  const [systemPrompt, taskPrompt] = await Promise.all([
+  const [systemPrompt, taskPrompt, voiceProfile] = await Promise.all([
     loadPrompt("system.md"),
     loadPrompt(promptFile),
+    safeLoadVoiceProfile(userId, brandProfile.brandId),
   ]);
 
-  const composedPrompt = buildComposedPrompt(systemPrompt, taskPrompt, brandProfile, input);
+  const composedPrompt = buildComposedPrompt(
+    systemPrompt,
+    taskPrompt,
+    brandProfile,
+    voiceProfile,
+    locationContext,
+    input,
+  );
   const firstRaw = await requestModel(composedPrompt);
 
   try {

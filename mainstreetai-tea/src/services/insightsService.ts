@@ -336,6 +336,7 @@ export async function generateInsightsForUser(
   const insights = await runPrompt({
     promptFile: "insights.md",
     brandProfile: brand,
+    userId,
     input: {
       brand,
       history: recent.history,

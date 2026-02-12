@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { buildBrandFromTemplate } from "../data/templateStore";
 import { autopilotSettingsUpsertSchema } from "../schemas/autopilotSettingsSchema";
 import { brandProfileSchema } from "../schemas/brandSchema";
@@ -16,20 +16,56 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
-function layout(title: string, body: string): string {
+function brandingFromRequest(req: Request): {
+  appName: string;
+  tagline?: string;
+  primaryColor: string;
+  logoUrl?: string;
+  hideMainstreetaiBranding: boolean;
+} {
+  return {
+    appName: req.tenant?.appName ?? "MainStreetAI",
+    tagline: req.tenant?.tagline,
+    primaryColor: req.tenant?.primaryColor ?? "#2563eb",
+    logoUrl: req.tenant?.logoUrl,
+    hideMainstreetaiBranding: req.tenant?.hideMainstreetaiBranding ?? false,
+  };
+}
+
+function layout(
+  title: string,
+  body: string,
+  branding: {
+    appName: string;
+    tagline?: string;
+    primaryColor: string;
+    logoUrl?: string;
+    hideMainstreetaiBranding: boolean;
+  },
+): string {
+  const brandLabel = branding.hideMainstreetaiBranding
+    ? branding.appName
+    : `${branding.appName} by MainStreetAI`;
+  const logoHtml = branding.logoUrl
+    ? `<img src="${escapeHtml(branding.logoUrl)}" alt="${escapeHtml(
+        branding.appName,
+      )}" style="height:32px;max-width:200px;object-fit:contain;" />`
+    : `<strong style="font-size:18px;">${escapeHtml(branding.appName)}</strong>`;
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>${escapeHtml(title)} · MainStreetAI</title>
+    <title>${escapeHtml(title)} · ${escapeHtml(branding.appName)}</title>
     <style>
       body { margin: 0; font-family: Arial, sans-serif; background: #f8fafc; color: #0f172a; }
       .wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
       .hero { background: #0f172a; color: #fff; border-radius: 12px; padding: 26px; margin-bottom: 20px; }
       .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 14px; }
       .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-bottom: 14px; }
-      .button { display: inline-block; padding: 9px 13px; border-radius: 8px; text-decoration: none; border: 1px solid #2563eb; background: #2563eb; color: #fff; }
+      .button { display: inline-block; padding: 9px 13px; border-radius: 8px; text-decoration: none; border: 1px solid ${escapeHtml(
+        branding.primaryColor,
+      )}; background: ${escapeHtml(branding.primaryColor)}; color: #fff; }
       .button.secondary { background: #fff; color: #1e293b; border-color: #cbd5e1; }
       input, select, textarea { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; }
       textarea { min-height: 80px; }
@@ -38,6 +74,10 @@ function layout(title: string, body: string): string {
   </head>
   <body>
     <div class="wrap">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;">
+        <div>${logoHtml}</div>
+        <div class="muted">${escapeHtml(brandLabel)}</div>
+      </div>
       <div style="margin-bottom:16px;">
         <a class="button secondary" href="/">Home</a>
         <a class="button secondary" href="/pricing">Pricing</a>
@@ -61,12 +101,17 @@ function slugify(value: string): string {
 }
 
 router.get("/", (_req, res) => {
+  const branding = brandingFromRequest(_req);
   const html = layout(
     "AI Growth Engine for Local Businesses",
     `
       <section class="hero">
-        <h1>AI Growth Engine for Local Businesses</h1>
-        <p>MainStreetAI generates tomorrow-ready promos, posts, signs, alerts, and follow-up actions in one place.</p>
+        <h1>${escapeHtml(branding.appName)}: AI Growth Engine for Local Businesses</h1>
+        <p>${
+          branding.tagline
+            ? escapeHtml(branding.tagline)
+            : "Generate tomorrow-ready promos, posts, signs, alerts, and follow-up actions in one place."
+        }</p>
         <a class="button" href="/onboarding">Start Free</a>
       </section>
       <div class="grid">
@@ -83,11 +128,13 @@ router.get("/", (_req, res) => {
         </ul>
       </div>
     `,
+    branding,
   );
   return res.type("html").send(html);
 });
 
 router.get("/pricing", (_req, res) => {
+  const branding = brandingFromRequest(_req);
   const html = layout(
     "Pricing",
     `
@@ -109,11 +156,13 @@ router.get("/pricing", (_req, res) => {
       </div>
       <div class="card"><a class="button" href="/onboarding">Start Free</a></div>
     `,
+    branding,
   );
   return res.type("html").send(html);
 });
 
 router.get("/demo", (_req, res) => {
+  const branding = brandingFromRequest(_req);
   const sample = {
     promo: { promoName: "Teacher Recharge Hour", offer: "$1 off add-on", timeWindow: "2pm-4pm" },
     post: { platform: "instagram", hook: "After-school fuel is ready.", caption: "Teachers + parents, swing by 2-4!" },
@@ -128,11 +177,13 @@ router.get("/demo", (_req, res) => {
         <pre>${escapeHtml(JSON.stringify(sample, null, 2))}</pre>
       </div>
     `,
+    branding,
   );
   return res.type("html").send(html);
 });
 
 router.get("/onboarding", (_req, res) => {
+  const branding = brandingFromRequest(_req);
   const html = layout(
     "Onboarding Wizard",
     `
@@ -170,6 +221,7 @@ router.get("/onboarding", (_req, res) => {
         <div style="margin-top:14px;"><button class="button" type="submit">Complete Setup</button></div>
       </form>
     `,
+    branding,
   );
   return res.type("html").send(html);
 });
@@ -190,7 +242,10 @@ router.post("/onboarding/complete", async (req, res, next) => {
     const location = String(body.location ?? "").trim();
     const template = String(body.template ?? "service").trim().toLowerCase();
     if (!businessName || !location) {
-      return res.status(400).type("html").send(layout("Onboarding", "<h1>Missing required fields.</h1>"));
+      return res
+        .status(400)
+        .type("html")
+        .send(layout("Onboarding", "<h1>Missing required fields.</h1>", brandingFromRequest(req)));
     }
 
     const brandId = slugify(`${businessName}-${location}`) || slugify(businessName) || "new-brand";

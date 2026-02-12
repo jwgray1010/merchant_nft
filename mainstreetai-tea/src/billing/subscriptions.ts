@@ -23,6 +23,7 @@ type SubscriptionRow = {
   id: string;
   owner_id: string;
   brand_ref: string;
+  tenant_ref?: string | null;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   plan: string;
@@ -120,6 +121,29 @@ async function resolveBrandRef(ownerId: string, brandId: string): Promise<{ id: 
   };
 }
 
+async function resolveOwnerTenantRef(ownerId: string): Promise<string | null> {
+  if (getStorageMode() === "local") {
+    return null;
+  }
+  try {
+    const supabase = getSupabaseAdminClient();
+    const table = (name: string): any => supabase.from(name as never);
+    const { data, error } = await table("tenants")
+      .select("id")
+      .eq("owner_id", ownerId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    const row = data as { id?: unknown } | null;
+    return row && typeof row.id === "string" ? row.id : null;
+  } catch {
+    return null;
+  }
+}
+
 function toSubscriptionRecord(ownerId: string, brandId: string, row: SubscriptionRow): SubscriptionRecord {
   return subscriptionRecordSchema.parse({
     id: row.id,
@@ -133,6 +157,10 @@ function toSubscriptionRecord(ownerId: string, brandId: string, row: Subscriptio
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
+}
+
+function isEligiblePaidStatus(status: SubscriptionRecord["status"]): boolean {
+  return status === "active" || status === "trialing" || status === "past_due";
 }
 
 export function hasRequiredPlan(current: BillingPlan, minPlan: BillingPlan): boolean {
@@ -196,6 +224,7 @@ export async function upsertSubscriptionForBrand(
   const payload = {
     owner_id: ownerId,
     brand_ref: brandRef.id,
+    tenant_ref: await resolveOwnerTenantRef(ownerId),
     stripe_customer_id: parsed.stripeCustomerId ?? null,
     stripe_subscription_id: parsed.stripeSubscriptionId ?? null,
     plan: parsed.plan ?? "free",
@@ -283,4 +312,49 @@ export async function getSubscriptionByStripeId(
   const brands = (data as { brands?: { brand_id?: unknown } }).brands;
   const brandId = typeof brands?.brand_id === "string" ? brands.brand_id : "unknown-brand";
   return toSubscriptionRecord(row.owner_id, brandId, row);
+}
+
+export async function getBestTenantPlanForOwner(ownerId: string): Promise<BillingPlan | null> {
+  if (getStorageMode() === "local") {
+    return null;
+  }
+  try {
+    const supabase = getSupabaseAdminClient();
+    const table = (name: string): any => supabase.from(name as never);
+    const { data, error } = await table("subscriptions")
+      .select("plan,status,tenant_ref")
+      .eq("owner_id", ownerId)
+      .not("tenant_ref", "is", null);
+    if (error) {
+      throw error;
+    }
+    const rows = (data ?? []) as Array<{
+      plan?: unknown;
+      status?: unknown;
+    }>;
+    let best: BillingPlan | null = null;
+    for (const row of rows) {
+      const plan = safePlan(row.plan);
+      const status = safeStatus(row.status);
+      if (!isEligiblePaidStatus(status)) {
+        continue;
+      }
+      if (!best || PLAN_RANK[plan] > PLAN_RANK[best]) {
+        best = plan;
+      }
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
+export async function getEffectivePlanForBrand(ownerId: string, brandId: string): Promise<BillingPlan> {
+  const brandSubscription = await getSubscriptionForBrand(ownerId, brandId);
+  let effective = brandSubscription.plan;
+  const tenantPlan = await getBestTenantPlanForOwner(ownerId);
+  if (tenantPlan && PLAN_RANK[tenantPlan] > PLAN_RANK[effective]) {
+    effective = tenantPlan;
+  }
+  return effective;
 }

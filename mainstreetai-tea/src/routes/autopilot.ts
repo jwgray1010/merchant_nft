@@ -146,9 +146,14 @@ router.post("/run", async (req, res, next) => {
     if (!planCheck.ok) {
       return res.status(planCheck.status).json(planCheck.body);
     }
+    const locationId =
+      typeof req.query.locationId === "string" && req.query.locationId.trim() !== ""
+        ? req.query.locationId.trim()
+        : undefined;
     const result = await runAutopilotForBrand({
       userId,
       brandId: parsedBrand.brandId,
+      locationId,
       request: parsedBody.data,
       source: "api",
     });
@@ -160,6 +165,12 @@ router.post("/run", async (req, res, next) => {
     const message = error instanceof Error ? error.message : "Unknown autopilot error";
     if (message.toLowerCase().includes("already ran")) {
       return res.status(409).json({ error: message });
+    }
+    if (message.toLowerCase().includes("was not found")) {
+      return res.status(404).json({ error: message });
+    }
+    if (message.toLowerCase().includes("upgrade required")) {
+      return res.status(402).json({ error: message });
     }
     return next(error);
   }

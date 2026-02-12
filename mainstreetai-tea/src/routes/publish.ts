@@ -5,6 +5,7 @@ import { processDueOutbox } from "../jobs/outboxProcessor";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { publishRequestSchema } from "../schemas/publishSchema";
 import { getAdapter } from "../storage/getAdapter";
+import { getLocationById } from "../services/locationStore";
 
 const router = Router();
 
@@ -93,6 +94,16 @@ router.post("/", async (req, res, next) => {
     if (!planCheck.ok) {
       return res.status(planCheck.status).json(planCheck.body);
     }
+    const locationId =
+      typeof req.query.locationId === "string" && req.query.locationId.trim() !== ""
+        ? req.query.locationId.trim()
+        : null;
+    const location = locationId
+      ? await getLocationById(userId, parsedBrandId.data, locationId)
+      : null;
+    if (locationId && !location) {
+      return res.status(404).json({ error: `Location '${locationId}' was not found` });
+    }
 
     const payload = parsedBody.data;
     let scheduledFor = payload.scheduledFor ? new Date(payload.scheduledFor).toISOString() : undefined;
@@ -113,7 +124,7 @@ router.post("/", async (req, res, next) => {
     const config = bufferProfilesSchema.parse(integration.config);
     const bufferProfileId = resolveBufferProfileId({
       platform: payload.platform,
-      profileId: payload.profileId,
+      profileId: payload.profileId ?? location?.bufferProfileId,
       profiles: config.profiles.map((profile) => ({ id: profile.id, service: profile.service })),
     });
     if (!bufferProfileId) {
@@ -139,6 +150,8 @@ router.post("/", async (req, res, next) => {
         source: payload.source,
         scheduleId: payload.scheduleId,
         bufferProfileId,
+        locationId: location?.id,
+        locationName: location?.name,
       },
       shouldQueue ? scheduledFor : nowIso,
     );
@@ -149,7 +162,9 @@ router.post("/", async (req, res, next) => {
         postedAt: scheduledFor ?? nowIso,
         mediaType: payload.mediaUrl ? "photo" : "text",
         captionUsed: payload.caption,
-        notes: `Queued for Buffer publish (outbox: ${outbox.id})`,
+        notes: location
+          ? `Queued for Buffer publish (${location.name}, outbox: ${outbox.id})`
+          : `Queued for Buffer publish (outbox: ${outbox.id})`,
         status: "planned",
         providerMeta: {
           outboxId: outbox.id,
@@ -157,6 +172,8 @@ router.post("/", async (req, res, next) => {
           source: payload.source,
           linkUrl: payload.linkUrl,
           title: payload.title,
+          locationId: location?.id,
+          locationName: location?.name,
         },
       });
 

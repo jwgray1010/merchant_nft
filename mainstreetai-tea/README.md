@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 10)
+# MainStreetAI Platform API (Phase 11)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -983,7 +983,7 @@ From admin you can:
 - preview and queue email digests
 - monitor and retry outbox jobs
 
-## Phase 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 Workflow
+## Phase 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 Workflow
 
 1. Generate promo/social/week-plan content.
 2. Log what actually got posted using `POST /posts`.
@@ -1032,3 +1032,118 @@ From admin you can:
 - Never expose `SUPABASE_SERVICE_ROLE_KEY` or `INTEGRATION_SECRET_KEY` to browser code.
 - Only send SMS to explicit opt-in recipients.
 - Use sensible frequency caps and avoid spam behavior for SMS/email campaigns.
+
+## Phase 11: Brand Voice + Multi-location + White-label
+
+Phase 11 extends the platform without breaking existing endpoints.
+
+### 1) Brand Voice Training
+
+New tables:
+- `brand_voice_samples`
+- `brand_voice_profile`
+
+New prompt:
+- `prompts/voice_training.md`
+
+New API routes:
+- `GET /api/voice/samples?brandId=...`
+- `POST /api/voice/samples?brandId=...`
+- `POST /api/voice/train?brandId=...`
+
+Behavior:
+- Retains max **200** samples per brand.
+- Training uses latest **50** samples.
+- Training endpoint has a lightweight cooldown to prevent spam.
+- Trained profile is auto-injected by `runPrompt()` in all AI generations.
+
+Example:
+
+```bash
+curl -X POST "http://localhost:3001/api/voice/samples?brandId=main-street-nutrition" \
+  -H "Authorization: Bearer local:owner@example.com|owner@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{"source":"caption","content":"After school pick-me-up is ready 💥 Swing by before practice!"}'
+```
+
+```bash
+curl -X POST "http://localhost:3001/api/voice/train?brandId=main-street-nutrition" \
+  -H "Authorization: Bearer local:owner@example.com|owner@example.com"
+```
+
+### 2) Multi-location Support
+
+New table:
+- `locations`
+
+New API routes:
+- `GET /api/locations?brandId=...`
+- `POST /api/locations?brandId=...`
+- `PUT /api/locations/:id?brandId=...`
+- `DELETE /api/locations/:id?brandId=...`
+
+Location fields include:
+- `name`, `address`, `timezone`
+- `google_location_name` (GBP mapping)
+- `buffer_profile_id` (Buffer mapping)
+
+Supported optional query:
+- `locationId=` on:
+  - `POST /api/publish`
+  - `POST /api/gbp/post`
+  - `POST /api/sms/send`
+  - `POST /api/autopilot/run`
+
+Autopilot behavior:
+- If `locationId` is provided: run only that location.
+- If omitted and locations exist: process locations **sequentially**.
+
+### 3) White-label (Tenant Branding)
+
+New tables:
+- `tenants`
+- `tenant_branding`
+
+New middleware:
+- `src/middleware/tenantResolver.ts`
+
+Resolution:
+- Uses request host/domain to resolve tenant branding.
+- Attaches `req.tenant` safely (branding only; no auth bypass).
+
+New admin page:
+- `/admin/tenant/settings`
+
+New API route:
+- `GET /api/tenant/settings`
+- `POST /api/tenant/settings`
+
+Marketing/public pages (`/`, `/pricing`, `/demo`, `/onboarding`) now render:
+- custom app name
+- custom tagline
+- custom logo URL
+- custom primary color
+- optional hiding of “MainStreetAI” co-branding
+
+### 4) Billing note for agency tiers
+
+`subscriptions` now supports optional `tenant_ref`.
+
+`requirePlan()` now evaluates:
+1. brand subscription plan
+2. tenant-linked subscription plans for owner
+
+and uses the higher effective plan for feature gating.
+
+### 5) New admin pages
+
+- `/admin/voice?brandId=...`
+- `/admin/locations?brandId=...`
+- `/admin/tenant/settings`
+
+### 6) Domain setup quick checklist (white-label)
+
+1. Point custom domain to your deployment.
+2. Add tenant/domain + branding in `/admin/tenant/settings`.
+3. Verify host resolves tenant branding on `/` and `/pricing`.
+4. Keep auth/security routes unchanged (branding does not affect auth/RLS).

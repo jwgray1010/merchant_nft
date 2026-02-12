@@ -23,6 +23,7 @@ import {
   tomorrowDateInTimezone,
   zonedDateTimeToUtcIso,
 } from "../utils/timezone";
+import { getLocationById, listLocations } from "./locationStore";
 
 const AUTOPILOT_RECENT_RUN_WINDOW_HOURS = 20;
 const INSIGHTS_CACHE_STALE_HOURS = 24;
@@ -207,6 +208,7 @@ function firstGoal(settings: AutopilotSettings): AutopilotGoal {
 export async function runAutopilotForBrand(input: {
   userId: string;
   brandId: string;
+  locationId?: string;
   request?: AutopilotRunRequest;
   source: "api" | "cron";
   enforceDailyGuard?: boolean;
@@ -217,6 +219,15 @@ export async function runAutopilotForBrand(input: {
   outboxQueued: number;
   output: AutopilotDailyOutput;
   settings: AutopilotSettings;
+  locationRuns: Array<{
+    locationId?: string;
+    locationName?: string;
+    date: string;
+    scheduledFor: string;
+    scheduledItems: number;
+    outboxQueued: number;
+    output: AutopilotDailyOutput;
+  }>;
 }> {
   const adapter = getAdapter();
   const request = autopilotRunRequestSchema.parse(input.request ?? {});
@@ -231,8 +242,8 @@ export async function runAutopilotForBrand(input: {
 
   const savedSettings = await adapter.getAutopilotSettings(input.userId, input.brandId);
   const settings = savedSettings ?? defaultSettings(input.userId, input.brandId);
-  const timezone = timezoneOrDefault(settings.timezone);
-  const targetDate = request.date ?? tomorrowDateInTimezone(timezone);
+  const defaultTimezone = timezoneOrDefault(settings.timezone);
+  const targetDate = request.date ?? tomorrowDateInTimezone(defaultTimezone);
 
   if (input.enforceDailyGuard ?? true) {
     const recent = await hasRecentAutopilotRun(input.userId, input.brandId);
@@ -251,187 +262,291 @@ export async function runAutopilotForBrand(input: {
   const upcomingEvents = await getUpcomingLocalEvents(input.userId, input.brandId, 7);
   const goal = request.goal ?? firstGoal(settings);
   const focusAudience = request.focusAudience ?? settings.focusAudiences[0];
-  const generated = await runPrompt({
-    promptFile: "autopilot_daily.md",
-    brandProfile: brand,
-    input: {
-      brand,
-      date: targetDate,
-      dayLabel: dayLabel(targetDate, timezone),
-      goal,
-      focusAudience,
-      insights: insightsCache.insights,
-      upcomingEvents,
-      constraints: {
-        maxDiscountText: settings.maxDiscountText,
-        avoidControversy: Boolean(brand.constraints.avoidControversy),
-      },
-    },
-    outputSchema: autopilotDailyOutputSchema,
-  });
-
-  const channels = settings.channels.length > 0 ? settings.channels : [generated.post.platform];
-  const postTime = inferBestPostTime(settings, generated.post.bestPostTime);
-  const scheduledForIso = zonedDateTimeToUtcIso({
-    date: targetDate,
-    hour: postTime.hour,
-    minute: postTime.minute,
-    timeZone: timezone,
-  });
-
-  let scheduledItems = 0;
-  for (const channel of channels) {
-    await adapter.addScheduleItem(input.userId, input.brandId, {
-      title: `${generated.promo.promoName} (${channel})`,
-      platform: schedulePlatformFromChannel(channel),
-      scheduledFor: scheduledForIso,
-      caption: generated.post.caption,
-      assetNotes: `Autopilot generated (${targetDate})`,
-      status: "planned",
-    });
-    scheduledItems += 1;
+  const requestedLocation =
+    input.locationId && input.locationId.trim() !== ""
+      ? await getLocationById(input.userId, input.brandId, input.locationId.trim())
+      : null;
+  if (input.locationId && !requestedLocation) {
+    throw new Error(`Location '${input.locationId}' was not found`);
   }
+  const knownLocations = requestedLocation
+    ? [requestedLocation]
+    : await listLocations(input.userId, input.brandId);
+  const targets: Array<Awaited<ReturnType<typeof getLocationById>> | null> =
+    knownLocations.length > 0 ? knownLocations : [null];
 
-  let outboxQueued = 0;
-  const bufferIntegration = await adapter.getIntegration(input.userId, input.brandId, "buffer");
-  if (bufferIntegration) {
-    for (const channel of channels) {
-      if (channel === "google_business") {
-        continue;
-      }
-      await adapter.enqueueOutbox(
-        input.userId,
-        input.brandId,
-        "post_publish",
-        {
-          platform: postPublishPlatformFromChannel(channel),
-          caption: generated.post.caption,
-          source: "manual",
-          notes: `Autopilot queued for ${targetDate}`,
-        },
-        scheduledForIso,
-      );
-      outboxQueued += 1;
-    }
-  }
+  const locationRuns: Array<{
+    locationId?: string;
+    locationName?: string;
+    date: string;
+    scheduledFor: string;
+    scheduledItems: number;
+    outboxQueued: number;
+    output: AutopilotDailyOutput;
+  }> = [];
 
-  const gbpIntegration = await adapter.getIntegration(input.userId, input.brandId, "google_business");
-  if (gbpIntegration && generated.gbp.summary.trim() !== "") {
-    const config =
-      typeof gbpIntegration.config === "object" && gbpIntegration.config !== null
-        ? (gbpIntegration.config as Record<string, unknown>)
-        : {};
-    const locations = Array.isArray(config.locations)
-      ? config.locations
-          .map((entry) => {
-            if (typeof entry !== "object" || entry === null) {
-              return null;
+  for (const location of targets) {
+    const timezone = timezoneOrDefault(location?.timezone ?? settings.timezone);
+    const generated = await runPrompt({
+      promptFile: "autopilot_daily.md",
+      brandProfile: brand,
+      userId: input.userId,
+      locationContext: location
+        ? {
+            id: location.id,
+            name: location.name,
+            address: location.address,
+            timezone: location.timezone,
+          }
+        : undefined,
+      input: {
+        brand,
+        date: targetDate,
+        dayLabel: dayLabel(targetDate, timezone),
+        goal,
+        focusAudience,
+        location: location
+          ? {
+              id: location.id,
+              name: location.name,
+              address: location.address,
+              timezone: location.timezone,
             }
-            const row = entry as Record<string, unknown>;
-            return typeof row.name === "string" ? row.name : null;
-          })
-          .filter((entry): entry is string => entry !== null)
-      : [];
-    const locationName =
-      locations[0] ??
-      (typeof config.locationName === "string" ? config.locationName : undefined);
-    if (locationName) {
-      await adapter.enqueueOutbox(
-        input.userId,
-        input.brandId,
-        "gbp_post",
-        {
-          locationName,
-          summary: generated.gbp.summary,
-          callToActionUrl: generated.gbp.ctaUrl,
+          : undefined,
+        insights: insightsCache.insights,
+        upcomingEvents,
+        constraints: {
+          maxDiscountText: settings.maxDiscountText,
+          avoidControversy: Boolean(brand.constraints.avoidControversy),
         },
-        scheduledForIso,
-      );
-      outboxQueued += 1;
-    }
-  }
+      },
+      outputSchema: autopilotDailyOutputSchema,
+    });
 
-  if (settings.notifyEmail && isEmailEnabled()) {
-    const email = buildTomorrowReadyEmail({
-      businessName: brand.businessName,
+    const channels = settings.channels.length > 0 ? settings.channels : [generated.post.platform];
+    const postTime = inferBestPostTime(settings, generated.post.bestPostTime);
+    const scheduledForIso = zonedDateTimeToUtcIso({
       date: targetDate,
-      output: generated,
+      hour: postTime.hour,
+      minute: postTime.minute,
+      timeZone: timezone,
     });
-    const log = await adapter.addEmailLog(input.userId, input.brandId, {
-      toEmail: settings.notifyEmail,
-      subject: email.subject,
-      status: "queued",
-    });
-    await adapter.enqueueOutbox(
-      input.userId,
-      input.brandId,
-      "email_send",
-      {
+
+    let scheduledItems = 0;
+    for (const channel of channels) {
+      await adapter.addScheduleItem(input.userId, input.brandId, {
+        title: location
+          ? `${generated.promo.promoName} (${channel} · ${location.name})`
+          : `${generated.promo.promoName} (${channel})`,
+        platform: schedulePlatformFromChannel(channel),
+        scheduledFor: scheduledForIso,
+        caption: generated.post.caption,
+        assetNotes: location
+          ? `Autopilot generated (${targetDate}) for ${location.name}`
+          : `Autopilot generated (${targetDate})`,
+        status: "planned",
+      });
+      scheduledItems += 1;
+    }
+
+    let outboxQueued = 0;
+    const bufferIntegration = await adapter.getIntegration(input.userId, input.brandId, "buffer");
+    if (bufferIntegration) {
+      for (const channel of channels) {
+        if (channel === "google_business") {
+          continue;
+        }
+        await adapter.enqueueOutbox(
+          input.userId,
+          input.brandId,
+          "post_publish",
+          {
+            platform: postPublishPlatformFromChannel(channel),
+            caption: generated.post.caption,
+            source: "manual",
+            notes: location
+              ? `Autopilot queued for ${targetDate} (${location.name})`
+              : `Autopilot queued for ${targetDate}`,
+            ...(location?.bufferProfileId ? { bufferProfileId: location.bufferProfileId } : {}),
+            ...(location
+              ? {
+                  locationId: location.id,
+                  locationName: location.name,
+                }
+              : {}),
+          },
+          scheduledForIso,
+        );
+        outboxQueued += 1;
+      }
+    }
+
+    const gbpIntegration = await adapter.getIntegration(input.userId, input.brandId, "google_business");
+    if (gbpIntegration && generated.gbp.summary.trim() !== "") {
+      const config =
+        typeof gbpIntegration.config === "object" && gbpIntegration.config !== null
+          ? (gbpIntegration.config as Record<string, unknown>)
+          : {};
+      const integrationLocations = Array.isArray(config.locations)
+        ? config.locations
+            .map((entry) => {
+              if (typeof entry !== "object" || entry === null) {
+                return null;
+              }
+              const row = entry as Record<string, unknown>;
+              return typeof row.name === "string" ? row.name : null;
+            })
+            .filter((entry): entry is string => entry !== null)
+        : [];
+      const locationName =
+        location?.googleLocationName ??
+        integrationLocations[0] ??
+        (typeof config.locationName === "string" ? config.locationName : undefined);
+      if (locationName) {
+        await adapter.enqueueOutbox(
+          input.userId,
+          input.brandId,
+          "gbp_post",
+          {
+            locationName,
+            summary: generated.gbp.summary,
+            callToActionUrl: generated.gbp.ctaUrl,
+            ...(location
+              ? {
+                  locationId: location.id,
+                  locationLabel: location.name,
+                }
+              : {}),
+          },
+          scheduledForIso,
+        );
+        outboxQueued += 1;
+      }
+    }
+
+    if (settings.notifyEmail && isEmailEnabled()) {
+      const email = buildTomorrowReadyEmail({
+        businessName: location ? `${brand.businessName} — ${location.name}` : brand.businessName,
+        date: targetDate,
+        output: generated,
+      });
+      const log = await adapter.addEmailLog(input.userId, input.brandId, {
         toEmail: settings.notifyEmail,
         subject: email.subject,
-        html: email.html,
-        textSummary: email.textSummary,
-        emailLogId: log.id,
-      },
-      new Date().toISOString(),
-    );
-    outboxQueued += 1;
-  }
+        status: "queued",
+      });
+      await adapter.enqueueOutbox(
+        input.userId,
+        input.brandId,
+        "email_send",
+        {
+          toEmail: settings.notifyEmail,
+          subject: email.subject,
+          html: email.html,
+          textSummary: email.textSummary,
+          emailLogId: log.id,
+          ...(location
+            ? {
+                locationId: location.id,
+                locationName: location.name,
+              }
+            : {}),
+        },
+        new Date().toISOString(),
+      );
+      outboxQueued += 1;
+    }
 
-  if (settings.notifySms && isTwilioEnabled()) {
-    const smsMessage = await adapter.addSmsMessage(input.userId, input.brandId, {
-      toPhone: settings.notifySms,
-      body: generated.sms.message,
-      status: "queued",
-      purpose: "reminder",
-    });
-    await adapter.enqueueOutbox(
+    if (settings.notifySms && isTwilioEnabled()) {
+      const smsBody = location
+        ? `${generated.sms.message} (${location.name})`
+        : generated.sms.message;
+      const smsMessage = await adapter.addSmsMessage(input.userId, input.brandId, {
+        toPhone: settings.notifySms,
+        body: smsBody,
+        status: "queued",
+        purpose: "reminder",
+      });
+      await adapter.enqueueOutbox(
+        input.userId,
+        input.brandId,
+        "sms_send",
+        {
+          to: settings.notifySms,
+          body: smsBody,
+          purpose: "reminder",
+          smsMessageId: smsMessage.id,
+          ...(location
+            ? {
+                locationId: location.id,
+                locationName: location.name,
+              }
+            : {}),
+        },
+        new Date().toISOString(),
+      );
+      outboxQueued += 1;
+    }
+
+    await adapter.addHistory(
       input.userId,
       input.brandId,
-      "sms_send",
+      "autopilot_run",
       {
-        to: settings.notifySms,
-        body: generated.sms.message,
-        purpose: "reminder",
-        smsMessageId: smsMessage.id,
+        source: input.source,
+        request,
+        settings: {
+          enabled: settings.enabled,
+          cadence: settings.cadence,
+          hour: settings.hour,
+          timezone,
+          channels,
+          goals: settings.goals,
+          focusAudiences: settings.focusAudiences,
+        },
+        ...(location
+          ? {
+              location: {
+                id: location.id,
+                name: location.name,
+                address: location.address,
+                timezone: location.timezone,
+              },
+            }
+          : {}),
       },
-      new Date().toISOString(),
+      {
+        date: targetDate,
+        generated,
+        scheduledFor: scheduledForIso,
+        queuedCount: outboxQueued,
+        scheduledItems,
+      },
     );
-    outboxQueued += 1;
+
+    locationRuns.push({
+      locationId: location?.id,
+      locationName: location?.name,
+      date: targetDate,
+      scheduledFor: scheduledForIso,
+      scheduledItems,
+      outboxQueued,
+      output: generated,
+    });
   }
 
-  await adapter.addHistory(
-    input.userId,
-    input.brandId,
-    "autopilot_run",
-    {
-      source: input.source,
-      request,
-      settings: {
-        enabled: settings.enabled,
-        cadence: settings.cadence,
-        hour: settings.hour,
-        timezone,
-        channels,
-        goals: settings.goals,
-        focusAudiences: settings.focusAudiences,
-      },
-    },
-    {
-      date: targetDate,
-      generated,
-      scheduledFor: scheduledForIso,
-      queuedCount: outboxQueued,
-      scheduledItems,
-    },
-  );
+  const firstRun = locationRuns[0];
+  if (!firstRun) {
+    throw new Error("Autopilot did not produce any output");
+  }
 
   return {
     brandId: input.brandId,
     date: targetDate,
-    scheduledItems,
-    outboxQueued,
-    output: generated,
+    scheduledItems: locationRuns.reduce((sum, run) => sum + run.scheduledItems, 0),
+    outboxQueued: locationRuns.reduce((sum, run) => sum + run.outboxQueued, 0),
+    output: firstRun.output,
     settings,
+    locationRuns,
   };
 }
