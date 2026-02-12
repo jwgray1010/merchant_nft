@@ -1,0 +1,21 @@
+{
+  "template": "gym",
+  "type": "fitness-hybrid",
+  "voice": "Encouraging, energetic, and welcoming for all levels.",
+  "audiences": ["early risers", "after-work crowd", "beginners", "athletes"],
+  "productsOrServices": ["Group classes", "Open gym", "Personal training", "Nutrition add-ons"],
+  "hours": "Mon-Fri 5:00am-9:00pm, Sat-Sun 7:00am-5:00pm",
+  "typicalRushTimes": "5:30am-8:00am and 4:30pm-7:30pm",
+  "slowHours": "1:00pm-3:30pm",
+  "offersWeCanUse": [
+    "Bring-a-friend class pass",
+    "Intro training session",
+    "Week challenge highlight"
+  ],
+  "constraints": {
+    "noHugeDiscounts": true,
+    "keepPromosSimple": true,
+    "avoidCorporateLanguage": true,
+    "avoidControversy": true
+  }
+}

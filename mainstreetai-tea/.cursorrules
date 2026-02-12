@@ -1,0 +1,14 @@
+You are building MainStreetAI as a multi-business platform for local small businesses.
+
+Priorities:
+1) Ship a working API with brand profiles, generation endpoints, learning endpoints, admin UI, scheduling reminders, local event awareness, Supabase auth/data support, and optional integrations/outbox automation
+2) Keep it simple: Express + OpenAI SDK + storage adapter (local + supabase) + minimal validation
+3) Output must sound small-town friendly, not corporate.
+4) Avoid big refactors; prefer small, testable changes.
+
+Coding rules:
+- TypeScript only.
+- Validate inputs with zod.
+- Never log secrets.
+- All prompts live in /prompts and are loaded by code.
+- Put all OpenAI calls in src/ai/openaiClient.ts and src/ai/runPrompt.ts

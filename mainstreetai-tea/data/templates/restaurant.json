@@ -1,0 +1,21 @@
+{
+  "template": "restaurant",
+  "type": "restaurant",
+  "voice": "Warm, welcoming, and proudly local.",
+  "audiences": ["families", "lunch crowd", "weekend visitors", "sports night groups"],
+  "productsOrServices": ["Lunch specials", "Dinner specials", "Family meals", "Seasonal menu items"],
+  "hours": "Tue-Sun 11:00am-9:00pm",
+  "typicalRushTimes": "11:30am-1:30pm and 5:30pm-8:00pm",
+  "slowHours": "2:00pm-4:30pm",
+  "offersWeCanUse": [
+    "Simple lunch combo",
+    "Local lunch receipt crossover special",
+    "Early dinner feature"
+  ],
+  "constraints": {
+    "noHugeDiscounts": true,
+    "keepPromosSimple": true,
+    "avoidCorporateLanguage": true,
+    "avoidControversy": true
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "template": "service",
+  "type": "service",
+  "voice": "Trustworthy, practical, and neighborly.",
+  "audiences": ["homeowners", "small business owners", "busy families", "seniors"],
+  "productsOrServices": ["Core service packages", "Quick appointments", "Seasonal checkups"],
+  "hours": "Mon-Fri 8:00am-5:00pm",
+  "typicalRushTimes": "8:00am-10:00am and 3:00pm-5:00pm",
+  "slowHours": "11:00am-1:00pm",
+  "offersWeCanUse": [
+    "First visit discount",
+    "Referral thank-you credit",
+    "Seasonal service check reminder"
+  ],
+  "constraints": {
+    "noHugeDiscounts": true,
+    "keepPromosSimple": true,
+    "avoidCorporateLanguage": true,
+    "avoidControversy": true
+  }
+}

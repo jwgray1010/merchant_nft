@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+data/history/**/*
+data/posts/**/*
+data/metrics/**/*
+data/schedule/**/*
+data/local_events/*.json
+data/insights/*.json
+data/local_mode/**/*
+!data/history/.gitkeep
+!data/posts/.gitkeep
+!data/metrics/.gitkeep
+!data/schedule/.gitkeep
+!data/local_events/.gitkeep
+!data/insights/.gitkeep
+!data/local_mode/.gitkeep
