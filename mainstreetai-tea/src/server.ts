@@ -29,6 +29,7 @@ import jobsAlertsRouter from "./routes/jobsAlerts";
 import jobsAutopilotRouter from "./routes/jobsAutopilot";
 import jobsDigestsRouter from "./routes/jobsDigests";
 import jobsOutboxRouter from "./routes/jobsOutbox";
+import localCollabRouter from "./routes/localCollab";
 import localEventsRouter from "./routes/localEvents";
 import locationsRouter from "./routes/locations";
 import mediaRouter from "./routes/media";
@@ -95,6 +96,7 @@ app.use("/today", verifyAuth, resolveBrandAccessFromQuery(), todayRouter);
 app.use("/sign.pdf", verifyAuth, resolveBrandAccessFromQuery(), signRouter);
 app.use("/daily", verifyAuth, resolveBrandAccessFromQuery(), dailyRouter);
 app.use("/rescue", verifyAuth, resolveBrandAccessFromQuery(), rescueRouter);
+app.use("/local-collab", verifyAuth, resolveBrandAccessFromQuery(), localCollabRouter);
 app.use(
   "/promo",
   verifyAuth,
@@ -152,6 +154,7 @@ app.use("/api/timing", verifyAuth, resolveBrandAccessFromQuery(), timingRouter);
 app.use("/api/post-now", verifyAuth, resolveBrandAccessFromQuery(), postNowRouter);
 app.use("/api/daily", verifyAuth, resolveBrandAccessFromQuery(), dailyRouter);
 app.use("/api/rescue", verifyAuth, resolveBrandAccessFromQuery(), rescueRouter);
+app.use("/api/local-collab", verifyAuth, resolveBrandAccessFromQuery(), localCollabRouter);
 app.use("/api/tenant", verifyAuth, tenantRouter);
 app.use("/api/jobs/outbox", jobsOutboxRouter);
 app.use("/api/jobs/digests", jobsDigestsRouter);

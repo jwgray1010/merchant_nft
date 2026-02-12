@@ -93,6 +93,7 @@ type BrandRow = {
   slow_hours: string;
   offers_we_can_use: unknown;
   constraints: unknown;
+  community_vibe_profile: unknown;
   created_at: string;
   updated_at: string;
 };
@@ -259,6 +260,10 @@ function toBrandProfile(row: BrandRow): BrandProfile {
     offersWeCanUse: Array.isArray(row.offers_we_can_use) ? row.offers_we_can_use : [],
     constraints:
       typeof row.constraints === "object" && row.constraints !== null ? row.constraints : {},
+    communityVibeProfile:
+      typeof row.community_vibe_profile === "object" && row.community_vibe_profile !== null
+        ? row.community_vibe_profile
+        : {},
   });
 }
 
@@ -481,6 +486,7 @@ export class SupabaseAdapter implements StorageAdapter {
       slow_hours: parsed.slowHours,
       offers_we_can_use: parsed.offersWeCanUse,
       constraints: parsed.constraints,
+      community_vibe_profile: parsed.communityVibeProfile,
     };
 
     const { data, error } = await this.table("brands").insert(payload).select("*").single();
@@ -521,6 +527,7 @@ export class SupabaseAdapter implements StorageAdapter {
       slow_hours: merged.slowHours,
       offers_we_can_use: merged.offersWeCanUse,
       constraints: merged.constraints,
+      community_vibe_profile: merged.communityVibeProfile,
       updated_at: new Date().toISOString(),
     };
 

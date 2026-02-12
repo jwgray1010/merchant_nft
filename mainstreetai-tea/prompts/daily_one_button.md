@@ -3,6 +3,7 @@ Task: Create one high-impact daily action pack for a local small business compet
 Input JSON:
 {
   "brand": { ... },
+  "communityVibeProfile": { ...optional... },
   "voiceProfile": { ...optional... },
   "timingModel": { ...optional... },
   "insightsSummary": { ...optional... },
@@ -42,7 +43,11 @@ Output JSON schema:
 
 Rules:
 - Keep the offer simple and doable today with limited staff.
-- Use local, human language. No corporate tone.
+- Use community-first language in a natural voice.
+- Example style (only when it fits): "Locally owned.", "Built for our town.", "Support local today.", "Real people. Real service."
+- Never sound like a big franchise.
+- Use natural conversational phrasing.
+- Encourage in-person connection.
 - Avoid big discounts unless constraints allow them.
 - Lean on the small-business advantage: community, service, and familiarity.
 - Adapt by business type:

@@ -3,6 +3,7 @@ import { isEmailEnabled } from "../integrations/env";
 import {
   dailyCheckinRequestSchema,
   dailyGoalSchema,
+  localBoostOutputSchema,
   dailyOutputSchema,
   dailyPlatformSchema,
   dailyRequestSchema,
@@ -12,6 +13,12 @@ import {
   type DailyPlatform,
   type DailyRequest,
 } from "../schemas/dailyOneButtonSchema";
+import {
+  localCollabOutputSchema,
+  localCollabRequestSchema,
+  type LocalCollabOutput,
+  type LocalCollabRequest,
+} from "../schemas/localCollabSchema";
 import { rescueOutputSchema, rescueRequestSchema, type RescueOutput, type RescueRequest } from "../schemas/rescueOneButtonSchema";
 import { getAdapter } from "../storage/getAdapter";
 import { getTimezoneParts, parsePostTimeToHourMinute, timezoneOrDefault, zonedDateTimeToUtcIso } from "../utils/timezone";
@@ -248,6 +255,15 @@ function latestEmail(input: {
   return owner || null;
 }
 
+function recentPostSnapshots(posts: Array<{ platform: string; postedAt: string; captionUsed: string; promoName?: string }>) {
+  return posts.slice(0, 12).map((post) => ({
+    platform: post.platform,
+    postedAt: post.postedAt,
+    caption: post.captionUsed.slice(0, 220),
+    promoName: post.promoName ?? null,
+  }));
+}
+
 export async function runDailyOneButton(input: {
   userId: string;
   brandId: string;
@@ -303,6 +319,7 @@ export async function runDailyOneButton(input: {
     rangeDays: 60,
   }).catch(() => null);
   const upcomingEvents = await getUpcomingLocalEvents(input.userId, input.brandId, 3);
+  const recentPosts = recentPostSnapshots(await adapter.listPosts(input.userId, input.brandId, 30));
 
   const promptOutput = await runPrompt({
     promptFile: "daily_one_button.md",
@@ -318,6 +335,7 @@ export async function runDailyOneButton(input: {
       : undefined,
     input: {
       brand,
+      communityVibeProfile: brand.communityVibeProfile,
       voiceProfile: voiceProfile
         ? {
             styleSummary: voiceProfile.styleSummary,
@@ -345,6 +363,27 @@ export async function runDailyOneButton(input: {
     outputSchema: dailyOutputSchema,
   });
 
+  const localBoostSuggestion = await runPrompt({
+    promptFile: "local_boost.md",
+    brandProfile: brand,
+    userId: input.userId,
+    locationContext: location
+      ? {
+          id: location.id,
+          name: location.name,
+          address: location.address,
+          timezone: location.timezone,
+        }
+      : undefined,
+    input: {
+      brand,
+      communityVibeProfile: brand.communityVibeProfile,
+      recentPosts,
+      goal: chosenGoal,
+    },
+    outputSchema: localBoostOutputSchema,
+  }).catch(() => null);
+
   const twilioIntegration = await adapter.getIntegration(input.userId, input.brandId, "twilio");
   const pack = dailyOutputSchema.parse({
     ...promptOutput,
@@ -356,6 +395,13 @@ export async function runDailyOneButton(input: {
       ...promptOutput.optionalSms,
       enabled: Boolean(twilioIntegration),
     },
+    localBoost: localBoostSuggestion
+      ? {
+          line: localBoostSuggestion.localAngle,
+          captionAddOn: localBoostSuggestion.captionAddOn,
+          staffScript: localBoostSuggestion.staffLine,
+        }
+      : undefined,
   });
 
   const history = await adapter.addHistory(
@@ -492,6 +538,11 @@ export async function runDailyOneButton(input: {
       <p>${pack.todaySpecial.offer} (${pack.todaySpecial.timeWindow})</p>
       <p><strong>Post:</strong> ${pack.post.caption}</p>
       <p><strong>Sign:</strong> ${pack.sign.headline} — ${pack.sign.body}</p>
+      ${
+        pack.localBoost
+          ? `<p><strong>Local Boost:</strong> ${pack.localBoost.line}<br/>${pack.localBoost.captionAddOn}<br/>${pack.localBoost.staffScript}</p>`
+          : ""
+      }
     </body></html>`;
     const log = await adapter.addEmailLog(input.userId, input.brandId, {
       toEmail: emailTarget,
@@ -587,6 +638,36 @@ export async function runRescueOneButton(input: {
     output,
     historyId: history.id,
   };
+}
+
+export async function runLocalCollab(input: {
+  userId: string;
+  brandId: string;
+  request?: LocalCollabRequest;
+}): Promise<LocalCollabOutput> {
+  const adapter = getAdapter();
+  const parsedRequest = localCollabRequestSchema.parse(input.request ?? {});
+  const brand = await adapter.getBrand(input.userId, input.brandId);
+  if (!brand) {
+    throw new Error(`Brand '${input.brandId}' was not found`);
+  }
+  const settings = await adapter.getAutopilotSettings(input.userId, input.brandId).catch(() => null);
+  const timezone = timezoneOrDefault(settings?.timezone ?? "America/Chicago");
+  const chosenGoal = parsedRequest.goal ?? defaultGoalFromClock(timezone);
+  const recentPosts = recentPostSnapshots(await adapter.listPosts(input.userId, input.brandId, 30));
+  return runPrompt({
+    promptFile: "local_collab.md",
+    brandProfile: brand,
+    userId: input.userId,
+    input: {
+      brand,
+      communityVibeProfile: brand.communityVibeProfile,
+      recentPosts,
+      goal: chosenGoal,
+      notes: parsedRequest.notes,
+    },
+    outputSchema: localCollabOutputSchema,
+  });
 }
 
 export async function getLatestDailyPack(userId: string, brandId: string): Promise<DailyPackRecord | null> {

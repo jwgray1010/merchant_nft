@@ -238,10 +238,22 @@ router.get("/onboarding", (_req, res) => {
           </div>
         </div>
 
-        <h2>Step 4: Connect socials (optional)</h2>
-        <label><input type="checkbox" name="connectSocials" /> Remind me to connect Buffer/GBP after setup</label>
+        <h2>Step 4: How should your business feel?</h2>
+        <div class="grid">
+          <div>
+            <label>Community style</label>
+            <select name="communityFeel">
+              <option value="down-to-earth">Down-to-earth</option>
+              <option value="high-energy-local">High energy local</option>
+              <option value="laid-back-hometown">Laid back hometown</option>
+              <option value="professional-local">Professional local</option>
+            </select>
+          </div>
+        </div>
 
-        <h2>Step 5: Turn on Automatic Help?</h2>
+        <h2>Step 5: Final setup options</h2>
+        <label><input type="checkbox" name="connectSocials" /> Remind me to connect Buffer/GBP after setup</label>
+        <br/>
         <label><input type="checkbox" name="enableAutopilot" /> Yes, turn on Automatic Help</label>
 
         <div style="margin-top:14px;"><button class="button" type="submit">Complete Setup</button></div>
@@ -281,6 +293,7 @@ router.post("/onboarding/complete", async (req, res, next) => {
     };
     const template = templateMap[businessType] ?? "service";
     const topAudience = String(body.topAudience ?? "").trim();
+    const communityFeel = String(body.communityFeel ?? "down-to-earth").trim().toLowerCase();
     if (!businessName || !location) {
       return res
         .status(400)
@@ -299,12 +312,38 @@ router.post("/onboarding/complete", async (req, res, next) => {
     const audiences = topAudience ? [topAudience, ...baseBrand.audiences].slice(0, 6) : baseBrand.audiences;
     const offers = baseBrand.offersWeCanUse;
     const voice = baseBrand.voice;
+    const localToneMap: Record<
+      string,
+      "neighborly" | "bold-local" | "supportive" | "hometown-pride"
+    > = {
+      "down-to-earth": "neighborly",
+      "high-energy-local": "bold-local",
+      "laid-back-hometown": "hometown-pride",
+      "professional-local": "supportive",
+    };
+    const localTone = localToneMap[communityFeel] ?? "neighborly";
+    const audienceStyle: "everyone" | "young-professionals" | "fitness" | "blue-collar" | "creative" | "mixed" =
+      topAudience === "gym"
+        ? "fitness"
+        : topAudience === "students"
+          ? "young-professionals"
+          : topAudience === "general"
+            ? "mixed"
+            : "everyone";
+    const localIdentityTags = [location, "Local Owned"].filter(Boolean);
 
     const brand = brandProfileSchema.parse({
       ...baseBrand,
       voice,
       audiences,
       offersWeCanUse: offers,
+      communityVibeProfile: {
+        localTone,
+        collaborationLevel: "medium",
+        localIdentityTags,
+        audienceStyle,
+        avoidCorporateTone: true,
+      },
     });
 
     const adapter = getAdapter();

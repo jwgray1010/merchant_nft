@@ -1,7 +1,7 @@
 {
   "template": "restaurant",
   "type": "restaurant",
-  "voice": "Warm, inviting, and family-friendly.",
+  "voice": "Warm, welcoming, and proudly local.",
   "audiences": ["families", "lunch crowd", "weekend visitors", "sports night groups"],
   "productsOrServices": ["Lunch specials", "Dinner specials", "Family meals", "Seasonal menu items"],
   "hours": "Tue-Sun 11:00am-9:00pm",
@@ -9,7 +9,7 @@
   "slowHours": "2:00pm-4:30pm",
   "offersWeCanUse": [
     "Simple lunch combo",
-    "Kids eat discount night",
+    "Local lunch receipt crossover special",
     "Early dinner feature"
   ],
   "constraints": {

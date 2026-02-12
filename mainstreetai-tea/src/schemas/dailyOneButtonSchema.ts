@@ -8,6 +8,18 @@ export const dailyRequestSchema = z.object({
   goal: dailyGoalSchema.optional(),
 });
 
+export const localBoostOutputSchema = z.object({
+  localAngle: z.string().min(1),
+  captionAddOn: z.string().min(1),
+  staffLine: z.string().min(1),
+});
+
+export const dailyLocalBoostSchema = z.object({
+  line: z.string().min(1),
+  captionAddOn: z.string().min(1),
+  staffScript: z.string().min(1),
+});
+
 export const dailyOutputSchema = z.object({
   todaySpecial: z.object({
     promoName: z.string().min(1),
@@ -31,6 +43,7 @@ export const dailyOutputSchema = z.object({
     enabled: z.boolean(),
     message: z.string().min(1),
   }),
+  localBoost: dailyLocalBoostSchema.optional(),
   nextStep: z.string().min(1),
 });
 
@@ -45,4 +58,5 @@ export type DailyGoal = z.infer<typeof dailyGoalSchema>;
 export type DailyPlatform = z.infer<typeof dailyPlatformSchema>;
 export type DailyRequest = z.infer<typeof dailyRequestSchema>;
 export type DailyOutput = z.infer<typeof dailyOutputSchema>;
+export type LocalBoostOutput = z.infer<typeof localBoostOutputSchema>;
 export type DailyCheckinRequest = z.infer<typeof dailyCheckinRequestSchema>;

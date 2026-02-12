@@ -57,6 +57,16 @@ const BUSINESS_TYPES = [
   "service",
   "other",
 ] as const;
+const COMMUNITY_LOCAL_TONES = ["neighborly", "bold-local", "supportive", "hometown-pride"] as const;
+const COMMUNITY_COLLAB_LEVELS = ["low", "medium", "high"] as const;
+const COMMUNITY_AUDIENCE_STYLES = [
+  "everyone",
+  "young-professionals",
+  "fitness",
+  "blue-collar",
+  "creative",
+  "mixed",
+] as const;
 
 const POST_PLATFORMS = ["facebook", "instagram", "tiktok", "other"] as const;
 const POST_MEDIA_TYPES = ["photo", "reel", "story", "text"] as const;
@@ -272,10 +282,29 @@ function renderBrandForm(
     avoidCorporateLanguage: true,
     avoidControversy: true,
   };
+  const communityVibe = brand?.communityVibeProfile ?? {
+    localTone: "neighborly",
+    collaborationLevel: "medium",
+    localIdentityTags: [],
+    audienceStyle: "mixed",
+    avoidCorporateTone: true,
+  };
 
   const typeOptions = BUSINESS_TYPES.map((typeValue) => {
     const selected = brand?.type === typeValue ? "selected" : "";
     return `<option value="${typeValue}" ${selected}>${typeValue}</option>`;
+  }).join("");
+  const localToneOptions = COMMUNITY_LOCAL_TONES.map((tone) => {
+    const selected = communityVibe.localTone === tone ? "selected" : "";
+    return `<option value="${tone}" ${selected}>${tone}</option>`;
+  }).join("");
+  const collabOptions = COMMUNITY_COLLAB_LEVELS.map((level) => {
+    const selected = communityVibe.collaborationLevel === level ? "selected" : "";
+    return `<option value="${level}" ${selected}>${level}</option>`;
+  }).join("");
+  const audienceStyleOptions = COMMUNITY_AUDIENCE_STYLES.map((style) => {
+    const selected = communityVibe.audienceStyle === style ? "selected" : "";
+    return `<option value="${style}" ${selected}>${style}</option>`;
   }).join("");
 
   const readonlyAttr = readonlyBrandId ? "readonly" : "";
@@ -337,6 +366,33 @@ function renderBrandForm(
       <div class="field">
         <label>Offers We Can Use (comma or newline separated)</label>
         <textarea name="offersWeCanUse">${escapeHtml(toListInput(brand?.offersWeCanUse ?? []))}</textarea>
+      </div>
+
+      <h3>Community Vibe</h3>
+      <div class="grid">
+        <div class="field">
+          <label>Local tone</label>
+          <select name="communityLocalTone">${localToneOptions}</select>
+        </div>
+        <div class="field">
+          <label>Collaboration level</label>
+          <select name="communityCollaborationLevel">${collabOptions}</select>
+        </div>
+        <div class="field">
+          <label>Audience style</label>
+          <select name="communityAudienceStyle">${audienceStyleOptions}</select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Local identity tags (comma or newline separated)</label>
+        <textarea name="communityLocalIdentityTags">${escapeHtml(
+          toListInput(communityVibe.localIdentityTags ?? []),
+        )}</textarea>
+      </div>
+      <div class="grid">
+        <label><input type="checkbox" name="communityAvoidCorporateTone" ${
+          communityVibe.avoidCorporateTone ? "checked" : ""
+        } /> Avoid corporate tone</label>
       </div>
 
       <div class="grid">
@@ -461,6 +517,13 @@ function parseBrandForm(body: Record<string, unknown>): BrandProfile {
       keepPromosSimple: checkbox(body.keepPromosSimple),
       avoidCorporateLanguage: checkbox(body.avoidCorporateLanguage),
       avoidControversy: checkbox(body.avoidControversy),
+    },
+    communityVibeProfile: {
+      localTone: String(body.communityLocalTone ?? "neighborly"),
+      collaborationLevel: String(body.communityCollaborationLevel ?? "medium"),
+      localIdentityTags: parseStringList(body.communityLocalIdentityTags),
+      audienceStyle: String(body.communityAudienceStyle ?? "mixed"),
+      avoidCorporateTone: checkbox(body.communityAvoidCorporateTone),
     },
   });
 }
@@ -1098,6 +1161,26 @@ router.post("/brands", async (req, res, next) => {
         keepPromosSimple: checkbox(rawBody.keepPromosSimple),
         avoidCorporateLanguage: checkbox(rawBody.avoidCorporateLanguage),
         avoidControversy: checkbox(rawBody.avoidControversy),
+      },
+      communityVibeProfile: {
+        localTone: String(rawBody.communityLocalTone ?? "neighborly") as
+          | "neighborly"
+          | "bold-local"
+          | "supportive"
+          | "hometown-pride",
+        collaborationLevel: String(rawBody.communityCollaborationLevel ?? "medium") as
+          | "low"
+          | "medium"
+          | "high",
+        localIdentityTags: parseStringList(rawBody.communityLocalIdentityTags),
+        audienceStyle: String(rawBody.communityAudienceStyle ?? "mixed") as
+          | "everyone"
+          | "young-professionals"
+          | "fitness"
+          | "blue-collar"
+          | "creative"
+          | "mixed",
+        avoidCorporateTone: checkbox(rawBody.communityAvoidCorporateTone),
       },
     };
 

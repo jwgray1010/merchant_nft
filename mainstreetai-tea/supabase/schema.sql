@@ -16,9 +16,14 @@ create table if not exists public.brands (
   slow_hours text not null,
   offers_we_can_use jsonb not null default '[]'::jsonb,
   constraints jsonb not null default '{}'::jsonb,
+  community_vibe_profile jsonb not null default '{"localTone":"neighborly","collaborationLevel":"medium","localIdentityTags":[],"audienceStyle":"mixed","avoidCorporateTone":true}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.brands
+  add column if not exists community_vibe_profile jsonb not null
+  default '{"localTone":"neighborly","collaborationLevel":"medium","localIdentityTags":[],"audienceStyle":"mixed","avoidCorporateTone":true}'::jsonb;
 
 create unique index if not exists brands_owner_brand_id_unique
   on public.brands(owner_id, brand_id);

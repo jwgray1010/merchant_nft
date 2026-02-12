@@ -19,5 +19,12 @@
     "keepPromosSimple": true,
     "avoidCorporateLanguage": true,
     "avoidControversy": true
+  },
+  "communityVibeProfile": {
+    "localTone": "hometown-pride",
+    "collaborationLevel": "high",
+    "localIdentityTags": ["Independence KS", "Downtown", "Local Owned"],
+    "audienceStyle": "mixed",
+    "avoidCorporateTone": true
   }
 }

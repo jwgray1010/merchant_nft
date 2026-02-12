@@ -1275,6 +1275,8 @@ New one-button growth APIs:
   Body (optional): `{ "notes": "...", "goal": "new_customers|repeat_customers|slow_hours" }`
 - `POST /api/rescue?brandId=...`  
   Body (optional): `{ "whatHappened": "...", "timeLeftToday": "..." }`
+- `POST /api/local-collab?brandId=...`  
+  Body (optional): `{ "goal":"new_customers|repeat_customers|slow_hours", "notes":"..." }`
 - `GET /api/daily/latest?brandId=...`
 - `POST /api/daily/checkin?brandId=...`  
   Body: `{ "outcome":"slow|okay|busy", "redemptions": number optional }`
@@ -1282,6 +1284,15 @@ New one-button growth APIs:
 New prompts:
 - `prompts/daily_one_button.md`
 - `prompts/rescue_one_button.md`
+- `prompts/local_boost.md`
+- `prompts/local_collab.md`
+
+Brand profile now supports a Community Vibe block:
+- `communityVibeProfile.localTone` (`neighborly|bold-local|supportive|hometown-pride`)
+- `communityVibeProfile.collaborationLevel` (`low|medium|high`)
+- `communityVibeProfile.localIdentityTags` (array of tags like town or district)
+- `communityVibeProfile.audienceStyle` (`everyone|young-professionals|fitness|blue-collar|creative|mixed`)
+- `communityVibeProfile.avoidCorporateTone` (default `true`)
 
 Easy Mode home (`/app`) now focuses on:
 - **✅ Make Me Money Today** (primary action)
@@ -1292,7 +1303,8 @@ Output is intentionally simple:
 1. Today’s Special
 2. One ready post
 3. One printable sign
-4. Optional SMS
+4. Local Boost (optional)
+5. Optional SMS
 
 Printable daily sign:
 - `GET /app/sign/today?brandId=...`

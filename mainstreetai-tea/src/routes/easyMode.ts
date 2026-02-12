@@ -568,6 +568,14 @@ async function smsSuggestion(ownerUserId: string, brandId: string): Promise<stri
 }
 
 function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
+  const localBoostSection = pack.localBoost
+    ? `<details class="output-card">
+        <summary><strong>Local Boost</strong></summary>
+        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.localBoost.line)}</strong></p>
+        <p id="daily-local-caption-addon" class="output-value">${escapeHtml(pack.localBoost.captionAddOn)}</p>
+        <p id="daily-local-staff-line" class="output-value">${escapeHtml(pack.localBoost.staffScript)}</p>
+      </details>`
+    : "";
   return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
     <h3>Your daily money move</h3>
     <details class="output-card" open>
@@ -603,9 +611,16 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
           </details>`
         : ""
     }
+    ${localBoostSection}
     <div class="grid" style="grid-template-columns:1fr; margin-top:8px;">
       <button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>
       <button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>
+      ${
+        pack.localBoost
+          ? `<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Caption Add-on</button>
+             <button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>`
+          : ""
+      }
       ${
         pack.optionalSms.enabled
           ? `<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>`
@@ -728,15 +743,20 @@ router.get("/", async (req, res, next) => {
               const smsSection = pack.optionalSms?.enabled
                 ? '<details class="output-card"><summary><strong>Optional SMS</strong></summary><p id="daily-sms" class="output-value" style="margin-top:8px;">' + esc(pack.optionalSms.message || "") + '</p></details>'
                 : '';
+              const localBoostSection = pack.localBoost
+                ? '<details class="output-card"><summary><strong>Local Boost</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.localBoost.line || "") + '</strong></p><p id="daily-local-caption-addon" class="output-value">' + esc(pack.localBoost.captionAddOn || "") + '</p><p id="daily-local-staff-line" class="output-value">' + esc(pack.localBoost.staffScript || "") + '</p></details>'
+                : '';
               return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
                 '<h3>Your daily money move</h3>' +
                 '<details class="output-card" open><summary><strong>Today\\'s Special</strong></summary><p id="daily-special" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.todaySpecial?.promoName || "") + '</strong><br/>' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></details>' +
                 '<details class="output-card" open><summary><strong>Ready-to-post caption</strong></summary><p id="daily-caption" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.post?.hook || "") + '</strong><br/>' + esc(pack.post?.caption || "") + '<br/>' + esc((pack.post?.onScreenText || []).join(" | ")) + '</p><p class="muted">Best time: ' + esc(pack.post?.bestTime || "") + ' · ' + esc(pack.post?.platform || "") + '</p></details>' +
                 '<details class="output-card" open><summary><strong>In-store sign</strong></summary><p id="daily-sign" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.sign?.headline || "") + '</strong><br/>' + esc(pack.sign?.body || "") + (pack.sign?.finePrint ? '<br/><span class="muted">' + esc(pack.sign.finePrint) + '</span>' : '') + '</p><a class="secondary-button" style="margin-top:6px;" href="' + esc(signUrl) + '">Print sign</a></details>' +
                 smsSection +
+                localBoostSection +
                 '<div class="grid" style="grid-template-columns:1fr; margin-top:8px;">' +
                 '<button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>' +
                 '<button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>' +
+                (pack.localBoost ? '<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Caption Add-on</button><button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>' : '') +
                 (pack.optionalSms?.enabled ? '<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>' : '') +
                 '<button class="secondary-button" id="share-daily" type="button">Share…</button>' +
                 '<a class="secondary-button" href="' + esc(signUrl) + '">Printable Sign</a>' +
@@ -762,7 +782,14 @@ router.get("/", async (req, res, next) => {
               window.__setupCopyButtons?.();
               const shareButton = document.getElementById("share-daily");
               shareButton?.addEventListener("click", async () => {
-                const text = [json.post?.hook, json.post?.caption, (json.post?.onScreenText || []).join(" | ")].filter(Boolean).join("\\n");
+                const text = [
+                  json.post?.hook,
+                  json.post?.caption,
+                  (json.post?.onScreenText || []).join(" | "),
+                  json.localBoost?.captionAddOn,
+                ]
+                  .filter(Boolean)
+                  .join("\\n");
                 if (navigator.share) {
                   await navigator.share({ title: "Today's Pack", text }).catch(() => {});
                 } else {
@@ -801,6 +828,7 @@ router.get("/", async (req, res, next) => {
               const text = [
                 document.getElementById("daily-caption")?.textContent || "",
                 document.getElementById("daily-sign")?.textContent || "",
+                document.getElementById("daily-local-caption-addon")?.textContent || "",
                 document.getElementById("daily-sms")?.textContent || "",
               ]
                 .filter(Boolean)
