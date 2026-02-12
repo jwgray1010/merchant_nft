@@ -1,0 +1,14 @@
+You are building an MVP called MainStreetAI for a local tea shop in Independence, KS.
+
+Priorities:
+1) Ship a working MVP with 3 endpoints: /promo, /social, /events
+2) Keep it simple: Express + OpenAI SDK + minimal validation
+3) Output must sound small-town friendly, not corporate.
+4) Avoid big refactors; prefer small, testable changes.
+
+Coding rules:
+- TypeScript only.
+- Validate inputs with zod.
+- Never log secrets.
+- All prompts live in /prompts and are loaded by code.
+- Put all OpenAI calls in src/ai/openaiClient.ts and src/ai/runPrompt.ts
