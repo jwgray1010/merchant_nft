@@ -74,6 +74,21 @@ create table if not exists public.town_pulse_model (
   computed_at timestamptz not null default now()
 );
 
+create table if not exists public.town_stories (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  story_type text not null check (story_type in ('weekly','daily','event')),
+  content jsonb not null,
+  generated_at timestamptz not null default now()
+);
+
+create table if not exists public.town_story_usage (
+  id uuid primary key default gen_random_uuid(),
+  town_story_ref uuid not null references public.town_stories(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  used_at timestamptz not null default now()
+);
+
 create table if not exists public.history (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -403,6 +418,18 @@ create index if not exists town_pulse_signals_town_type_idx
 create unique index if not exists town_pulse_model_town_ref_unique
   on public.town_pulse_model(town_ref);
 
+create index if not exists town_stories_town_generated_idx
+  on public.town_stories(town_ref, generated_at desc);
+
+create index if not exists town_stories_story_type_generated_idx
+  on public.town_stories(story_type, generated_at desc);
+
+create unique index if not exists town_story_usage_story_brand_unique
+  on public.town_story_usage(town_story_ref, brand_ref);
+
+create index if not exists town_story_usage_brand_used_idx
+  on public.town_story_usage(brand_ref, used_at desc);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -603,6 +630,8 @@ alter table public.town_memberships enable row level security;
 alter table public.town_rotations enable row level security;
 alter table public.town_pulse_signals enable row level security;
 alter table public.town_pulse_model enable row level security;
+alter table public.town_stories enable row level security;
+alter table public.town_story_usage enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -727,6 +756,43 @@ create policy town_pulse_model_member_modify on public.town_pulse_model
 for all
 using (public.is_town_member(town_ref))
 with check (public.is_town_member(town_ref));
+
+drop policy if exists town_stories_member_select on public.town_stories;
+create policy town_stories_member_select on public.town_stories
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_stories_member_insert on public.town_stories;
+create policy town_stories_member_insert on public.town_stories
+for insert
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_stories_member_modify on public.town_stories;
+create policy town_stories_member_modify on public.town_stories
+for update
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_stories_member_delete on public.town_stories;
+create policy town_stories_member_delete on public.town_stories
+for delete
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_story_usage_member_select on public.town_story_usage;
+create policy town_story_usage_member_select on public.town_story_usage
+for select
+using (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin','member']::text[])
+);
+
+drop policy if exists town_story_usage_member_insert on public.town_story_usage;
+create policy town_story_usage_member_insert on public.town_story_usage
+for insert
+with check (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin','member']::text[])
+);
 
 drop policy if exists history_owner_all on public.history;
 create policy history_owner_all on public.history

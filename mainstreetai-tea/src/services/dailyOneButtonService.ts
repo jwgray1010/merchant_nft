@@ -32,6 +32,7 @@ import {
   writeTownPulseSignalForBrand,
   writeTownPulseForDailyOutcome,
 } from "./townPulseService";
+import { getLatestTownStoryForBrand, recordTownStoryUsageForBrand } from "./townStoriesService";
 import { getBrandVoiceProfile } from "./voiceStore";
 import { getOrRecomputeTimingModel } from "./timingModelService";
 
@@ -402,6 +403,10 @@ export async function runDailyOneButton(input: {
     brand,
     goal: chosenGoal,
   }).catch(() => null);
+  const latestTownStory = await getLatestTownStoryForBrand({
+    userId: input.userId,
+    brandId: input.brandId,
+  }).catch(() => null);
   const townPulseBoost = townPulseModel
     ? await buildTownPulsePromptSuggestion({
         userId: input.userId,
@@ -418,6 +423,13 @@ export async function runDailyOneButton(input: {
           staffScript: townPulseBoost.timingHint,
         }
       : undefined);
+  const dailyTownStory = latestTownStory
+    ? {
+        headline: latestTownStory.content.headline,
+        captionAddOn: latestTownStory.content.socialCaption,
+        staffLine: latestTownStory.content.signLine || latestTownStory.content.conversationStarter,
+      }
+    : undefined;
   if (townPulseBoost && mergedTownBoost && townBoostSuggestion?.townBoost) {
     const captionAddOn = `${mergedTownBoost.captionAddOn} ${townPulseBoost.captionAddOn}`.trim();
     mergedTownBoost.captionAddOn = captionAddOn;
@@ -443,6 +455,7 @@ export async function runDailyOneButton(input: {
         }
       : undefined,
     townBoost: mergedTownBoost,
+    townStory: dailyTownStory,
   });
 
   const history = await adapter.addHistory(
@@ -462,6 +475,16 @@ export async function runDailyOneButton(input: {
       pack,
     },
   );
+
+  if (latestTownStory) {
+    await recordTownStoryUsageForBrand({
+      userId: input.userId,
+      brandId: input.brandId,
+      townStoryRef: latestTownStory.id,
+    }).catch(() => {
+      // Story usage tracking is best-effort.
+    });
+  }
 
   const queue: { postPublishOutboxId?: string; gbpOutboxId?: string; emailOutboxId?: string } = {};
   const autoPostEnabled = Boolean(settings?.enabled);
@@ -587,6 +610,11 @@ export async function runDailyOneButton(input: {
       ${
         pack.townBoost
           ? `<p><strong>Town Boost:</strong> ${pack.townBoost.line}<br/>${pack.townBoost.captionAddOn}<br/>${pack.townBoost.staffScript}</p>`
+          : ""
+      }
+      ${
+        pack.townStory
+          ? `<p><strong>Town Story:</strong> ${pack.townStory.headline}<br/>${pack.townStory.captionAddOn}<br/>${pack.townStory.staffLine}</p>`
           : ""
       }
     </body></html>`;

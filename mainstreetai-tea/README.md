@@ -99,6 +99,7 @@ ENABLE_EMAIL_INTEGRATION=false
 OUTBOX_RUNNER_ENABLED=true
 APP_BASE_URL=http://localhost:3001
 CRON_SECRET=replace_with_random_cron_secret
+TOWN_STORY_CADENCE=daily
 DEMO_MODE=false
 
 STRIPE_SECRET_KEY=
@@ -588,6 +589,8 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `POST /api/autopilot/run?brandId=...`
 - `GET /api/jobs/autopilot` (cron; requires `x-cron-secret`)
 - `GET /api/jobs/alerts` (cron; requires `x-cron-secret`)
+- `GET /api/jobs/town-pulse` (cron; requires `x-cron-secret`)
+- `GET /api/jobs/town-stories` (cron; requires `x-cron-secret`)
 - `GET /api/alerts?brandId=...&status=open|all`
 - `POST /api/alerts/:id/ack?brandId=...`
 - `POST /api/alerts/:id/resolve?brandId=...`
@@ -661,6 +664,10 @@ Vercel Cron example target:
 - header: `x-cron-secret: <CRON_SECRET>`
 - `GET https://yourapp.vercel.app/api/jobs/alerts` (hourly at minute 10, optional)
 - header: `x-cron-secret: <CRON_SECRET>`
+- `GET https://yourapp.vercel.app/api/jobs/town-pulse` (hourly at minute 15)
+- header: `x-cron-secret: <CRON_SECRET>`
+- `GET https://yourapp.vercel.app/api/jobs/town-stories` (hourly at minute 20)
+- header: `x-cron-secret: <CRON_SECRET>`
 
 `vercel.json`:
 
@@ -670,7 +677,9 @@ Vercel Cron example target:
     { "path": "/api/jobs/outbox", "schedule": "*/5 * * * *" },
     { "path": "/api/jobs/digests", "schedule": "0 * * * *" },
     { "path": "/api/jobs/autopilot", "schedule": "5 * * * *" },
-    { "path": "/api/jobs/alerts", "schedule": "10 * * * *" }
+    { "path": "/api/jobs/alerts", "schedule": "10 * * * *" },
+    { "path": "/api/jobs/town-pulse", "schedule": "15 * * * *" },
+    { "path": "/api/jobs/town-stories", "schedule": "20 * * * *" }
   ]
 }
 ```
@@ -1016,6 +1025,8 @@ From admin you can:
   - `/api/jobs/digests` (`0 * * * *`)
   - `/api/jobs/autopilot` (`5 * * * *`)
   - `/api/jobs/alerts` (`10 * * * *`, optional but recommended)
+  - `/api/jobs/town-pulse` (`15 * * * *`)
+  - `/api/jobs/town-stories` (`20 * * * *`)
 - Set Stripe webhook endpoint:
   - `<APP_BASE_URL>/api/billing/webhook`
 - Keep secrets server-only:
@@ -1304,7 +1315,8 @@ Output is intentionally simple:
 2. One ready post
 3. One printable sign
 4. Local Boost (optional)
-5. Optional SMS
+5. Town Story (optional)
+6. Optional SMS
 
 Printable daily sign:
 - `GET /app/sign/today?brandId=...`
@@ -1382,3 +1394,48 @@ Easy Mode:
 - New page: `/app/town/pulse`
   - simple sentences only
   - no charts, no analytics jargon, no private comparisons
+
+## Phase TOWN++: Town Stories Engine (shared local narrative)
+
+Town Stories turn local momentum into warm, inclusive narrative copy that any participating business can optionally use.
+
+New data model:
+- `town_stories`
+  - one generated narrative record per town cadence (`daily|weekly|event`)
+  - JSON payload:
+    - `headline`
+    - `summary`
+    - `socialCaption`
+    - `conversationStarter`
+    - `signLine`
+- `town_story_usage` (optional learning loop)
+  - tracks when a brand reuses a story
+
+New prompt:
+- `prompts/town_stories.md`
+
+Town Stories APIs:
+- `POST /api/town/stories/generate?townId=...`
+- `GET /api/town/stories/latest?townId=...`
+- `GET /api/jobs/town-stories` (cron-secret protected)
+
+Cron schedule includes:
+- `/api/jobs/town-stories` every hour at minute `20`
+- cadence controlled by `TOWN_STORY_CADENCE=daily|weekly`
+
+Daily integration:
+- `/api/daily` now includes optional `townStory` when the brand has a `town_ref` and a recent story exists:
+  - `headline`
+  - `captionAddOn`
+  - `staffLine`
+
+Easy Mode additions:
+- `/app/town/stories` narrative page
+- Daily results include **Town Story (optional)** with:
+  - `Copy Caption`
+  - `Add to Today’s Post`
+
+Safety:
+- Stories never auto-name businesses.
+- Stories never imply endorsements.
+- Stories never expose analytics or rankings.

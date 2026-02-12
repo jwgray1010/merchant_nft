@@ -1,6 +1,7 @@
 import { Router, type Request } from "express";
 import { resolveBrandAccess } from "../auth/brandAccess";
 import { brandIdSchema } from "../schemas/brandSchema";
+import { townStoryGenerateRequestSchema } from "../schemas/townStorySchema";
 import { townMembershipUpdateSchema } from "../schemas/townSchema";
 import { getAdapter } from "../storage/getAdapter";
 import {
@@ -13,6 +14,7 @@ import {
   getTownPulseModel,
   recomputeTownPulseModel,
 } from "../services/townPulseService";
+import { generateTownStoryForTown, getLatestTownStory } from "../services/townStoriesService";
 
 const router = Router();
 
@@ -108,6 +110,79 @@ router.post("/pulse/recompute", async (req, res, next) => {
       computedAt: model.computedAt,
     });
   } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/stories/latest", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const story = await getLatestTownStory({
+      townId,
+      userId: req.user?.id,
+    });
+    return res.json({
+      town: map.town,
+      story,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/stories/generate", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  const parsedBody = townStoryGenerateRequestSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid town story payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const generated = await generateTownStoryForTown({
+      townId,
+      userId: req.user?.id,
+      storyType: parsedBody.data.storyType,
+    });
+    return res.json({
+      ok: true,
+      town: generated.town,
+      story: generated.story,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Town story generation failed";
+    if (message.toLowerCase().includes("not found")) {
+      return res.status(404).json({ error: message });
+    }
     return next(error);
   }
 });

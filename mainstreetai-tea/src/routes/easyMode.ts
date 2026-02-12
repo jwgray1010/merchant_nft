@@ -19,6 +19,7 @@ import {
   updateTownMembershipForBrand,
 } from "../services/townModeService";
 import { getTownPulseModelForBrand } from "../services/townPulseService";
+import { getLatestTownStoryForBrand } from "../services/townStoriesService";
 import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
 import type { BrandProfile } from "../schemas/brandSchema";
@@ -486,6 +487,13 @@ function easyLayout(input: {
     <script>
       function setupCopyButtons() {
         document.querySelectorAll("[data-copy-target]").forEach((button) => {
+          if (button.dataset.copyBound === "1") {
+            return;
+          }
+          button.dataset.copyBound = "1";
+          if (!button.dataset.copyLabel) {
+            button.dataset.copyLabel = button.textContent || "Copy";
+          }
           button.addEventListener("click", async () => {
             const targetId = button.getAttribute("data-copy-target");
             const target = targetId ? document.getElementById(targetId) : null;
@@ -493,7 +501,27 @@ function easyLayout(input: {
             const text = target.value || target.textContent || "";
             await navigator.clipboard.writeText(text);
             button.textContent = "Copied";
-            setTimeout(() => { button.textContent = "Copy"; }, 1000);
+            setTimeout(() => { button.textContent = button.dataset.copyLabel || "Copy"; }, 1000);
+          });
+        });
+        document.querySelectorAll(".add-town-story-btn").forEach((button) => {
+          if (button.dataset.bound === "1") {
+            return;
+          }
+          button.dataset.bound = "1";
+          button.addEventListener("click", () => {
+            const caption = document.getElementById("daily-caption");
+            const addOn = document.getElementById("daily-town-story-caption");
+            const addOnText = addOn?.textContent?.trim() || "";
+            if (!caption || !addOnText) {
+              return;
+            }
+            const current = caption.textContent?.trim() || "";
+            if (current.includes(addOnText)) {
+              return;
+            }
+            caption.textContent = current ? current + "\\n\\n" + addOnText : addOnText;
+            button.textContent = "Added";
           });
         });
       }
@@ -591,6 +619,14 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         <p id="daily-town-staff-line" class="output-value">${escapeHtml(pack.townBoost.staffScript)}</p>
       </details>`
     : "";
+  const townStorySection = pack.townStory
+    ? `<details class="output-card">
+        <summary><strong>Town Story (optional)</strong></summary>
+        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townStory.headline)}</strong></p>
+        <p id="daily-town-story-caption" class="output-value">${escapeHtml(pack.townStory.captionAddOn)}</p>
+        <p id="daily-town-story-staff-line" class="output-value">${escapeHtml(pack.townStory.staffLine)}</p>
+      </details>`
+    : "";
   return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
     <h3>Your daily money move</h3>
     <details class="output-card" open>
@@ -628,6 +664,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
     }
     ${localBoostSection}
     ${townBoostSection}
+    ${townStorySection}
     <div class="grid" style="grid-template-columns:1fr; margin-top:8px;">
       <button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>
       <button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>
@@ -646,6 +683,12 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
       ${
         pack.optionalSms.enabled
           ? `<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>`
+          : ""
+      }
+      ${
+        pack.townStory
+          ? `<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Caption</button>
+             <button class="secondary-button add-town-story-btn" type="button">Add to Today’s Post</button>`
           : ""
       }
       <button class="secondary-button" id="share-daily" type="button">Share…</button>
@@ -779,6 +822,9 @@ router.get("/", async (req, res, next) => {
               const townBoostSection = pack.townBoost
                 ? '<details class="output-card"><summary><strong>Town Boost</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townBoost.line || "") + '</strong></p><p id="daily-town-caption-addon" class="output-value">' + esc(pack.townBoost.captionAddOn || "") + '</p><p id="daily-town-staff-line" class="output-value">' + esc(pack.townBoost.staffScript || "") + '</p></details>'
                 : '';
+              const townStorySection = pack.townStory
+                ? '<details class="output-card"><summary><strong>Town Story (optional)</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townStory.headline || "") + '</strong></p><p id="daily-town-story-caption" class="output-value">' + esc(pack.townStory.captionAddOn || "") + '</p><p id="daily-town-story-staff-line" class="output-value">' + esc(pack.townStory.staffLine || "") + '</p></details>'
+                : '';
               return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
                 '<h3>Your daily money move</h3>' +
                 '<details class="output-card" open><summary><strong>Today\\'s Special</strong></summary><p id="daily-special" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.todaySpecial?.promoName || "") + '</strong><br/>' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></details>' +
@@ -787,12 +833,14 @@ router.get("/", async (req, res, next) => {
                 smsSection +
                 localBoostSection +
                 townBoostSection +
+                townStorySection +
                 '<div class="grid" style="grid-template-columns:1fr; margin-top:8px;">' +
                 '<button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>' +
                 '<button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>' +
                 (pack.localBoost ? '<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Caption Add-on</button><button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>' : '') +
                 (pack.townBoost ? '<button class="primary-button" data-copy-target="daily-town-caption-addon">Copy Town Caption Add-on</button><button class="secondary-button" data-copy-target="daily-town-staff-line">Copy Town Staff Line</button>' : '') +
                 (pack.optionalSms?.enabled ? '<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>' : '') +
+                (pack.townStory ? '<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Caption</button><button class="secondary-button add-town-story-btn" type="button">Add to Today\\'s Post</button>' : '') +
                 '<button class="secondary-button" id="share-daily" type="button">Share…</button>' +
                 '<a class="secondary-button" href="' + esc(signUrl) + '">Printable Sign</a>' +
                 '</div></section>';
@@ -823,6 +871,7 @@ router.get("/", async (req, res, next) => {
                   (json.post?.onScreenText || []).join(" | "),
                   json.localBoost?.captionAddOn,
                   json.townBoost?.captionAddOn,
+                  json.townStory?.captionAddOn,
                 ]
                   .filter(Boolean)
                   .join("\\n");
@@ -866,6 +915,7 @@ router.get("/", async (req, res, next) => {
                 document.getElementById("daily-sign")?.textContent || "",
                 document.getElementById("daily-local-caption-addon")?.textContent || "",
                 document.getElementById("daily-town-caption-addon")?.textContent || "",
+                document.getElementById("daily-town-story-caption")?.textContent || "",
                 document.getElementById("daily-sms")?.textContent || "",
               ]
                 .filter(Boolean)
@@ -2094,6 +2144,7 @@ router.get("/town", async (req, res, next) => {
       <p class="muted">Town Mode runs quietly in the background. No extra coordination required.</p>
       <p><strong>${escapeHtml(categories || "Local businesses")}</strong></p>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}">View Town Pulse</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>
     </section>
     <section class="rounded-2xl p-6 shadow-sm bg-white">
       <h3>Participating businesses</h3>
@@ -2173,6 +2224,7 @@ router.get("/town/pulse", async (req, res, next) => {
       <p class="output-value"><strong>Midweek quieter windows:</strong><br/>${escapeHtml(slowSummary)}</p>
       <p class="muted">${escapeHtml(model?.seasonalNotes ?? "Seasonal rhythm will appear as more signals arrive.")}</p>
       <p class="muted">Event energy: ${escapeHtml(model?.eventEnergy ?? "low")}</p>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>
     </section>`;
     return res
       .type("html")
@@ -2182,6 +2234,71 @@ router.get("/town/pulse", async (req, res, next) => {
           context,
           active: "settings",
           currentPath: "/app/town/pulse",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/town/stories", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    if (!context.ownerUserId || !context.selectedBrandId) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Town Stories",
+            context,
+            active: "settings",
+            currentPath: "/app/town/stories",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Pick a business first.</p></section>`,
+          }),
+        );
+    }
+    const membership = await getTownMembershipForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+    });
+    if (!membership) {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
+    }
+    const story = await getLatestTownStoryForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+    }).catch(() => null);
+    const storyBody = story
+      ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
+          <h3>${escapeHtml(story.content.headline)}</h3>
+          <p class="output-value">${escapeHtml(story.content.summary)}</p>
+          <p class="muted">How locals are supporting each other this week:</p>
+          <p class="output-value">${escapeHtml(story.content.socialCaption)}</p>
+          <p class="output-value">${escapeHtml(story.content.conversationStarter)}</p>
+          <p class="output-value">${escapeHtml(story.content.signLine)}</p>
+        </section>`
+      : `<section class="rounded-2xl p-6 shadow-sm bg-white">
+          <p class="muted">No town story yet. The next Town Stories cycle will generate one automatically.</p>
+        </section>`;
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Town Stories</h2>
+      <p class="muted">A shared local narrative for ${escapeHtml(membership.town.name)}.</p>
+      <p class="muted">No metrics. No rankings. Just warm community momentum.</p>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-top:8px;">View Town Pulse</a>
+    </section>
+    ${storyBody}`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Town Stories",
+          context,
+          active: "settings",
+          currentPath: "/app/town/stories",
           body,
         }),
       );
