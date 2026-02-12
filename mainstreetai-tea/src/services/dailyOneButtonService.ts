@@ -33,6 +33,7 @@ import {
   writeTownPulseForDailyOutcome,
 } from "./townPulseService";
 import { getLatestTownStoryForBrand, recordTownStoryUsageForBrand } from "./townStoriesService";
+import { recordTownSuccessSignalForBrand } from "./townAdoptionService";
 import {
   addTownGraphEdge,
   buildTownGraphBoostForDaily,
@@ -40,6 +41,7 @@ import {
   townGraphCategoryFromBrandType,
 } from "./townGraphService";
 import { buildTownMicroRouteForDaily, buildTownSeasonalBoostForDaily } from "./townMicroRoutesService";
+import { getTownMilestoneSummary, isTownFeatureUnlocked } from "./townAdoptionService";
 import { getBrandVoiceProfile } from "./voiceStore";
 import { getOrRecomputeTimingModel } from "./timingModelService";
 import type { TownMicroRouteWindow } from "../schemas/townGraphSchema";
@@ -306,6 +308,18 @@ export async function runDailyOneButton(input: {
   if (!brand) {
     throw new Error(`Brand '${input.brandId}' was not found`);
   }
+  const milestone = brand.townRef
+    ? await getTownMilestoneSummary({
+        townId: brand.townRef,
+        userId: input.userId,
+      }).catch(() => null)
+    : null;
+  const townPulseEnabled = Boolean(
+    milestone && isTownFeatureUnlocked({ milestone, feature: "town_pulse_learning" }),
+  );
+  const townStoriesEnabled = Boolean(
+    milestone && isTownFeatureUnlocked({ milestone, feature: "town_stories" }),
+  );
   const location =
     input.locationId && input.locationId.trim() !== ""
       ? await getLocationById(input.userId, input.brandId, input.locationId.trim())
@@ -321,11 +335,13 @@ export async function runDailyOneButton(input: {
       brandId: input.brandId,
       rangeDays: 30,
     }),
-    getTownPulseModelForBrand({
-      userId: input.userId,
-      brandId: input.brandId,
-      recomputeIfMissing: true,
-    }).catch(() => null),
+    townPulseEnabled
+      ? getTownPulseModelForBrand({
+          userId: input.userId,
+          brandId: input.brandId,
+          recomputeIfMissing: true,
+        }).catch(() => null)
+      : Promise.resolve(null),
   ]);
   const timezone = timezoneOrDefault(location?.timezone ?? settings?.timezone ?? "America/Chicago");
   const chosenGoal =
@@ -420,10 +436,12 @@ export async function runDailyOneButton(input: {
     brand,
     goal: chosenGoal,
   }).catch(() => null);
-  const latestTownStory = await getLatestTownStoryForBrand({
-    userId: input.userId,
-    brandId: input.brandId,
-  }).catch(() => null);
+  const latestTownStory = townStoriesEnabled
+    ? await getLatestTownStoryForBrand({
+        userId: input.userId,
+        brandId: input.brandId,
+      }).catch(() => null)
+    : null;
   const townPulseBoost = townPulseModel
     ? await buildTownPulsePromptSuggestion({
         userId: input.userId,
@@ -559,6 +577,14 @@ export async function runDailyOneButton(input: {
       // Story usage tracking is best-effort.
     });
   }
+  await recordTownSuccessSignalForBrand({
+    userId: input.userId,
+    brand,
+    signal: "repeat_customers_up",
+    weight: 0.35,
+  }).catch(() => {
+    // Adoption confidence signals should never block daily output.
+  });
 
   const queue: { postPublishOutboxId?: string; gbpOutboxId?: string; emailOutboxId?: string } = {};
   const autoPostEnabled = Boolean(settings?.enabled);
@@ -809,6 +835,14 @@ export async function runRescueOneButton(input: {
   }).catch(() => {
     // Town Pulse is optional intelligence.
   });
+  await recordTownSuccessSignalForBrand({
+    userId: input.userId,
+    brand,
+    signal: "new_faces_seen",
+    weight: 0.45,
+  }).catch(() => {
+    // Success signal writes are best-effort.
+  });
   return {
     output,
     historyId: history.id,
@@ -948,5 +982,16 @@ export async function submitDailyCheckin(input: {
   }).catch(() => {
     // Town Pulse should not block check-in writes.
   });
+  if (parsed.outcome === "busy") {
+    await recordTownSuccessSignalForBrand({
+      userId: input.userId,
+      brand,
+      signal: "busy_days_up",
+      weight: 1.2,
+      createdAt: metricsRecord.createdAt,
+    }).catch(() => {
+      // Success signal writes are best-effort.
+    });
+  }
   return { status: "saved" };
 }

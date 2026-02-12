@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 13)
+# MainStreetAI Platform API (Phase 14)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -55,6 +55,9 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - Team members by brand (`owner|admin|member`)
   - Plan guards for premium features
   - Community sponsorship seats for struggling businesses
+  - Town ambassadors + local leader access extension
+  - Invite-based local adoption loops (non-spam)
+  - Town adoption milestones + partner credibility pages
   - Public marketing pages (`/`, `/pricing`, `/demo`)
   - Onboarding wizard (`/onboarding`)
   - Demo-mode write protection middleware
@@ -1660,3 +1663,58 @@ Position MainStreetAI as **Local Business Survival Infrastructure**:
 - Coordinate with downtown associations
 - Connect through school district/community calendars
 - Use sponsorship seats to protect vulnerable main-street businesses first
+
+## Phase 14: Local Adoption Engine (town-to-town, trust-first growth)
+
+Phase 14 adds a non-corporate adoption system so towns grow through neighbors, local leaders, and partner credibility instead of ad spend.
+
+New data model:
+- `town_ambassadors`
+  - tracks local champions (`ambassador`, `local_leader`, `organizer`)
+- `town_invites`
+  - records local invite activity with calm community tone
+- `town_success_signals`
+  - anonymized local confidence markers:
+    - `busy_days_up`
+    - `repeat_customers_up`
+    - `new_faces_seen`
+- `community_sponsors.role`
+  - `chamber | bank | downtown_org | nonprofit`
+
+New APIs:
+- `POST /api/town/invite`
+  - body:
+    - `townId`
+    - `businessName`
+    - `email` (optional)
+    - `category`
+  - records invite + optional email queue with neighbor-friendly copy
+- `GET /api/town/milestones?townId=...`
+  - returns:
+    - `activeCount`
+    - `featuresUnlocked[]`
+    - optional launch/momentum micro-messages
+
+Milestone unlock logic:
+- `3 businesses` → Town Stories
+- `5 businesses` → Town Pulse learning
+- `10 businesses` → Town Graph routes
+
+Easy Mode additions:
+- `/app/town/partners`
+  - "Local partners supporting Main Street" credibility view
+- `/app/town/ambassador`
+  - invite form
+  - printable one-page explainer
+  - short "what this is" script for local conversations
+- Header badge:
+  - `Local Leader` when ambassador access is active
+
+Behavior updates:
+- Early adopters / leader-participation brands auto-qualify for ambassador status
+- `requirePlan()` now allows Starter-level access for active ambassadors (non-Pro gates)
+- Daily runs, rescue usage, and busy check-ins write adoption confidence signals
+- Town Stories now receive momentum/success signal context for occasional "Town Momentum" narratives
+- System prompt includes explicit anti-corporate growth guardrails:
+  - no aggressive sales language
+  - no competitive framing between neighboring local businesses

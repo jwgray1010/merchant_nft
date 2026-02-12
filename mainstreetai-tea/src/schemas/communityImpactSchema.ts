@@ -1,9 +1,17 @@
 import { z } from "zod";
 
+export const communitySponsorRoleSchema = z.enum([
+  "chamber",
+  "bank",
+  "downtown_org",
+  "nonprofit",
+]);
+
 export const communitySponsorRowSchema = z.object({
   id: z.string().min(1),
   townRef: z.string().min(1),
   sponsorName: z.string().min(1),
+  role: communitySponsorRoleSchema.default("nonprofit"),
   sponsoredSeats: z.number().int().min(0).default(0),
   active: z.boolean().default(true),
   createdAt: z.string().datetime({ offset: true }),
@@ -11,6 +19,7 @@ export const communitySponsorRowSchema = z.object({
 
 export const communitySponsorUpsertSchema = z.object({
   sponsorName: z.string().min(1),
+  role: communitySponsorRoleSchema.default("nonprofit"),
   sponsoredSeats: z.number().int().min(0).default(0),
   active: z.boolean().default(true),
 });
@@ -46,3 +55,4 @@ export type CommunitySponsorUpsert = z.infer<typeof communitySponsorUpsertSchema
 export type SponsoredMembershipRow = z.infer<typeof sponsoredMembershipRowSchema>;
 export type SponsoredMembershipStatus = z.infer<typeof sponsoredMembershipStatusSchema>;
 export type CommunityImpactSummary = z.infer<typeof communityImpactSummarySchema>;
+export type CommunitySponsorRole = z.infer<typeof communitySponsorRoleSchema>;

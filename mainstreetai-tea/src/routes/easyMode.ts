@@ -20,6 +20,15 @@ import {
 } from "../services/townModeService";
 import { getCommunitySupportStatusForBrand } from "../services/communityImpactService";
 import {
+  autoAssignTownAmbassadorForBrand,
+  getTownAmbassadorForBrand,
+  getTownMilestoneSummary,
+  isTownFeatureUnlocked,
+  listTownAmbassadors,
+  listTownInvites,
+  listTownPartners,
+} from "../services/townAdoptionService";
+import {
   getTownGraph,
   listPreferredPartnerCategoriesForBrand,
   recordManualCategoryPreferencesForBrand,
@@ -70,6 +79,16 @@ type EasyContext = {
     sponsorshipEligible: boolean;
     seatsRemaining: number;
   };
+  ambassador: {
+    active: boolean;
+    role?: "ambassador" | "local_leader" | "organizer";
+  };
+  townMilestone: {
+    activeCount: number;
+    featuresUnlocked: string[];
+    launchMessage?: string;
+    momentumLine?: string;
+  } | null;
 };
 
 const GRAPH_CATEGORY_OPTIONS = [...townGraphCategorySchema.options] as TownGraphCategory[];
@@ -263,6 +282,10 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         sponsorshipEligible: false,
         seatsRemaining: 0,
       },
+      ambassador: {
+        active: false,
+      },
+      townMilestone: null,
     };
   }
 
@@ -286,6 +309,10 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         sponsorshipEligible: false,
         seatsRemaining: 0,
       },
+      ambassador: {
+        active: false,
+      },
+      townMilestone: null,
     };
   }
   req.brandAccess = access;
@@ -317,10 +344,14 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         sponsorshipEligible: false,
         seatsRemaining: 0,
       },
+      ambassador: {
+        active: false,
+      },
+      townMilestone: null,
     };
   }
 
-  const [locations, autopilotSettings, timingModel, communitySupport] = await Promise.all([
+  const [locations, autopilotSettings, timingModel, communitySupport, ambassador, townMilestone] = await Promise.all([
     listLocations(access.ownerId, access.brandId).catch(() => []),
     adapter.getAutopilotSettings(access.ownerId, access.brandId).catch(() => null),
     getTimingModel(access.ownerId, access.brandId, "instagram").catch(() => null),
@@ -334,6 +365,16 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       seatsRemaining: 0,
       reducedCostUpgradePath: "/pricing?plan=starter&mode=community",
     })),
+    getTownAmbassadorForBrand({
+      ownerId: access.ownerId,
+      brandId: access.brandId,
+    }).catch(() => null),
+    brand.townRef
+      ? getTownMilestoneSummary({
+          townId: brand.townRef,
+          userId: access.ownerId,
+        }).catch(() => null)
+      : Promise.resolve(null),
   ]);
   const rawLocationQuery = typeof req.query.locationId === "string" ? req.query.locationId : undefined;
   const queryLocationId = rawLocationQuery?.trim();
@@ -382,6 +423,18 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       sponsorshipEligible: communitySupport.eligibleForSponsorship,
       seatsRemaining: communitySupport.seatsRemaining,
     },
+    ambassador: {
+      active: Boolean(ambassador),
+      role: ambassador?.ambassador.role,
+    },
+    townMilestone: townMilestone
+      ? {
+          activeCount: townMilestone.activeCount,
+          featuresUnlocked: townMilestone.featuresUnlocked,
+          launchMessage: townMilestone.launchMessage,
+          momentumLine: townMilestone.momentumLine,
+        }
+      : null,
   };
 }
 
@@ -440,17 +493,23 @@ function renderHeader(context: EasyContext, currentPath: string): string {
   const communitySupportBadge = context.communitySupport.supported
     ? `<span class="neighborhood-chip">Supported by Local Community</span>`
     : "";
+  const ambassadorBadge = context.ambassador.active
+    ? `<span class="neighborhood-chip">Local Leader</span>`
+    : "";
   const sponsorshipWaitlistNote =
     !context.communitySupport.supported &&
     context.communitySupport.sponsorshipEligible &&
     context.communitySupport.seatsRemaining === 0
       ? `<p class="muted" style="margin-top:8px;">Community sponsorship seats are currently full. Reduced-cost path is available in Billing.</p>`
       : "";
+  const badgeRow = [communitySupportBadge, ambassadorBadge]
+    .filter((entry) => entry !== "")
+    .join("");
   return `<header class="rounded-2xl p-6 shadow-sm bg-white">
     <p class="section-title">MainStreetAI Easy Mode</p>
     <h1 class="text-xl">${escapeHtml(greeting)}, ${escapeHtml(context.selectedBrand.businessName)}</h1>
     <p class="muted">${escapeHtml(context.selectedBrand.location)}</p>
-    ${communitySupportBadge ? `<div style="margin-top:8px;">${communitySupportBadge}</div>` : ""}
+    ${badgeRow ? `<div class="chip-row" style="margin-top:8px;">${badgeRow}</div>` : ""}
     ${sponsorshipWaitlistNote}
     <form method="GET" action="${escapeHtml(currentPath)}" class="selector-grid">
       ${
@@ -1128,14 +1187,19 @@ router.get("/", async (req, res, next) => {
         );
     }
 
+    const townPulseUnlocked = Boolean(
+      context.townMilestone?.featuresUnlocked.includes("town_pulse_learning"),
+    );
     const [latest, checkin, townPulse] = await Promise.all([
       getLatestDailyPack(context.ownerUserId, context.selectedBrandId),
       dailyCheckinStatus(context.ownerUserId, context.selectedBrandId),
-      getTownPulseModelForBrand({
-        userId: context.ownerUserId,
-        brandId: context.selectedBrandId,
-        recomputeIfMissing: true,
-      }).catch(() => null),
+      townPulseUnlocked
+        ? getTownPulseModelForBrand({
+            userId: context.ownerUserId,
+            brandId: context.selectedBrandId,
+            recomputeIfMissing: true,
+          }).catch(() => null)
+        : Promise.resolve(null),
     ]);
     const signUrl = withSelection("/app/sign/today", context);
     const routeWindowOverride = parseTownWindowOverride(optionalText(req.query.window));
@@ -1193,7 +1257,16 @@ router.get("/", async (req, res, next) => {
     const chipSeason = activeSeason
       ? `<span class="neighborhood-chip">Season: ${escapeHtml(seasonTagLabel(activeSeason))}</span>`
       : "";
-    const homeChipRow = `<div class="chip-row">${townPulseIndicator}${chipWindow}${chipSeason}</div>`;
+    const chipMilestone = context.townMilestone
+      ? `<span class="neighborhood-chip">Town businesses: ${escapeHtml(String(context.townMilestone.activeCount))}</span>`
+      : "";
+    const homeChipRow = `<div class="chip-row">${townPulseIndicator}${chipWindow}${chipSeason}${chipMilestone}</div>`;
+    const launchFlowMessage = context.townMilestone?.launchMessage
+      ? `<p class="muted" style="margin-top:8px;"><strong>${escapeHtml(context.townMilestone.launchMessage)}</strong></p>`
+      : "";
+    const momentumMessage = context.townMilestone?.momentumLine
+      ? `<p class="muted" style="margin-top:6px;">${escapeHtml(context.townMilestone.momentumLine)}</p>`
+      : "";
     const rescuePriority = context.selectedBrand.supportLevel === "struggling";
     const rescueButtonLabel = rescuePriority ? "Fix a Slow Day (Priority)" : "Fix a Slow Day";
     const rescuePriorityNote = rescuePriority
@@ -1206,6 +1279,8 @@ router.get("/", async (req, res, next) => {
             <p class="section-title">Today</p>
             <h2 class="text-xl">Your daily pack is ready</h2>
             <p class="muted">Copy and post. No extra setup needed.</p>
+            ${launchFlowMessage}
+            ${momentumMessage}
             <p class="muted" style="margin-top:8px;">Made for local owners. Built for real life.</p>
           </section>
           ${
@@ -1231,6 +1306,8 @@ router.get("/", async (req, res, next) => {
             <p class="section-title">Daily focus</p>
             <h2 class="text-xl">One clear move for today</h2>
             <p class="muted">No dashboard clutter. Just what to do next.</p>
+            ${launchFlowMessage}
+            ${momentumMessage}
             <details style="margin-top:10px;">
               <summary class="muted">Optional note for today</summary>
               <textarea id="daily-notes" placeholder="Only if needed: weather, staffing, special event, etc."></textarea>
@@ -2647,6 +2724,14 @@ router.post("/settings/local-network", async (req, res, next) => {
         townName,
       },
     });
+    if (enabled) {
+      await autoAssignTownAmbassadorForBrand({
+        ownerId: context.ownerUserId,
+        brandId: context.selectedBrandId,
+      }).catch(() => {
+        // Ambassador assignment is best-effort.
+      });
+    }
     if (enabled && partnerCategories.length > 0) {
       await recordManualCategoryPreferencesForBrand({
         userId: context.ownerUserId,
@@ -2744,6 +2829,23 @@ router.get("/town", async (req, res, next) => {
       actorUserId: context.actorUserId,
       townId: membership.town.id,
     });
+    const [milestone, ambassadors] = await Promise.all([
+      getTownMilestoneSummary({
+        townId: membership.town.id,
+        userId: context.ownerUserId,
+      }).catch(() => ({
+        activeCount: map?.businesses.length ?? 0,
+        featuresUnlocked: [],
+      })),
+      listTownAmbassadors({
+        townId: membership.town.id,
+        userId: context.ownerUserId,
+      }).catch(() => []),
+    ]);
+    const unlocked = new Set(milestone.featuresUnlocked ?? []);
+    const storiesUnlocked = unlocked.has("town_stories");
+    const pulseUnlocked = unlocked.has("town_pulse_learning");
+    const graphUnlocked = unlocked.has("town_graph_routes");
     const categoryLabels: Record<string, string> = {
       "loaded-tea": "Coffee",
       cafe: "Coffee",
@@ -2769,18 +2871,64 @@ router.get("/town", async (req, res, next) => {
             )
             .join("")
         : `<li class="muted">No participating businesses yet.</li>`;
+    const ambassadorRows =
+      ambassadors.length > 0
+        ? ambassadors
+            .slice(0, 8)
+            .map(
+              (entry) =>
+                `<li><strong>${escapeHtml(entry.businessName)}</strong> <span class="muted">(${escapeHtml(
+                  entry.role === "local_leader"
+                    ? "Local Leader"
+                    : entry.role === "organizer"
+                      ? "Organizer"
+                      : "Ambassador",
+                )})</span></li>`,
+            )
+            .join("")
+        : `<li class="muted">No ambassadors listed yet.</li>`;
+    const launchMessage = milestone.launchMessage
+      ? `<p class="muted"><strong>${escapeHtml(milestone.launchMessage)}</strong></p>`
+      : "";
+    const momentumLine = milestone.momentumLine
+      ? `<p class="muted">${escapeHtml(milestone.momentumLine)}</p>`
+      : "";
+    const unlockRows = [
+      `<li><strong>3 businesses:</strong> Town Stories ${storiesUnlocked ? "✅" : "⏳"}</li>`,
+      `<li><strong>5 businesses:</strong> Town Pulse learning ${pulseUnlocked ? "✅" : "⏳"}</li>`,
+      `<li><strong>10 businesses:</strong> Town Graph routes ${graphUnlocked ? "✅" : "⏳"}</li>`,
+    ].join("");
+    const pulseLink = pulseUnlocked
+      ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}">View Town Pulse</a>`
+      : `<p class="muted">Town Pulse unlocks at 5 businesses.</p>`;
+    const storiesLink = storiesUnlocked
+      ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>`
+      : `<p class="muted" style="margin-top:8px;">Town Stories unlock at 3 businesses.</p>`;
+    const graphLink = graphUnlocked
+      ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">View Town Graph</a>`
+      : `<p class="muted" style="margin-top:8px;">Town Graph routes unlock at 10 businesses.</p>`;
     const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
       <h2 class="text-xl">We’re part of the ${escapeHtml(membership.town.name)} Local Network</h2>
       <p class="muted">Town Mode runs quietly in the background. No extra coordination required.</p>
       <p><strong>${escapeHtml(categories || "Local businesses")}</strong></p>
-      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}">View Town Pulse</a>
-      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>
-      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">View Town Graph</a>
+      <p class="muted">Active local businesses: <strong>${escapeHtml(String(milestone.activeCount))}</strong></p>
+      ${launchMessage}
+      ${momentumLine}
+      <ul>${unlockRows}</ul>
+      ${pulseLink}
+      ${storiesLink}
+      ${graphLink}
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/seasons", context))}" style="margin-top:8px;">Season Overrides</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/partners", context))}" style="margin-top:8px;">Local Partners</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/ambassador", context))}" style="margin-top:8px;">Ambassador Toolkit</a>
     </section>
     <section class="rounded-2xl p-6 shadow-sm bg-white">
       <h3>Participating businesses</h3>
       <ul>${businessRows}</ul>
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Local ambassadors</h3>
+      <ul>${ambassadorRows}</ul>
     </section>`;
     return res
       .type("html")
@@ -2823,6 +2971,35 @@ router.get("/town/pulse", async (req, res, next) => {
     });
     if (!membership) {
       return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
+    }
+    const milestone = await getTownMilestoneSummary({
+      townId: membership.town.id,
+      userId: context.ownerUserId,
+    }).catch(() => null);
+    if (
+      !milestone ||
+      !isTownFeatureUnlocked({
+        milestone,
+        feature: "town_pulse_learning",
+      })
+    ) {
+      const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+        <h2 class="text-xl">Town Pulse</h2>
+        <p class="muted">Town Pulse learning unlocks when 5 businesses are active in your town.</p>
+        <p class="muted">Current active businesses: <strong>${escapeHtml(String(milestone?.activeCount ?? 0))}</strong></p>
+        <a class="secondary-button" href="${escapeHtml(withSelection("/app/town", context))}" style="margin-top:8px;">Back to Local Network</a>
+      </section>`;
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Town Pulse",
+            context,
+            active: "settings",
+            currentPath: "/app/town/pulse",
+            body,
+          }),
+        );
     }
     const pulse = await getTownPulseModelForBrand({
       userId: context.ownerUserId,
@@ -2901,6 +3078,35 @@ router.get("/town/graph", async (req, res, next) => {
     });
     if (!membership) {
       return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
+    }
+    const milestone = await getTownMilestoneSummary({
+      townId: membership.town.id,
+      userId: context.ownerUserId,
+    }).catch(() => null);
+    if (
+      !milestone ||
+      !isTownFeatureUnlocked({
+        milestone,
+        feature: "town_graph_routes",
+      })
+    ) {
+      const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+        <h2 class="text-xl">Town Graph</h2>
+        <p class="muted">Town Graph routes unlock when 10 businesses are active in your town.</p>
+        <p class="muted">Current active businesses: <strong>${escapeHtml(String(milestone?.activeCount ?? 0))}</strong></p>
+        <a class="secondary-button" href="${escapeHtml(withSelection("/app/town", context))}" style="margin-top:8px;">Back to Local Network</a>
+      </section>`;
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Town Graph",
+            context,
+            active: "settings",
+            currentPath: "/app/town/graph",
+            body,
+          }),
+        );
     }
     const graph = await getTownGraph({
       townId: membership.town.id,
@@ -3151,6 +3357,35 @@ router.get("/town/stories", async (req, res, next) => {
     if (!membership) {
       return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
     }
+    const milestone = await getTownMilestoneSummary({
+      townId: membership.town.id,
+      userId: context.ownerUserId,
+    }).catch(() => null);
+    if (
+      !milestone ||
+      !isTownFeatureUnlocked({
+        milestone,
+        feature: "town_stories",
+      })
+    ) {
+      const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+        <h2 class="text-xl">Town Stories</h2>
+        <p class="muted">Town Stories unlock when 3 businesses are active in your town.</p>
+        <p class="muted">Current active businesses: <strong>${escapeHtml(String(milestone?.activeCount ?? 0))}</strong></p>
+        <a class="secondary-button" href="${escapeHtml(withSelection("/app/town", context))}" style="margin-top:8px;">Back to Local Network</a>
+      </section>`;
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Town Stories",
+            context,
+            active: "settings",
+            currentPath: "/app/town/stories",
+            body,
+          }),
+        );
+    }
     const story = await getLatestTownStoryForBrand({
       userId: context.ownerUserId,
       brandId: context.selectedBrandId,
@@ -3171,6 +3406,7 @@ router.get("/town/stories", async (req, res, next) => {
       <h2 class="text-xl">Town Stories</h2>
       <p class="muted">A shared local narrative for ${escapeHtml(membership.town.name)}.</p>
       <p class="muted">No metrics. No rankings. Just warm community momentum.</p>
+      ${milestone.momentumLine ? `<p class="muted"><strong>${escapeHtml(milestone.momentumLine)}</strong></p>` : ""}
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-top:8px;">View Town Pulse</a>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">View Town Graph</a>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/seasons", context))}" style="margin-top:8px;">Season Overrides</a>
@@ -3184,6 +3420,249 @@ router.get("/town/stories", async (req, res, next) => {
           context,
           active: "settings",
           currentPath: "/app/town/stories",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/town/partners", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    if (!context.ownerUserId || !context.selectedBrandId) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Local Partners",
+            context,
+            active: "settings",
+            currentPath: "/app/town/partners",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Pick a business first.</p></section>`,
+          }),
+        );
+    }
+    const membership = await getTownMembershipForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+    });
+    if (!membership) {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
+    }
+    const partners = await listTownPartners({
+      townId: membership.town.id,
+      userId: context.ownerUserId,
+    }).catch(() => []);
+    const roleLabel = (role: string) => {
+      if (role === "chamber") return "Chamber";
+      if (role === "bank") return "Bank";
+      if (role === "downtown_org") return "Downtown Org";
+      return "Nonprofit";
+    };
+    const partnerRows =
+      partners.length > 0
+        ? partners
+            .map(
+              (partner) => `<li>
+                <strong>${escapeHtml(partner.sponsorName)}</strong>
+                <span class="muted">(${escapeHtml(roleLabel(partner.role))})</span>
+              </li>`,
+            )
+            .join("")
+        : `<li class="muted">No partners listed yet.</li>`;
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Local partners supporting Main Street</h2>
+      <p class="muted">These organizations help towns adopt the platform in a trust-first way.</p>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town", context))}" style="margin-top:8px;">Back to Local Network</a>
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Community partners</h3>
+      <ul>${partnerRows}</ul>
+    </section>`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Local Partners",
+          context,
+          active: "settings",
+          currentPath: "/app/town/partners",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/town/ambassador", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    if (!context.ownerUserId || !context.selectedBrandId) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Ambassador Toolkit",
+            context,
+            active: "settings",
+            currentPath: "/app/town/ambassador",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Pick a business first.</p></section>`,
+          }),
+        );
+    }
+    const membership = await getTownMembershipForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+    });
+    if (!membership) {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
+    }
+    const printMode = String(req.query.print ?? "") === "1";
+    const [ambassadors, invites] = await Promise.all([
+      listTownAmbassadors({
+        townId: membership.town.id,
+        userId: context.ownerUserId,
+      }).catch(() => []),
+      listTownInvites({
+        townId: membership.town.id,
+        userId: context.ownerUserId,
+        limit: 20,
+      }).catch(() => []),
+    ]);
+    const inviteRows =
+      invites.length > 0
+        ? invites
+            .slice(0, 12)
+            .map(
+              (invite) =>
+                `<li><strong>${escapeHtml(invite.invitedBusiness)}</strong> <span class="muted">(${escapeHtml(
+                  invite.status,
+                )})</span></li>`,
+            )
+            .join("")
+        : `<li class="muted">No invites yet.</li>`;
+    const ambassadorCount = ambassadors.length;
+    const script = `This isn’t ads or marketing tricks — it’s just a daily assistant to help locals stay busy.`;
+    const printableCard = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Printable 1-page explainer</h3>
+      <p class="muted">Use this with chamber meetings, downtown groups, or one-to-one owner conversations.</p>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/ambassador", context, { print: "1" }))}" target="_blank">Open printable version</a>
+    </section>`;
+    if (printMode) {
+      const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+        <h2 class="text-xl">${escapeHtml(membership.town.name)} Local Adoption Sheet</h2>
+        <p class="muted">Built for owners who want simple daily help and stronger Main Street momentum.</p>
+        <ul>
+          <li>One clear daily plan</li>
+          <li>Neighbor-friendly local growth ideas</li>
+          <li>No aggressive ads. No corporate pressure.</li>
+        </ul>
+        <p class="output-value">${escapeHtml(script)}</p>
+        <button class="secondary-button" type="button" onclick="window.print()">Print this page</button>
+      </section>`;
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Ambassador Toolkit (Print)",
+            context,
+            active: "settings",
+            currentPath: "/app/town/ambassador",
+            body,
+          }),
+        );
+    }
+    const inviteForm =
+      context.role === "member"
+        ? `<p class="muted">Invite sending is owner/admin only. You can still share the script below.</p>`
+        : `<form id="town-invite-form" style="display:grid;gap:8px;">
+            <label class="field-label">Business name
+              <input name="businessName" required placeholder="Example Coffee Co." />
+            </label>
+            <label class="field-label">Category
+              <input name="category" required placeholder="cafe" />
+            </label>
+            <label class="field-label">Email (optional)
+              <input name="email" type="email" placeholder="owner@example.com" />
+            </label>
+            <button class="primary-button" type="submit">Send local invite</button>
+            <p id="town-invite-status" class="muted"></p>
+          </form>`;
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Ambassador Toolkit</h2>
+      <p class="muted">Invite a local business and help adoption grow town-to-town organically.</p>
+      <p class="muted">Active ambassadors in town: <strong>${escapeHtml(String(ambassadorCount))}</strong></p>
+      ${
+        context.ambassador.active
+          ? `<p class="muted"><strong>Local Leader benefits active</strong>: extended Starter tools and early-access workflows.</p>`
+          : `<p class="muted">Early adopters and local leaders are auto-invited into ambassador access.</p>`
+      }
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town", context))}" style="margin-top:8px;">Back to Local Network</a>
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Invite a local business</h3>
+      ${inviteForm}
+    </section>
+    ${printableCard}
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Short “What this is” script</h3>
+      <p class="output-value">${escapeHtml(script)}</p>
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Recent town invites</h3>
+      <ul>${inviteRows}</ul>
+    </section>
+    <script>
+      (function () {
+        const form = document.getElementById("town-invite-form");
+        const status = document.getElementById("town-invite-status");
+        if (!form || !status) return;
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const fd = new FormData(form);
+          const payload = {
+            townId: ${JSON.stringify(membership.town.id)},
+            businessName: String(fd.get("businessName") || ""),
+            category: String(fd.get("category") || ""),
+            email: String(fd.get("email") || "").trim() || undefined,
+          };
+          status.textContent = "Sending invite...";
+          try {
+            const response = await fetch(${JSON.stringify(withSelection("/api/town/invite", context))}, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+            const json = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              status.textContent = json?.error || "Could not send invite.";
+              return;
+            }
+            status.textContent = "Invite recorded. Thank you for supporting your town.";
+            form.reset();
+          } catch (_error) {
+            status.textContent = "Could not send invite.";
+          }
+        });
+      })();
+    </script>`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Ambassador Toolkit",
+          context,
+          active: "settings",
+          currentPath: "/app/town/ambassador",
           body,
         }),
       );

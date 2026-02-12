@@ -5,7 +5,9 @@ import { brandPartnerUpsertSchema, townGraphEdgeUpdateSchema } from "../schemas/
 import { townSeasonKeySchema, townSeasonUpsertSchema } from "../schemas/townSeasonSchema";
 import { townStoryGenerateRequestSchema } from "../schemas/townStorySchema";
 import { townMembershipUpdateSchema } from "../schemas/townSchema";
+import { townInviteCreateSchema } from "../schemas/townAdoptionSchema";
 import { getAdapter } from "../storage/getAdapter";
+import { isEmailEnabled } from "../integrations/env";
 import {
   getTownMapForUser,
   getTownMembershipForBrand,
@@ -27,6 +29,13 @@ import { recomputeTownMicroRoutesForTown } from "../services/townMicroRoutesServ
 import { deleteTownSeason, listTownSeasons, resolveTownSeasonStateForTown, upsertTownSeason } from "../services/townSeasonService";
 import { generateTownStoryForTown, getLatestTownStory } from "../services/townStoriesService";
 import { summarizeCommunityImpactForTown } from "../services/communityImpactService";
+import {
+  autoAssignTownAmbassadorForBrand,
+  createTownInvite,
+  getTownMilestoneSummary,
+  resolveOwnedInviterBrandForTown,
+  townInviteMessage,
+} from "../services/townAdoptionService";
 import { parseSeasonOverride } from "../town/seasonDetector";
 
 const router = Router();
@@ -179,6 +188,161 @@ router.get("/community-impact", async (req, res, next) => {
       notifications: summary.sponsorship.waitlistNeeded
         ? ["Sponsorship seats are full for current struggling-business demand."]
         : [],
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/milestones", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const milestone = await getTownMilestoneSummary({
+      townId,
+      userId: req.user?.id,
+    });
+    return res.json({
+      activeCount: milestone.activeCount,
+      featuresUnlocked: milestone.featuresUnlocked,
+      launchMessage: milestone.launchMessage ?? null,
+      momentumLine: milestone.momentumLine ?? null,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/invite", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const parsedBody = townInviteCreateSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid invite payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+  const requestedBrandId = typeof req.query.brandId === "string" ? req.query.brandId.trim() : "";
+  if (requestedBrandId) {
+    const parsedBrandId = brandIdSchema.safeParse(requestedBrandId);
+    if (!parsedBrandId.success) {
+      return res.status(400).json({
+        error: "Invalid brandId query parameter",
+        details: parsedBrandId.error.flatten(),
+      });
+    }
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId: parsedBody.data.townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+
+    let inviter:
+      | {
+          ownerId: string;
+          brandId: string;
+          brandRef: string;
+          businessName: string;
+        }
+      | null = null;
+    if (requestedBrandId) {
+      const access = await resolveBrandAccess(actorId, requestedBrandId);
+      if (!access) {
+        return res.status(404).json({ error: `Brand '${requestedBrandId}' was not found` });
+      }
+      if (!ownerOrAdmin(access.role)) {
+        return res.status(403).json({ error: "Only owners/admins can send invites from a brand." });
+      }
+      inviter = await resolveOwnedInviterBrandForTown({
+        ownerId: access.ownerId,
+        townId: parsedBody.data.townId,
+        preferredBrandId: access.brandId,
+      });
+    } else {
+      const ownerId = req.user?.id;
+      if (!ownerId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      inviter = await resolveOwnedInviterBrandForTown({
+        ownerId,
+        townId: parsedBody.data.townId,
+      });
+    }
+    if (!inviter) {
+      return res.status(400).json({
+        error: "No eligible inviter brand found in this town. Choose a participating brand and try again.",
+      });
+    }
+
+    const invite = await createTownInvite({
+      townId: parsedBody.data.townId,
+      invitedBusiness: parsedBody.data.businessName,
+      category: parsedBody.data.category,
+      invitedEmail: parsedBody.data.email,
+      invitedByBrandRef: inviter.brandRef,
+      status: "pending",
+    });
+    const message = townInviteMessage({
+      townName: map.town.name,
+      invitedBusiness: parsedBody.data.businessName,
+      invitedByBusiness: inviter.businessName,
+    });
+
+    let delivery: "recorded" | "email_queued" = "recorded";
+    if (parsedBody.data.email && isEmailEnabled()) {
+      const adapter = getAdapter();
+      const subject = `${map.town.name} Main Street invite`;
+      const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;padding:16px;white-space:pre-wrap;">${message
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br/>")}</body></html>`;
+      const log = await adapter.addEmailLog(inviter.ownerId, inviter.brandId, {
+        toEmail: parsedBody.data.email,
+        subject,
+        status: "queued",
+      });
+      await adapter.enqueueOutbox(
+        inviter.ownerId,
+        inviter.brandId,
+        "email_send",
+        {
+          toEmail: parsedBody.data.email,
+          subject,
+          html,
+          textSummary: message,
+          emailLogId: log.id,
+        },
+        new Date().toISOString(),
+      );
+      delivery = "email_queued";
+    }
+
+    return res.json({
+      ok: true,
+      invite,
+      message,
+      delivery,
     });
   } catch (error) {
     return next(error);
@@ -688,7 +852,17 @@ router.post("/membership", async (req, res, next) => {
       fallbackTownName: suggestTownFromLocation(brand?.location ?? ""),
       settings: parsedBody.data,
     });
-    return res.json(updated);
+    const ambassador =
+      updated.enabled
+        ? await autoAssignTownAmbassadorForBrand({
+            ownerId: access.ownerId,
+            brandId: access.brandId,
+          }).catch(() => null)
+        : null;
+    return res.json({
+      ...updated,
+      ambassador,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Town membership update failed";
     if (message.toLowerCase().includes("town name is required")) {

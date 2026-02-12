@@ -19,6 +19,12 @@ Input JSON:
   "energyLevel": "low|medium|high",
   "activeBusinesses": "number",
   "shopLocalMomentum": "warming|building",
+  "momentumNarrative": "string",
+  "successSignals": {
+    "confidence": "low|medium|high",
+    "totalWeight": "number",
+    "topSignals": [ { "signal": "busy_days_up|repeat_customers_up|new_faces_seen", "weight": number } ]
+  },
   "storyType": "daily|weekly|event"
 }
 
@@ -40,3 +46,5 @@ Rules:
 - Never compare businesses or imply endorsements.
 - Keep language inclusive so every local business feels represented.
 - If activeBusinesses is high, emphasize "shop local momentum" and shared downtown energy.
+- Occasionally use "Town Momentum" framing (e.g., "More local owners are leaning into small daily wins...") when confidence is medium/high.
+- Use successSignals only as soft narrative context; never expose numbers.

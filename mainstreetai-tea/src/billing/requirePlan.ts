@@ -2,6 +2,7 @@ import { FEATURES } from "../config/featureFlags";
 import { type BillingPlan } from "../schemas/subscriptionSchema";
 import { getEffectivePlanForBrand, hasRequiredPlan } from "./subscriptions";
 import { getCommunitySupportStatusForBrand } from "../services/communityImpactService";
+import { getTownAmbassadorForBrand } from "../services/townAdoptionService";
 
 export async function requirePlan(
   userId: string,
@@ -31,6 +32,19 @@ export async function requirePlan(
           brandId,
           autoAssign: true,
         }).catch(() => null);
+  const ambassador =
+    minPlan === "pro"
+      ? null
+      : await getTownAmbassadorForBrand({
+          ownerId: userId,
+          brandId,
+        }).catch(() => null);
+  if (ambassador && minPlan !== "pro") {
+    return {
+      ok: true,
+      plan: effectivePlan === "pro" ? "pro" : "starter",
+    };
+  }
   if (sponsorship?.sponsored && minPlan !== "pro") {
     return {
       ok: true,
@@ -53,6 +67,12 @@ export async function requirePlan(
             activeSponsoredMembership: sponsorship.sponsored,
             seatsRemaining: sponsorship.seatsRemaining,
             reducedCostUpgradePath: sponsorship.reducedCostUpgradePath,
+          }
+        : undefined,
+      ambassador: ambassador
+        ? {
+            active: true,
+            role: ambassador.ambassador.role,
           }
         : undefined,
     },

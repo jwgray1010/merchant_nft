@@ -19,6 +19,7 @@ import { getStorageMode, getAdapter } from "../storage/getAdapter";
 import { getSupabaseAdminClient } from "../supabase/supabaseAdmin";
 import { getTownPulseModel, listActiveTownPulseTargets, recomputeTownPulseModel } from "./townPulseService";
 import { countActiveBusinessesForTown } from "./communityImpactService";
+import { getTownMilestoneSummary, isTownFeatureUnlocked, summarizeTownSuccessSignals } from "./townAdoptionService";
 
 const LOCAL_ROOT = path.resolve(process.cwd(), "data", "local_mode");
 
@@ -446,6 +447,13 @@ export async function listDueTownStoryTargets(input: {
 
   const due: Array<{ townId: string; userId?: string }> = [];
   for (const target of candidates) {
+    const milestone = await getTownMilestoneSummary({
+      townId: target.townId,
+      userId: target.userId,
+    }).catch(() => null);
+    if (!milestone || !isTownFeatureUnlocked({ milestone, feature: "town_stories" })) {
+      continue;
+    }
     const shouldRun = await isTownDueForStory({
       townId: target.townId,
       userId: target.userId,
@@ -494,6 +502,22 @@ export async function generateTownStoryForTown(input: {
     townId: input.townId,
     userId: input.userId,
   }).catch(() => 0);
+  const milestone = await getTownMilestoneSummary({
+    townId: input.townId,
+    userId: input.userId,
+  });
+  if (!isTownFeatureUnlocked({ milestone, feature: "town_stories" })) {
+    throw new Error("Town Stories unlock after 3 active businesses join a town.");
+  }
+  const successSignals = await summarizeTownSuccessSignals({
+    townId: input.townId,
+    userId: input.userId,
+    sinceDays: 45,
+  }).catch(() => ({
+    confidence: "low" as const,
+    totalWeight: 0,
+    bySignal: [],
+  }));
   const promptOutput = await runPrompt({
     promptFile: "town_stories.md",
     brandProfile: syntheticBrandProfileForTown(town),
@@ -510,6 +534,15 @@ export async function generateTownStoryForTown(input: {
       energyLevel,
       activeBusinesses,
       shopLocalMomentum: activeBusinesses >= 4 ? "building" : "warming",
+      momentumNarrative: milestone.momentumLine ?? "",
+      successSignals: {
+        confidence: successSignals.confidence,
+        totalWeight: successSignals.totalWeight,
+        topSignals: successSignals.bySignal.slice(0, 3).map((entry) => ({
+          signal: entry.signal,
+          weight: entry.weight,
+        })),
+      },
       storyType,
     },
     outputSchema: townStoryContentSchema,

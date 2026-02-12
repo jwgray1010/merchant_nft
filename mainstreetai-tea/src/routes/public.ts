@@ -3,6 +3,7 @@ import { buildBrandFromTemplate } from "../data/templateStore";
 import { autopilotSettingsUpsertSchema } from "../schemas/autopilotSettingsSchema";
 import { brandProfileSchema, brandSupportLevelSchema } from "../schemas/brandSchema";
 import { assignSponsoredSeatForBrand } from "../services/communityImpactService";
+import { autoAssignTownAmbassadorForBrand } from "../services/townAdoptionService";
 import { ensureTownMembershipForBrand, suggestTownFromLocation } from "../services/townModeService";
 import { getAdapter } from "../storage/getAdapter";
 import { extractAuthToken, resolveAuthUser } from "../supabase/verifyAuth";
@@ -389,6 +390,10 @@ router.post("/onboarding/complete", async (req, res, next) => {
         timezone: "America/Chicago",
         participationLevel: "standard",
       });
+      await autoAssignTownAmbassadorForBrand({
+        ownerId: user.id,
+        brandId: brand.brandId,
+      }).catch(() => null);
     }
 
     if (brand.supportLevel === "struggling") {

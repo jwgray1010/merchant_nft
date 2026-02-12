@@ -5,8 +5,10 @@ import { z } from "zod";
 import { brandProfileSchema, brandSupportLevelSchema, type BrandSupportLevel } from "../schemas/brandSchema";
 import {
   communityImpactSummarySchema,
+  communitySponsorRoleSchema,
   communitySponsorRowSchema,
   sponsoredMembershipRowSchema,
+  type CommunitySponsorRole,
   type CommunityImpactSummary,
   type CommunitySponsorRow,
   type SponsoredMembershipRow,
@@ -37,6 +39,7 @@ type SupabaseCommunitySponsorRow = {
   id: string;
   town_ref: string;
   sponsor_name: string;
+  role: string | null;
   sponsored_seats: number;
   active: boolean;
   created_at: string;
@@ -140,11 +143,17 @@ function safeMembershipStatus(value: unknown): "active" | "paused" | "ended" {
   return parsed.success ? parsed.data : "active";
 }
 
+function safeSponsorRole(value: unknown): CommunitySponsorRole {
+  const parsed = communitySponsorRoleSchema.safeParse(value);
+  return parsed.success ? parsed.data : "nonprofit";
+}
+
 function toCommunitySponsorRow(row: SupabaseCommunitySponsorRow): CommunitySponsorRow {
   return communitySponsorRowSchema.parse({
     id: row.id,
     townRef: row.town_ref,
     sponsorName: row.sponsor_name,
+    role: safeSponsorRole(row.role),
     sponsoredSeats: Math.max(0, Math.trunc(Number(row.sponsored_seats ?? 0))),
     active: Boolean(row.active),
     createdAt: row.created_at,

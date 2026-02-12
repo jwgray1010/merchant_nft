@@ -44,6 +44,7 @@ import {
   resolveTownSeasonStateForTown,
 } from "./townSeasonService";
 import { countActiveBusinessesForTown } from "./communityImpactService";
+import { getTownMilestoneSummary, isTownFeatureUnlocked } from "./townAdoptionService";
 
 const LOCAL_ROOT = path.resolve(process.cwd(), "data", "local_mode");
 const MICRO_ROUTE_STALE_HOURS = 28;
@@ -510,6 +511,13 @@ export async function listDueTownMicroRouteTargets(limit = 20): Promise<Array<{ 
 
   const due: Array<{ townId: string; userId?: string }> = [];
   for (const candidate of candidates) {
+    const milestone = await getTownMilestoneSummary({
+      townId: candidate.townId,
+      userId: candidate.userId,
+    }).catch(() => null);
+    if (!milestone || !isTownFeatureUnlocked({ milestone, feature: "town_graph_routes" })) {
+      continue;
+    }
     const status = await routeStatus({
       townId: candidate.townId,
       userId: candidate.userId,
@@ -531,6 +539,13 @@ export async function recomputeTownMicroRoutesForTown(input: {
   userId?: string;
   seasonOverride?: TownSeasonKey;
 }): Promise<{ updated: number }> {
+  const milestone = await getTownMilestoneSummary({
+    townId: input.townId,
+    userId: input.userId,
+  }).catch(() => null);
+  if (!milestone || !isTownFeatureUnlocked({ milestone, feature: "town_graph_routes" })) {
+    return { updated: 0 };
+  }
   const edges = await listTownGraphEdges({
     townId: input.townId,
     userId: input.userId,
@@ -712,6 +727,13 @@ async function prepareTownRouteContextForDaily(input: {
   townPulse: TownPulseModelData;
 } | null> {
   if (!input.brand.townRef) {
+    return null;
+  }
+  const milestone = await getTownMilestoneSummary({
+    townId: input.brand.townRef,
+    userId: input.userId,
+  }).catch(() => null);
+  if (!milestone || !isTownFeatureUnlocked({ milestone, feature: "town_graph_routes" })) {
     return null;
   }
   const window = resolveTownWindow({

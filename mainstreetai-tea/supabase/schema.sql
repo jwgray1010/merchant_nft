@@ -159,6 +159,7 @@ create table if not exists public.community_sponsors (
   id uuid primary key default gen_random_uuid(),
   town_ref uuid not null references public.towns(id) on delete cascade,
   sponsor_name text not null,
+  role text not null default 'nonprofit' check (role in ('chamber','bank','downtown_org','nonprofit')),
   sponsored_seats int not null default 0,
   active boolean not null default true,
   created_at timestamptz not null default now()
@@ -169,6 +170,33 @@ create table if not exists public.sponsored_memberships (
   sponsor_ref uuid not null references public.community_sponsors(id) on delete cascade,
   brand_ref uuid not null references public.brands(id) on delete cascade,
   status text not null default 'active' check (status in ('active','paused','ended')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.town_ambassadors (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  role text not null default 'ambassador' check (role in ('ambassador','local_leader','organizer')),
+  joined_at timestamptz not null default now()
+);
+
+create table if not exists public.town_invites (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  invited_business text not null,
+  invited_by_brand_ref uuid not null references public.brands(id) on delete cascade,
+  category text not null default 'other',
+  invited_email text,
+  status text not null default 'pending' check (status in ('pending','sent','accepted','declined')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.town_success_signals (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  signal text not null check (signal in ('busy_days_up','repeat_customers_up','new_faces_seen')),
+  weight numeric not null default 1,
   created_at timestamptz not null default now()
 );
 
@@ -561,6 +589,24 @@ create unique index if not exists sponsored_memberships_brand_ref_unique
 create index if not exists sponsored_memberships_sponsor_status_idx
   on public.sponsored_memberships(sponsor_ref, status, created_at desc);
 
+create unique index if not exists town_ambassadors_brand_ref_unique
+  on public.town_ambassadors(brand_ref);
+
+create index if not exists town_ambassadors_town_joined_idx
+  on public.town_ambassadors(town_ref, joined_at desc);
+
+create index if not exists town_invites_town_created_idx
+  on public.town_invites(town_ref, created_at desc);
+
+create index if not exists town_invites_town_status_idx
+  on public.town_invites(town_ref, status, created_at desc);
+
+create index if not exists town_success_signals_town_created_idx
+  on public.town_success_signals(town_ref, created_at desc);
+
+create index if not exists town_success_signals_town_signal_idx
+  on public.town_success_signals(town_ref, signal, created_at desc);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -794,6 +840,9 @@ alter table public.town_seasons enable row level security;
 alter table public.town_route_season_weights enable row level security;
 alter table public.community_sponsors enable row level security;
 alter table public.sponsored_memberships enable row level security;
+alter table public.town_ambassadors enable row level security;
+alter table public.town_invites enable row level security;
+alter table public.town_success_signals enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -1064,6 +1113,52 @@ with check (
       and public.is_town_member(cs.town_ref)
   )
 );
+
+drop policy if exists town_ambassadors_member_select on public.town_ambassadors;
+create policy town_ambassadors_member_select on public.town_ambassadors
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_ambassadors_member_modify on public.town_ambassadors;
+create policy town_ambassadors_member_modify on public.town_ambassadors
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_invites_member_select on public.town_invites;
+create policy town_invites_member_select on public.town_invites
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_invites_member_insert on public.town_invites;
+create policy town_invites_member_insert on public.town_invites
+for insert
+with check (
+  public.is_town_member(town_ref)
+  and public.has_team_role(invited_by_brand_ref, array['owner','admin']::text[])
+);
+
+drop policy if exists town_invites_member_modify on public.town_invites;
+create policy town_invites_member_modify on public.town_invites
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_success_signals_member_select on public.town_success_signals;
+create policy town_success_signals_member_select on public.town_success_signals
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_success_signals_member_insert on public.town_success_signals;
+create policy town_success_signals_member_insert on public.town_success_signals
+for insert
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_success_signals_member_modify on public.town_success_signals;
+create policy town_success_signals_member_modify on public.town_success_signals
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
 
 drop policy if exists history_owner_all on public.history;
 create policy history_owner_all on public.history
