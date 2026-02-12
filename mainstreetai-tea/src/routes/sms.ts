@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { requirePlan } from "../billing/requirePlan";
+import { FEATURES } from "../config/featureFlags";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { processDueOutbox } from "../jobs/outboxProcessor";
 import { smsCampaignRequestSchema } from "../schemas/smsCampaignSchema";
@@ -12,6 +14,13 @@ import { getTwilioProvider } from "../integrations/providerFactory";
 import { normalizeUSPhone } from "../utils/phone";
 
 const router = Router();
+
+router.use((_req, res, next) => {
+  if (!FEATURES.sms) {
+    return res.status(404).json({ error: "SMS feature is disabled" });
+  }
+  return next();
+});
 
 function parseLimit(value: unknown, defaultValue: number): number {
   if (typeof value !== "string") {
@@ -30,6 +39,10 @@ function getBrandId(raw: unknown) {
   }
   const parsed = brandIdSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
+}
+
+function isElevatedRole(role: string | undefined): boolean {
+  return role === "owner" || role === "admin";
 }
 
 router.get("/contacts", async (req, res, next) => {
@@ -200,6 +213,14 @@ router.post("/send", async (req, res, next) => {
     if (!brand) {
       return res.status(404).json({ error: `Brand '${brandId}' was not found` });
     }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (!isElevatedRole(role)) {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
+    const planCheck = await requirePlan(userId, brandId, "pro");
+    if (!planCheck.ok) {
+      return res.status(planCheck.status).json(planCheck.body);
+    }
 
     await getTwilioProvider(userId, brandId);
 
@@ -282,6 +303,14 @@ router.post("/campaign", async (req, res, next) => {
     const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (!isElevatedRole(role)) {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
+    const planCheck = await requirePlan(userId, brandId, "pro");
+    if (!planCheck.ok) {
+      return res.status(planCheck.status).json(planCheck.body);
     }
 
     await getTwilioProvider(userId, brandId);

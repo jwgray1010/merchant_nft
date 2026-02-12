@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { requirePlan } from "../billing/requirePlan";
 import { processDueOutbox } from "../jobs/outboxProcessor";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { publishRequestSchema } from "../schemas/publishSchema";
@@ -83,6 +84,14 @@ router.post("/", async (req, res, next) => {
     const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (role !== "owner" && role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
+    const planCheck = await requirePlan(userId, parsedBrandId.data, "pro");
+    if (!planCheck.ok) {
+      return res.status(planCheck.status).json(planCheck.body);
     }
 
     const payload = parsedBody.data;

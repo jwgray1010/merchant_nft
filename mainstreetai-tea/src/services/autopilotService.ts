@@ -1,4 +1,5 @@
 import { runPrompt } from "../ai/runPrompt";
+import { requirePlan } from "../billing/requirePlan";
 import { isEmailEnabled, isTwilioEnabled } from "../integrations/env";
 import {
   autopilotRunRequestSchema,
@@ -222,6 +223,10 @@ export async function runAutopilotForBrand(input: {
   const brand = await adapter.getBrand(input.userId, input.brandId);
   if (!brand) {
     throw new Error(`Brand '${input.brandId}' was not found`);
+  }
+  const planCheck = await requirePlan(input.userId, input.brandId, "pro");
+  if (!planCheck.ok) {
+    throw new Error("Upgrade required for autopilot");
   }
 
   const savedSettings = await adapter.getAutopilotSettings(input.userId, input.brandId);

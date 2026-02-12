@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 8)
+# MainStreetAI Platform API (Phase 10)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -50,6 +50,13 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - Google Business Profile posting
   - SendGrid email digests
   - Outbox queue + job runner retry/backoff
+- SaaS product layer:
+  - Stripe subscriptions (starter/pro, trial-ready checkout)
+  - Team members by brand (`owner|admin|member`)
+  - Plan guards for premium features
+  - Public marketing pages (`/`, `/pricing`, `/demo`)
+  - Onboarding wizard (`/onboarding`)
+  - Demo-mode write protection middleware
 
 All OpenAI calls are centralized in:
 - `src/ai/openaiClient.ts`
@@ -92,6 +99,13 @@ ENABLE_EMAIL_INTEGRATION=false
 OUTBOX_RUNNER_ENABLED=true
 APP_BASE_URL=http://localhost:3001
 CRON_SECRET=replace_with_random_cron_secret
+DEMO_MODE=false
+
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
+STRIPE_PRICE_STARTER=
+STRIPE_PRICE_PRO=
 
 TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
@@ -112,6 +126,14 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://localhost:3001/api/integrations/gbp/callback
 GOOGLE_OAUTH_SCOPES=https://www.googleapis.com/auth/business.manage
+
+FEATURE_AUTOPILOT=true
+FEATURE_SMS=true
+FEATURE_GBP=true
+FEATURE_BILLING=true
+FEATURE_TEAMS=true
+FEATURE_MARKETING=true
+FEATURE_DEMO_MODE=true
 ```
 
 ## Storage modes
@@ -130,6 +152,9 @@ All multi-tenant API endpoints require auth:
 - `/local-events`
 - `/sign.pdf`
 - `/integrations`, `/publish`, `/sms`, `/gbp`, `/email`, `/outbox`
+- `/autopilot`, `/alerts`
+- `/api/billing/create-checkout-session`, `/api/billing/cancel-subscription`
+- `/api/team`
 
 ### Local mode auth token
 
@@ -566,6 +591,13 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `GET /api/alerts?brandId=...&status=open|all`
 - `POST /api/alerts/:id/ack?brandId=...`
 - `POST /api/alerts/:id/resolve?brandId=...`
+- `POST /api/billing/create-checkout-session`
+- `POST /api/billing/cancel-subscription`
+- `POST /api/billing/webhook` (Stripe webhook; raw body signature verify)
+- `GET /api/billing/status?brandId=...`
+- `GET /api/team?brandId=...`
+- `POST /api/team/invite?brandId=...`
+- `DELETE /api/team/:id?brandId=...`
 - `GET /api/sms/contacts?brandId=...`
 - `POST /api/sms/contacts?brandId=...`
 - `PUT /api/sms/contacts/:contactId?brandId=...`
@@ -694,6 +726,87 @@ curl -X POST "http://localhost:3001/api/autopilot/run?brandId=main-street-nutrit
   -H "Content-Type: application/json" \
   -d '{"goal":"repeat_customers"}'
 ```
+
+### Stripe setup (SaaS billing)
+
+1. Create Stripe products/prices for Starter and Pro.
+2. Set env vars:
+   - `STRIPE_SECRET_KEY`
+   - `STRIPE_WEBHOOK_SECRET`
+   - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+   - `STRIPE_PRICE_STARTER`
+   - `STRIPE_PRICE_PRO`
+3. Configure Stripe webhook endpoint:
+   - `<APP_BASE_URL>/api/billing/webhook`
+4. Subscribe by calling:
+   - `POST /api/billing/create-checkout-session`
+
+Checkout request:
+
+```bash
+curl -X POST "http://localhost:3001/api/billing/create-checkout-session" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"brandId":"main-street-nutrition","priceId":"'"$STRIPE_PRICE_PRO"'"}'
+```
+
+### Team access (owner/admin/member)
+
+- Owner:
+  - billing management
+  - team management
+  - full admin actions
+- Admin:
+  - autopilot/settings + operational actions
+- Member:
+  - content generation + scheduling workflows
+
+Team APIs:
+
+```bash
+curl "http://localhost:3001/api/team?brandId=main-street-nutrition" -H "$AUTH_HEADER"
+
+curl -X POST "http://localhost:3001/api/team/invite?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"staff@example.com","role":"member"}'
+```
+
+Admin pages:
+
+- `/admin/billing`
+- `/admin/team`
+- `/admin/welcome`
+
+### Onboarding flow
+
+New users can open:
+
+- `/onboarding`
+
+Wizard flow:
+
+1. business basics
+2. voice + audience + offers
+3. integrations (optional)
+4. autopilot toggle
+
+On completion, MainStreetAI creates/updates a brand from template and redirects to:
+
+- `/admin/tomorrow?brandId=...`
+
+### Public marketing + demo mode
+
+Public pages:
+
+- `/` (marketing hero)
+- `/pricing`
+- `/demo`
+
+Demo safety:
+
+- set `DEMO_MODE=true` or pass `?demo=true`
+- write routes for publish/SMS/GBP/billing are blocked in demo mode
 
 ### SMS examples (Twilio)
 
@@ -870,7 +983,7 @@ From admin you can:
 - preview and queue email digests
 - monitor and retry outbox jobs
 
-## Phase 3 + 4 + 5 + 6 + 7 + 8 Workflow
+## Phase 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 Workflow
 
 1. Generate promo/social/week-plan content.
 2. Log what actually got posted using `POST /posts`.
@@ -889,6 +1002,24 @@ From admin you can:
 15. Enable Autopilot in `/admin/autopilot` for daily tomorrow-ready generation.
 16. Use `/admin/tomorrow` for quick copy/paste execution each day.
 17. Review `/admin/alerts` and apply rescue actions when anomalies are detected.
+18. Manage subscription/plan in `/admin/billing`.
+19. Invite collaborators in `/admin/team`.
+20. Send new users through `/onboarding` and `/admin/welcome`.
+
+## Deployment checklist (Vercel)
+
+- Verify these cron jobs exist:
+  - `/api/jobs/outbox` (`*/5 * * * *`)
+  - `/api/jobs/digests` (`0 * * * *`)
+  - `/api/jobs/autopilot` (`5 * * * *`)
+  - `/api/jobs/alerts` (`10 * * * *`, optional but recommended)
+- Set Stripe webhook endpoint:
+  - `<APP_BASE_URL>/api/billing/webhook`
+- Keep secrets server-only:
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `INTEGRATION_SECRET_KEY`
+  - `STRIPE_SECRET_KEY`
+  - `STRIPE_WEBHOOK_SECRET`
 
 ## Notes
 

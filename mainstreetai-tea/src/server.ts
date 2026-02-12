@@ -1,12 +1,17 @@
 import "dotenv/config";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
+import { resolveBrandAccessFromQuery } from "./auth/brandAccess";
 import { startJobRunner } from "./jobs/runner";
 import { createGenerationHistoryMiddleware } from "./middleware/generationHistory";
+import { demoModeMiddleware } from "./middleware/demoMode";
 import { verifyAuth } from "./supabase/verifyAuth";
 import adminRouter from "./routes/admin";
+import adminSaasRouter from "./routes/adminSaas";
 import alertsRouter from "./routes/alerts";
 import autopilotRouter from "./routes/autopilot";
+import billingRouter from "./routes/billing";
+import billingWebhookRouter from "./routes/billingWebhook";
 import brandRouter from "./routes/brand";
 import bufferOAuthRouter from "./routes/bufferOAuth";
 import emailDigestRouter from "./routes/emailDigest";
@@ -27,11 +32,13 @@ import outboxRouter from "./routes/outbox";
 import postsRouter from "./routes/posts";
 import promoRouter from "./routes/promo";
 import publishRouter from "./routes/publish";
+import publicRouter from "./routes/public";
 import scheduleIcsRouter from "./routes/scheduleIcs";
 import scheduleRouter from "./routes/schedule";
 import signRouter from "./routes/sign";
 import smsRouter from "./routes/sms";
 import socialRouter from "./routes/social";
+import teamRouter from "./routes/team";
 import todayRouter from "./routes/today";
 import weekPlanRouter from "./routes/weekPlan";
 
@@ -39,39 +46,67 @@ const app = express();
 const port = Number(process.env.PORT) || 3001;
 
 app.use(cors());
+app.use("/api/billing/webhook", express.raw({ type: "application/json" }), billingWebhookRouter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(demoModeMiddleware);
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
 app.use("/admin", adminRouter);
+app.use("/admin", adminSaasRouter);
 app.use("/brands", verifyAuth, brandRouter);
-app.use("/history", verifyAuth, historyRouter);
-app.use("/local-events", verifyAuth, localEventsRouter);
-app.use("/posts", verifyAuth, postsRouter);
-app.use("/metrics", verifyAuth, metricsRouter);
-app.use("/insights", verifyAuth, insightsRouter);
-app.use("/alerts", verifyAuth, alertsRouter);
-app.use("/autopilot", verifyAuth, autopilotRouter);
-app.use("/integrations", verifyAuth, integrationsRouter);
-app.use("/publish", verifyAuth, publishRouter);
-app.use("/sms", verifyAuth, smsRouter);
-app.use("/gbp", verifyAuth, gbpRouter);
-app.use("/email", verifyAuth, emailDigestRouter);
-app.use("/outbox", verifyAuth, outboxRouter);
-app.use("/schedule.ics", verifyAuth, scheduleIcsRouter);
-app.use("/schedule", verifyAuth, scheduleRouter);
-app.use("/today", verifyAuth, todayRouter);
-app.use("/sign.pdf", verifyAuth, signRouter);
-app.use("/promo", verifyAuth, createGenerationHistoryMiddleware("promo"), promoRouter);
-app.use("/social", verifyAuth, createGenerationHistoryMiddleware("social"), socialRouter);
-app.use("/events", verifyAuth, createGenerationHistoryMiddleware("events"), eventsRouter);
-app.use("/week-plan", verifyAuth, createGenerationHistoryMiddleware("week-plan"), weekPlanRouter);
+app.use("/history", verifyAuth, resolveBrandAccessFromQuery(), historyRouter);
+app.use("/local-events", verifyAuth, resolveBrandAccessFromQuery(), localEventsRouter);
+app.use("/posts", verifyAuth, resolveBrandAccessFromQuery(), postsRouter);
+app.use("/metrics", verifyAuth, resolveBrandAccessFromQuery(), metricsRouter);
+app.use("/insights", verifyAuth, resolveBrandAccessFromQuery(), insightsRouter);
+app.use("/alerts", verifyAuth, resolveBrandAccessFromQuery(), alertsRouter);
+app.use("/autopilot", verifyAuth, resolveBrandAccessFromQuery(), autopilotRouter);
+app.use("/integrations", verifyAuth, resolveBrandAccessFromQuery(), integrationsRouter);
+app.use("/publish", verifyAuth, resolveBrandAccessFromQuery(), publishRouter);
+app.use("/sms", verifyAuth, resolveBrandAccessFromQuery(), smsRouter);
+app.use("/gbp", verifyAuth, resolveBrandAccessFromQuery(), gbpRouter);
+app.use("/email", verifyAuth, resolveBrandAccessFromQuery(), emailDigestRouter);
+app.use("/outbox", verifyAuth, resolveBrandAccessFromQuery(), outboxRouter);
+app.use("/schedule.ics", verifyAuth, resolveBrandAccessFromQuery(), scheduleIcsRouter);
+app.use("/schedule", verifyAuth, resolveBrandAccessFromQuery(), scheduleRouter);
+app.use("/today", verifyAuth, resolveBrandAccessFromQuery(), todayRouter);
+app.use("/sign.pdf", verifyAuth, resolveBrandAccessFromQuery(), signRouter);
+app.use(
+  "/promo",
+  verifyAuth,
+  resolveBrandAccessFromQuery(),
+  createGenerationHistoryMiddleware("promo"),
+  promoRouter,
+);
+app.use(
+  "/social",
+  verifyAuth,
+  resolveBrandAccessFromQuery(),
+  createGenerationHistoryMiddleware("social"),
+  socialRouter,
+);
+app.use(
+  "/events",
+  verifyAuth,
+  resolveBrandAccessFromQuery(),
+  createGenerationHistoryMiddleware("events"),
+  eventsRouter,
+);
+app.use(
+  "/week-plan",
+  verifyAuth,
+  resolveBrandAccessFromQuery(),
+  createGenerationHistoryMiddleware("week-plan"),
+  weekPlanRouter,
+);
 app.use(
   "/next-week-plan",
   verifyAuth,
+  resolveBrandAccessFromQuery(),
   createGenerationHistoryMiddleware("next-week-plan"),
   nextWeekPlanRouter,
 );
@@ -79,19 +114,22 @@ app.use(
 // Next.js-style API aliases for phased workflow compatibility
 app.use("/api/integrations/buffer", bufferOAuthRouter);
 app.use("/api/integrations/gbp", gbpOAuthRouter);
-app.use("/api/integrations", verifyAuth, integrationsRouter);
-app.use("/api/publish", verifyAuth, publishRouter);
-app.use("/api/posts", verifyAuth, postsRouter);
-app.use("/api/history", verifyAuth, historyRouter);
-app.use("/api/sms", verifyAuth, smsRouter);
-app.use("/api/email", verifyAuth, emailDigestRouter);
-app.use("/api/gbp", verifyAuth, gbpRouter);
-app.use("/api/alerts", verifyAuth, alertsRouter);
-app.use("/api/autopilot", verifyAuth, autopilotRouter);
+app.use("/api/billing", verifyAuth, billingRouter);
+app.use("/api/integrations", verifyAuth, resolveBrandAccessFromQuery(), integrationsRouter);
+app.use("/api/publish", verifyAuth, resolveBrandAccessFromQuery(), publishRouter);
+app.use("/api/posts", verifyAuth, resolveBrandAccessFromQuery(), postsRouter);
+app.use("/api/history", verifyAuth, resolveBrandAccessFromQuery(), historyRouter);
+app.use("/api/sms", verifyAuth, resolveBrandAccessFromQuery(), smsRouter);
+app.use("/api/email", verifyAuth, resolveBrandAccessFromQuery(), emailDigestRouter);
+app.use("/api/gbp", verifyAuth, resolveBrandAccessFromQuery(), gbpRouter);
+app.use("/api/alerts", verifyAuth, resolveBrandAccessFromQuery(), alertsRouter);
+app.use("/api/autopilot", verifyAuth, resolveBrandAccessFromQuery(), autopilotRouter);
+app.use("/api/team", verifyAuth, resolveBrandAccessFromQuery(), teamRouter);
 app.use("/api/jobs/outbox", jobsOutboxRouter);
 app.use("/api/jobs/digests", jobsDigestsRouter);
 app.use("/api/jobs/autopilot", jobsAutopilotRouter);
 app.use("/api/jobs/alerts", jobsAlertsRouter);
+app.use("/", publicRouter);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Not found" });

@@ -209,6 +209,8 @@ function renderLayout(
         <a class="button secondary small" href="/admin/integrations">Integrations</a>
         <a class="button secondary small" href="/admin/sms">SMS</a>
         <a class="button secondary small" href="/admin/email">Email</a>
+        <a class="button secondary small" href="/admin/billing">Billing</a>
+        <a class="button secondary small" href="/admin/team">Team</a>
         <a class="button secondary small" href="/admin/schedule">Schedule</a>
         <a class="button secondary small" href="/admin/autopilot">Autopilot</a>
         <a class="button secondary small" href="/admin/alerts">Alerts</a>
@@ -943,6 +945,8 @@ router.get("/", async (req, res, next) => {
         <a class="button secondary" href="/admin/autopilot?brandId=${encodeURIComponent(selectedBrandId)}">Autopilot</a>
         <a class="button secondary" href="/admin/alerts?brandId=${encodeURIComponent(selectedBrandId)}">Alerts</a>
         <a class="button secondary" href="/admin/tomorrow?brandId=${encodeURIComponent(selectedBrandId)}">Tomorrow Pack</a>
+        <a class="button secondary" href="/admin/billing?brandId=${encodeURIComponent(selectedBrandId)}">Billing</a>
+        <a class="button secondary" href="/admin/team?brandId=${encodeURIComponent(selectedBrandId)}">Team</a>
         <a class="button secondary" href="/admin/integrations?brandId=${encodeURIComponent(selectedBrandId)}">Integrations</a>
         <a class="button secondary" href="/admin/sms?brandId=${encodeURIComponent(selectedBrandId)}">SMS</a>
         <a class="button secondary" href="/admin/email?brandId=${encodeURIComponent(selectedBrandId)}">Email</a>

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { resolveBrandAccess } from "../auth/brandAccess";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { getAdapter } from "../storage/getAdapter";
 import { verifyAuth } from "../supabase/verifyAuth";
@@ -36,18 +37,26 @@ router.get("/start", verifyAuth, async (req, res, next) => {
   }
 
   try {
-    const userId = req.user?.id;
-    if (!userId) {
+    const actorUserId = req.user?.actorId ?? req.user?.id;
+    if (!actorUserId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+    const access = await resolveBrandAccess(actorUserId, parsedBrandId.data);
+    if (!access) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    if (access.role !== "owner" && access.role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
+    const ownerUserId = access.ownerId;
 
     const adapter = getAdapter();
-    const brand = await adapter.getBrand(userId, parsedBrandId.data);
+    const brand = await adapter.getBrand(ownerUserId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const state = createBufferOauthState(userId, parsedBrandId.data);
+    const state = createBufferOauthState(ownerUserId, parsedBrandId.data);
     const authUrl = buildBufferAuthorizeUrl(state);
 
     if ((req.headers.accept ?? "").includes("application/json")) {

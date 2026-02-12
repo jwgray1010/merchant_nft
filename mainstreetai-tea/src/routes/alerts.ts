@@ -50,6 +50,10 @@ router.get("/", async (req, res, next) => {
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (role !== "owner" && role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
     const adapter = getAdapter();
     const brand = await adapter.getBrand(userId, parsedBrand.brandId);
     if (!brand) {
@@ -80,6 +84,10 @@ router.post("/:id/ack", async (req, res, next) => {
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (role !== "owner" && role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
     const adapter = getAdapter();
     const updated = await adapter.updateAlert(userId, parsedBrand.brandId, alertId, {
       status: "acknowledged",
@@ -108,6 +116,10 @@ router.post("/:id/resolve", async (req, res, next) => {
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
+    }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (role !== "owner" && role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
     }
     const adapter = getAdapter();
     const updated = await adapter.updateAlert(userId, parsedBrand.brandId, alertId, {

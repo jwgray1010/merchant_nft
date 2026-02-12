@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { requirePlan } from "../billing/requirePlan";
+import { FEATURES } from "../config/featureFlags";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { autopilotRunRequestSchema } from "../schemas/autopilotRunSchema";
 import { autopilotSettingsUpsertSchema } from "../schemas/autopilotSettingsSchema";
@@ -32,6 +34,9 @@ function parseBrandId(rawBrandId: unknown) {
 }
 
 router.get("/settings", async (req, res, next) => {
+  if (!FEATURES.autopilot) {
+    return res.status(404).json({ error: "Autopilot feature is disabled" });
+  }
   const parsedBrand = parseBrandId(req.query.brandId);
   if (!parsedBrand.ok) {
     return res.status(parsedBrand.status).json(parsedBrand.body);
@@ -48,6 +53,14 @@ router.get("/settings", async (req, res, next) => {
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrand.brandId}' was not found` });
     }
+    const role = req.brandAccess?.role ?? req.user?.brandRole ?? "owner";
+    if (role !== "owner" && role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
+    const planCheck = await requirePlan(userId, parsedBrand.brandId, "pro");
+    if (!planCheck.ok) {
+      return res.status(planCheck.status).json(planCheck.body);
+    }
 
     const settings =
       (await adapter.getAutopilotSettings(userId, parsedBrand.brandId)) ??
@@ -59,6 +72,9 @@ router.get("/settings", async (req, res, next) => {
 });
 
 router.post("/settings", async (req, res, next) => {
+  if (!FEATURES.autopilot) {
+    return res.status(404).json({ error: "Autopilot feature is disabled" });
+  }
   const parsedBrand = parseBrandId(req.query.brandId);
   if (!parsedBrand.ok) {
     return res.status(parsedBrand.status).json(parsedBrand.body);
@@ -81,6 +97,14 @@ router.post("/settings", async (req, res, next) => {
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrand.brandId}' was not found` });
     }
+    const role = req.brandAccess?.role ?? req.user?.brandRole ?? "owner";
+    if (role !== "owner" && role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
+    const planCheck = await requirePlan(userId, parsedBrand.brandId, "pro");
+    if (!planCheck.ok) {
+      return res.status(planCheck.status).json(planCheck.body);
+    }
 
     const settings = await adapter.upsertAutopilotSettings(
       userId,
@@ -94,6 +118,9 @@ router.post("/settings", async (req, res, next) => {
 });
 
 router.post("/run", async (req, res, next) => {
+  if (!FEATURES.autopilot) {
+    return res.status(404).json({ error: "Autopilot feature is disabled" });
+  }
   const parsedBrand = parseBrandId(req.query.brandId);
   if (!parsedBrand.ok) {
     return res.status(parsedBrand.status).json(parsedBrand.body);
@@ -110,6 +137,14 @@ router.post("/run", async (req, res, next) => {
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
+    }
+    const role = req.brandAccess?.role ?? req.user?.brandRole ?? "owner";
+    if (role !== "owner" && role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
+    const planCheck = await requirePlan(userId, parsedBrand.brandId, "pro");
+    if (!planCheck.ok) {
+      return res.status(planCheck.status).json(planCheck.body);
     }
     const result = await runAutopilotForBrand({
       userId,

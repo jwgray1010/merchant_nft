@@ -212,6 +212,28 @@ create table if not exists public.alerts (
   resolved_at timestamptz
 );
 
+create table if not exists public.subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  stripe_customer_id text,
+  stripe_subscription_id text,
+  plan text not null default 'free' check (plan in ('free', 'starter', 'pro')),
+  status text not null default 'inactive' check (status in ('inactive','trialing','active','past_due','canceled','unpaid')),
+  current_period_end timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.team_members (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'member' check (role in ('owner','admin','member')),
+  created_at timestamptz not null default now()
+);
+
 alter table public.posts add column if not exists status text not null default 'posted';
 alter table public.posts add column if not exists provider_meta jsonb;
 
@@ -260,6 +282,18 @@ create unique index if not exists model_insights_cache_owner_brand_range_unique
 create index if not exists alerts_owner_brand_created_idx
   on public.alerts(owner_id, brand_ref, created_at desc);
 
+create unique index if not exists subscriptions_owner_brand_unique
+  on public.subscriptions(owner_id, brand_ref);
+
+create index if not exists subscriptions_owner_brand_status_idx
+  on public.subscriptions(owner_id, brand_ref, status, plan);
+
+create unique index if not exists team_members_owner_brand_user_unique
+  on public.team_members(owner_id, brand_ref, user_id);
+
+create index if not exists team_members_brand_user_idx
+  on public.team_members(brand_ref, user_id, role);
+
 -- Keep updated_at fresh on brands updates.
 create or replace function public.set_updated_at()
 returns trigger
@@ -291,6 +325,38 @@ create trigger autopilot_settings_set_updated_at
 before update on public.autopilot_settings
 for each row execute function public.set_updated_at();
 
+drop trigger if exists subscriptions_set_updated_at on public.subscriptions;
+create trigger subscriptions_set_updated_at
+before update on public.subscriptions
+for each row execute function public.set_updated_at();
+
+create or replace function public.is_brand_owner(_brand_ref uuid)
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.brands b
+    where b.id = _brand_ref
+      and b.owner_id = auth.uid()
+  );
+$$;
+
+create or replace function public.has_team_role(_brand_ref uuid, _roles text[])
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.team_members tm
+    where tm.brand_ref = _brand_ref
+      and tm.user_id = auth.uid()
+      and tm.role = any(_roles)
+  );
+$$;
+
 -- RLS: owner can only access own rows.
 alter table public.brands enable row level security;
 alter table public.history enable row level security;
@@ -307,10 +373,19 @@ alter table public.email_log enable row level security;
 alter table public.autopilot_settings enable row level security;
 alter table public.model_insights_cache enable row level security;
 alter table public.alerts enable row level security;
+alter table public.subscriptions enable row level security;
+alter table public.team_members enable row level security;
 
 drop policy if exists brands_owner_select on public.brands;
 create policy brands_owner_select on public.brands
-for select using (owner_id = auth.uid());
+for select using (
+  owner_id = auth.uid()
+  or exists (
+    select 1 from public.team_members tm
+    where tm.brand_ref = id
+      and tm.user_id = auth.uid()
+  )
+);
 
 drop policy if exists brands_owner_insert on public.brands;
 create policy brands_owner_insert on public.brands
@@ -318,7 +393,16 @@ for insert with check (owner_id = auth.uid());
 
 drop policy if exists brands_owner_update on public.brands;
 create policy brands_owner_update on public.brands
-for update using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+for update using (
+  owner_id = auth.uid()
+  or exists (
+    select 1 from public.team_members tm
+    where tm.brand_ref = id
+      and tm.user_id = auth.uid()
+      and tm.role in ('owner', 'admin')
+  )
+)
+with check (owner_id = auth.uid());
 
 drop policy if exists brands_owner_delete on public.brands;
 create policy brands_owner_delete on public.brands
@@ -407,6 +491,57 @@ create policy alerts_owner_all on public.alerts
 for all
 using (owner_id = auth.uid())
 with check (owner_id = auth.uid());
+
+drop policy if exists subscriptions_owner_select on public.subscriptions;
+create policy subscriptions_owner_select on public.subscriptions
+for select
+using (
+  owner_id = auth.uid()
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+);
+
+drop policy if exists subscriptions_owner_modify on public.subscriptions;
+create policy subscriptions_owner_modify on public.subscriptions
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists team_members_select on public.team_members;
+create policy team_members_select on public.team_members
+for select
+using (
+  owner_id = auth.uid()
+  or user_id = auth.uid()
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+);
+
+drop policy if exists team_members_insert on public.team_members;
+create policy team_members_insert on public.team_members
+for insert
+with check (
+  owner_id = auth.uid()
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+);
+
+drop policy if exists team_members_update on public.team_members;
+create policy team_members_update on public.team_members
+for update
+using (
+  owner_id = auth.uid()
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+)
+with check (
+  owner_id = auth.uid()
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+);
+
+drop policy if exists team_members_delete on public.team_members;
+create policy team_members_delete on public.team_members
+for delete
+using (
+  owner_id = auth.uid()
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+);
 
 alter table public.outbox drop constraint if exists outbox_type_check;
 alter table public.outbox add constraint outbox_type_check

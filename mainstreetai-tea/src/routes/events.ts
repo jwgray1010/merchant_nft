@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { runPrompt } from "../ai/runPrompt";
+import { requirePlan } from "../billing/requirePlan";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { eventsOutputSchema, eventsRequestSchema } from "../schemas/eventsRequestSchema";
 import { getAdapter } from "../storage/getAdapter";
@@ -38,6 +39,10 @@ router.post("/", async (req, res, next) => {
     const brand = await getAdapter().getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    const planCheck = await requirePlan(userId, parsedBrandId.data, "starter");
+    if (!planCheck.ok) {
+      return res.status(planCheck.status).json(planCheck.body);
     }
 
     const result = await runPrompt({

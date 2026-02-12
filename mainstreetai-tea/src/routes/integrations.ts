@@ -10,6 +10,10 @@ import {
 
 const router = Router();
 
+function isElevatedRole(role: string | undefined): boolean {
+  return role === "owner" || role === "admin";
+}
+
 function parseBrandId(raw: unknown) {
   if (typeof raw !== "string" || raw.trim() === "") {
     return {
@@ -51,6 +55,10 @@ router.get("/", async (req, res, next) => {
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (!isElevatedRole(role)) {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
 
     const adapter = getAdapter();
     const brand = await adapter.getBrand(userId, parsed.brandId);
@@ -89,6 +97,10 @@ router.post("/buffer/connect", async (req, res, next) => {
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (!isElevatedRole(role)) {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
 
     const adapter = getAdapter();
     const brand = await adapter.getBrand(userId, parsedBrand.brandId);
@@ -118,6 +130,10 @@ router.post("/gbp/connect", async (req, res, next) => {
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
+    }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (!isElevatedRole(role)) {
+      return res.status(403).json({ error: "Insufficient role permissions" });
     }
 
     const adapter = getAdapter();

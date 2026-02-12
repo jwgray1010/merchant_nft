@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { resolveBrandAccess } from "../auth/brandAccess";
 import { brandIdSchema } from "../schemas/brandSchema";
 import {
   buildGoogleBusinessAuthorizeUrl,
@@ -36,17 +37,25 @@ router.get("/start", verifyAuth, async (req, res, next) => {
   }
 
   try {
-    const userId = req.user?.id;
-    if (!userId) {
+    const actorUserId = req.user?.actorId ?? req.user?.id;
+    if (!actorUserId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
+    const access = await resolveBrandAccess(actorUserId, parsedBrandId.data);
+    if (!access) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    if (access.role !== "owner" && access.role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
+    const ownerUserId = access.ownerId;
 
-    const brand = await getAdapter().getBrand(userId, parsedBrandId.data);
+    const brand = await getAdapter().getBrand(ownerUserId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const state = createGoogleBusinessOauthState(userId, parsedBrandId.data);
+    const state = createGoogleBusinessOauthState(ownerUserId, parsedBrandId.data);
     const authUrl = buildGoogleBusinessAuthorizeUrl(state);
     if ((req.headers.accept ?? "").includes("application/json")) {
       return res.json({ authUrl });

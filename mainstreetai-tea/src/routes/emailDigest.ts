@@ -1,4 +1,6 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
+import { requirePlan } from "../billing/requirePlan";
+import { FEATURES } from "../config/featureFlags";
 import { brandIdSchema } from "../schemas/brandSchema";
 import {
   emailSubscriptionUpdateSchema,
@@ -12,6 +14,13 @@ import { buildDigestPreview } from "../services/digestService";
 import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
+
+router.use((_req, res, next) => {
+  if (!FEATURES.billing) {
+    return res.status(404).json({ error: "Email digest feature is disabled" });
+  }
+  return next();
+});
 
 function parseBrandId(raw: unknown): string | null {
   if (typeof raw !== "string" || raw.trim() === "") {
@@ -32,6 +41,25 @@ function parseLimit(raw: unknown, fallback = 50): number {
   return Math.min(parsed, 500);
 }
 
+async function enforceEmailProAccess(
+  req: Request,
+  res: Response,
+  userId: string,
+  brandId: string,
+): Promise<boolean> {
+  const role = req.brandAccess?.role ?? req.user?.brandRole;
+  if (role !== "owner" && role !== "admin") {
+    res.status(403).json({ error: "Insufficient role permissions" });
+    return false;
+  }
+  const planCheck = await requirePlan(userId, brandId, "pro");
+  if (!planCheck.ok) {
+    res.status(planCheck.status).json(planCheck.body);
+    return false;
+  }
+  return true;
+}
+
 router.get("/subscriptions", async (req, res, next) => {
   const brandId = parseBrandId(req.query.brandId);
   if (!brandId) {
@@ -50,6 +78,9 @@ router.get("/subscriptions", async (req, res, next) => {
     const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+    if (!(await enforceEmailProAccess(req, res, userId, brandId))) {
+      return;
     }
 
     const subscriptions = await adapter.listEmailSubscriptions(
@@ -90,6 +121,9 @@ router.post("/subscriptions", async (req, res, next) => {
     if (!brand) {
       return res.status(404).json({ error: `Brand '${brandId}' was not found` });
     }
+    if (!(await enforceEmailProAccess(req, res, userId, brandId))) {
+      return;
+    }
 
     const subscription = await adapter.upsertEmailSubscription(userId, brandId, parsedBody.data);
     return res.status(201).json(subscription);
@@ -128,6 +162,9 @@ router.put("/subscriptions/:id", async (req, res, next) => {
     const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+    if (!(await enforceEmailProAccess(req, res, userId, brandId))) {
+      return;
     }
 
     const updated = await adapter.updateEmailSubscription(
@@ -168,6 +205,9 @@ router.delete("/subscriptions/:id", async (req, res, next) => {
     if (!brand) {
       return res.status(404).json({ error: `Brand '${brandId}' was not found` });
     }
+    if (!(await enforceEmailProAccess(req, res, userId, brandId))) {
+      return;
+    }
 
     const deleted = await adapter.deleteEmailSubscription(userId, brandId, subscriptionId);
     if (!deleted) {
@@ -204,6 +244,9 @@ router.post("/digest/preview", async (req, res, next) => {
     const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+    if (!(await enforceEmailProAccess(req, res, userId, brandId))) {
+      return;
     }
 
     const preview = await buildDigestPreview(userId, brandId, {
@@ -255,6 +298,9 @@ router.post("/digest/send", async (req, res, next) => {
     const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+    if (!(await enforceEmailProAccess(req, res, userId, brandId))) {
+      return;
     }
 
     const subscriptions = await adapter.listEmailSubscriptions(userId, brandId, 500);
@@ -364,6 +410,9 @@ router.get("/log", async (req, res, next) => {
     const brand = await adapter.getBrand(userId, brandId);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${brandId}' was not found` });
+    }
+    if (!(await enforceEmailProAccess(req, res, userId, brandId))) {
+      return;
     }
     const logs = await adapter.listEmailLogs(userId, brandId, parseLimit(req.query.limit, 100));
     return res.json(logs);

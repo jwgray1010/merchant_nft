@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
+import { requirePlan } from "../billing/requirePlan";
+import { FEATURES } from "../config/featureFlags";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { gbpPostSchema } from "../schemas/gbpSchema";
 import { getAdapter } from "../storage/getAdapter";
@@ -19,6 +21,9 @@ const gbpIntegrationConfigSchema = z.object({
 });
 
 router.post("/post", async (req, res, next) => {
+  if (!FEATURES.gbp) {
+    return res.status(404).json({ error: "Google Business feature is disabled" });
+  }
   const rawBrandId = req.query.brandId;
   if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
     return res.status(400).json({
@@ -51,6 +56,14 @@ router.post("/post", async (req, res, next) => {
     const brand = await adapter.getBrand(userId, parsedBrandId.data);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    const role = req.brandAccess?.role ?? req.user?.brandRole;
+    if (role !== "owner" && role !== "admin") {
+      return res.status(403).json({ error: "Insufficient role permissions" });
+    }
+    const planCheck = await requirePlan(userId, parsedBrandId.data, "pro");
+    if (!planCheck.ok) {
+      return res.status(planCheck.status).json(planCheck.body);
     }
 
     const integration = await adapter.getIntegration(userId, parsedBrandId.data, "google_business");
