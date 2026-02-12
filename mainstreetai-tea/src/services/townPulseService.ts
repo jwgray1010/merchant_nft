@@ -614,7 +614,7 @@ export async function writeTownPulseForDailyOutcome(input: {
       occurredAt: input.occurredAt,
     });
   }
-  return writeTownPulseSignals({
+  return recordTownPulseSignals({
     userId: input.userId,
     townRef: input.brand.townRef,
     category: townPulseCategoryFromBrandType(input.brand.type),
