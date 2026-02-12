@@ -4,7 +4,6 @@ import { getSubscriptionForBrand } from "../billing/subscriptions";
 import {
   locationCreateSchema,
   locationUpdateSchema,
-  type LocationUpdate,
 } from "../schemas/locationSchema";
 import { tenantSettingsUpsertSchema } from "../schemas/tenantSchema";
 import { brandVoiceSampleCreateSchema } from "../schemas/voiceSchema";
@@ -642,12 +641,19 @@ router.post("/locations", async (req, res, next) => {
     if (!access || (access.role !== "owner" && access.role !== "admin")) {
       return res.redirect(`/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Permission%20denied`);
     }
+    const optionalString = (value: unknown): string | undefined => {
+      if (typeof value !== "string") {
+        return undefined;
+      }
+      const trimmed = value.trim();
+      return trimmed === "" ? undefined : trimmed;
+    };
     const parsed = locationCreateSchema.safeParse({
       name: req.body?.name,
-      address: req.body?.address,
-      timezone: req.body?.timezone,
-      googleLocationName: req.body?.googleLocationName,
-      bufferProfileId: req.body?.bufferProfileId,
+      address: optionalString(req.body?.address),
+      timezone: optionalString(req.body?.timezone),
+      googleLocationName: optionalString(req.body?.googleLocationName),
+      bufferProfileId: optionalString(req.body?.bufferProfileId),
     });
     if (!parsed.success) {
       return res.redirect(
@@ -678,21 +684,32 @@ router.post("/locations/:id", async (req, res, next) => {
     if (!access || (access.role !== "owner" && access.role !== "admin")) {
       return res.redirect(`/admin/locations?brandId=${encodeURIComponent(brandId)}&notice=Permission%20denied`);
     }
-    const rawUpdates: LocationUpdate = {};
+    const optionalString = (value: unknown): string | undefined => {
+      if (typeof value !== "string") {
+        return undefined;
+      }
+      const trimmed = value.trim();
+      return trimmed === "" ? undefined : trimmed;
+    };
+    const rawUpdates: Record<string, unknown> = {};
     if (typeof req.body?.name === "string" && req.body.name.trim() !== "") {
       rawUpdates.name = req.body.name.trim();
     }
-    if (typeof req.body?.address === "string") {
-      rawUpdates.address = req.body.address;
+    const address = optionalString(req.body?.address);
+    if (address !== undefined) {
+      rawUpdates.address = address;
     }
-    if (typeof req.body?.timezone === "string") {
-      rawUpdates.timezone = req.body.timezone;
+    const timezone = optionalString(req.body?.timezone);
+    if (timezone !== undefined) {
+      rawUpdates.timezone = timezone;
     }
-    if (typeof req.body?.googleLocationName === "string") {
-      rawUpdates.googleLocationName = req.body.googleLocationName;
+    const googleLocationName = optionalString(req.body?.googleLocationName);
+    if (googleLocationName !== undefined) {
+      rawUpdates.googleLocationName = googleLocationName;
     }
-    if (typeof req.body?.bufferProfileId === "string") {
-      rawUpdates.bufferProfileId = req.body.bufferProfileId;
+    const bufferProfileId = optionalString(req.body?.bufferProfileId);
+    if (bufferProfileId !== undefined) {
+      rawUpdates.bufferProfileId = bufferProfileId;
     }
     const parsed = locationUpdateSchema.safeParse(rawUpdates);
     if (!parsed.success) {

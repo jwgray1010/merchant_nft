@@ -42,6 +42,14 @@ function isElevatedRole(role: string | undefined): boolean {
   return role === "owner" || role === "admin";
 }
 
+function optionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
 router.get("/", async (req, res, next) => {
   const parsedBrand = parseBrandId(req.query.brandId);
   if (!parsedBrand.ok) {
@@ -70,7 +78,13 @@ router.post("/", async (req, res, next) => {
   if (!parsedBrand.ok) {
     return res.status(parsedBrand.status).json(parsedBrand.body);
   }
-  const parsedBody = locationCreateSchema.safeParse(req.body);
+  const parsedBody = locationCreateSchema.safeParse({
+    name: req.body?.name,
+    address: optionalString(req.body?.address),
+    timezone: optionalString(req.body?.timezone),
+    googleLocationName: optionalString(req.body?.googleLocationName),
+    bufferProfileId: optionalString(req.body?.bufferProfileId),
+  });
   if (!parsedBody.success) {
     return res.status(400).json({
       error: "Invalid location payload",
@@ -112,7 +126,27 @@ router.put("/:id", async (req, res, next) => {
   if (!locationId) {
     return res.status(400).json({ error: "Missing location id route parameter" });
   }
-  const parsedBody = locationUpdateSchema.safeParse(req.body);
+  const rawUpdates: Record<string, unknown> = {};
+  if (typeof req.body?.name === "string" && req.body.name.trim() !== "") {
+    rawUpdates.name = req.body.name.trim();
+  }
+  const address = optionalString(req.body?.address);
+  if (address !== undefined) {
+    rawUpdates.address = address;
+  }
+  const timezone = optionalString(req.body?.timezone);
+  if (timezone !== undefined) {
+    rawUpdates.timezone = timezone;
+  }
+  const googleLocationName = optionalString(req.body?.googleLocationName);
+  if (googleLocationName !== undefined) {
+    rawUpdates.googleLocationName = googleLocationName;
+  }
+  const bufferProfileId = optionalString(req.body?.bufferProfileId);
+  if (bufferProfileId !== undefined) {
+    rawUpdates.bufferProfileId = bufferProfileId;
+  }
+  const parsedBody = locationUpdateSchema.safeParse(rawUpdates);
   if (!parsedBody.success) {
     return res.status(400).json({
       error: "Invalid location update payload",

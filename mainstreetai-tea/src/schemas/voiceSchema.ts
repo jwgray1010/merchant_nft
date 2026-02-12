@@ -23,7 +23,7 @@ export const brandVoiceProfileSchema = z.object({
   id: z.string().min(1),
   ownerId: z.string().min(1),
   brandId: brandIdSchema,
-  embedding: z.record(z.unknown()).optional(),
+  embedding: z.record(z.string(), z.unknown()).optional(),
   styleSummary: z.string().optional(),
   emojiStyle: z.string().optional(),
   energyLevel: voiceEnergyLevelSchema.optional(),
@@ -33,7 +33,7 @@ export const brandVoiceProfileSchema = z.object({
 });
 
 export const brandVoiceProfileUpsertSchema = z.object({
-  embedding: z.record(z.unknown()).optional(),
+  embedding: z.record(z.string(), z.unknown()).optional(),
   styleSummary: z.string().min(1).optional(),
   emojiStyle: z.string().min(1).optional(),
   energyLevel: voiceEnergyLevelSchema.optional(),

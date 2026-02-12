@@ -3,11 +3,9 @@ import { brandIdSchema } from "./brandSchema";
 
 const optionalTrimmed = z
   .string()
-  .optional()
-  .transform((value) => {
-    const trimmed = value?.trim();
-    return trimmed ? trimmed : undefined;
-  });
+  .trim()
+  .min(1)
+  .optional();
 
 export const locationSchema = z.object({
   id: z.string().min(1),
