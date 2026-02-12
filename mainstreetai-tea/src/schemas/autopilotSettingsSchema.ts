@@ -37,14 +37,14 @@ export const autopilotSettingsSchema = z.object({
 });
 
 export const autopilotSettingsUpsertSchema = z.object({
-  enabled: z.boolean().optional().default(false),
-  cadence: autopilotCadenceSchema.optional().default("daily"),
-  hour: z.number().int().min(0).max(23).optional().default(7),
-  timezone: z.string().min(1).optional().default("America/Chicago"),
-  goals: z.array(autopilotGoalSchema).optional().default(["repeat_customers", "slow_hours"]),
-  focusAudiences: z.array(z.string().min(1)).optional().default([]),
-  channels: z.array(autopilotChannelSchema).optional().default(["facebook", "instagram"]),
-  allowDiscounts: z.boolean().optional().default(true),
+  enabled: z.boolean().optional(),
+  cadence: autopilotCadenceSchema.optional(),
+  hour: z.number().int().min(0).max(23).optional(),
+  timezone: z.string().min(1).optional(),
+  goals: z.array(autopilotGoalSchema).optional(),
+  focusAudiences: z.array(z.string().min(1)).optional(),
+  channels: z.array(autopilotChannelSchema).optional(),
+  allowDiscounts: z.boolean().optional(),
   maxDiscountText: z.string().optional(),
   notifyEmail: z.string().email().optional(),
   notifySms: z.string().optional(),
