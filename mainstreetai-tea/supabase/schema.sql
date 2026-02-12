@@ -164,6 +164,15 @@ create table if not exists public.community_sponsors (
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
+alter table public.community_sponsors add column if not exists role text;
+alter table public.community_sponsors alter column role set default 'nonprofit';
+update public.community_sponsors set role = 'nonprofit' where role is null;
+alter table public.community_sponsors alter column role set not null;
+alter table public.community_sponsors
+  drop constraint if exists community_sponsors_role_check;
+alter table public.community_sponsors
+  add constraint community_sponsors_role_check
+  check (role in ('chamber','bank','downtown_org','nonprofit'));
 
 create table if not exists public.sponsored_memberships (
   id uuid primary key default gen_random_uuid(),
