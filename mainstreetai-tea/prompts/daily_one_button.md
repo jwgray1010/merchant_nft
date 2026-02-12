@@ -4,6 +4,7 @@ Input JSON:
 {
   "brand": { ... },
   "communityVibeProfile": { ...optional... },
+  "townPulse": { ...optional... },
   "voiceProfile": { ...optional... },
   "timingModel": { ...optional... },
   "insightsSummary": { ...optional... },
@@ -56,3 +57,7 @@ Rules:
   - restaurant/cafe: daily special + off-peak window
   - gym/fitness: class tie-in + recovery or refill angle
 - Keep output short, clear, and ready to copy.
+- If townPulse is present:
+  - Use busy windows for visibility moments.
+  - Use slow windows for simple offer timing.
+  - Reflect local momentum subtly without naming data sources.

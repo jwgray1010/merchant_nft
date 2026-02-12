@@ -26,6 +26,12 @@ import { getUpcomingLocalEvents } from "./localEventAwareness";
 import { getLocationById } from "./locationStore";
 import { getOrRefreshInsightsCache } from "./autopilotService";
 import { buildTownBoostForDaily } from "./townModeService";
+import {
+  buildTownPulsePromptSuggestion,
+  getTownPulseModelForBrand,
+  writeTownPulseSignalForBrand,
+  writeTownPulseForDailyOutcome,
+} from "./townPulseService";
 import { getBrandVoiceProfile } from "./voiceStore";
 import { getOrRecomputeTimingModel } from "./timingModelService";
 
@@ -295,7 +301,7 @@ export async function runDailyOneButton(input: {
   if (input.locationId && !location) {
     throw new Error(`Location '${input.locationId}' was not found`);
   }
-  const [settings, voiceProfile, insightsCache] = await Promise.all([
+  const [settings, voiceProfile, insightsCache, townPulseModel] = await Promise.all([
     adapter.getAutopilotSettings(input.userId, input.brandId),
     getBrandVoiceProfile(input.userId, input.brandId).catch(() => null),
     getOrRefreshInsightsCache({
@@ -303,6 +309,11 @@ export async function runDailyOneButton(input: {
       brandId: input.brandId,
       rangeDays: 30,
     }),
+    getTownPulseModelForBrand({
+      userId: input.userId,
+      brandId: input.brandId,
+      recomputeIfMissing: true,
+    }).catch(() => null),
   ]);
   const timezone = timezoneOrDefault(location?.timezone ?? settings?.timezone ?? "America/Chicago");
   const chosenGoal = parsedRequest.goal ?? defaultGoalFromClock(timezone);
@@ -348,6 +359,7 @@ export async function runDailyOneButton(input: {
         : undefined,
       timingModel: timingModel?.model,
       insightsSummary: insightsCache.insights,
+      townPulse: townPulseModel?.model,
       notes: parsedRequest.notes,
       goal: chosenGoal,
       bestPlatform: chosenPlatform,
@@ -390,6 +402,27 @@ export async function runDailyOneButton(input: {
     brand,
     goal: chosenGoal,
   }).catch(() => null);
+  const townPulseBoost = townPulseModel
+    ? await buildTownPulsePromptSuggestion({
+        userId: input.userId,
+        brand,
+        townPulse: townPulseModel.model,
+      }).catch(() => null)
+    : null;
+  const mergedTownBoost =
+    townBoostSuggestion?.townBoost ??
+    (townPulseBoost
+      ? {
+          line: townPulseBoost.angle,
+          captionAddOn: townPulseBoost.captionAddOn,
+          staffScript: townPulseBoost.timingHint,
+        }
+      : undefined);
+  if (townPulseBoost && mergedTownBoost && townBoostSuggestion?.townBoost) {
+    const captionAddOn = `${mergedTownBoost.captionAddOn} ${townPulseBoost.captionAddOn}`.trim();
+    mergedTownBoost.captionAddOn = captionAddOn;
+    mergedTownBoost.staffScript = `${mergedTownBoost.staffScript} ${townPulseBoost.timingHint}`.trim();
+  }
 
   const twilioIntegration = await adapter.getIntegration(input.userId, input.brandId, "twilio");
   const pack = dailyOutputSchema.parse({
@@ -409,7 +442,7 @@ export async function runDailyOneButton(input: {
           staffScript: localBoostSuggestion.staffLine,
         }
       : undefined,
-    townBoost: townBoostSuggestion?.townBoost,
+    townBoost: mergedTownBoost,
   });
 
   const history = await adapter.addHistory(
@@ -647,6 +680,14 @@ export async function runRescueOneButton(input: {
     parsedRequest,
     output,
   );
+  await writeTownPulseSignalForBrand({
+    userId: input.userId,
+    brand,
+    signalType: "slow",
+    weight: 1.1,
+  }).catch(() => {
+    // Town Pulse is optional intelligence.
+  });
   return {
     output,
     historyId: history.id,
@@ -752,12 +793,21 @@ export async function submitDailyCheckin(input: {
   if (alreadyCheckedIn) {
     return { status: "skipped", reason: "Already checked in for latest daily pack" };
   }
+  const brand = await getAdapter().getBrand(input.userId, input.brandId);
   const platform = sanitizeDailyPlatform(latest.output.post.platform);
-  await getAdapter().addMetrics(input.userId, input.brandId, {
+  const metricsRecord = await getAdapter().addMetrics(input.userId, input.brandId, {
     platform: platform === "gbp" ? "other" : platform,
     window: "24h",
     salesNotes: `${notesForOutcome(parsed.outcome)} | daily_checkin:${latest.id}:${parsed.outcome}`,
     redemptions: parsed.redemptions,
+  });
+  await writeTownPulseForDailyOutcome({
+    userId: input.userId,
+    brand,
+    outcome: parsed.outcome,
+    occurredAt: metricsRecord.createdAt,
+  }).catch(() => {
+    // Town Pulse should not block check-in writes.
   });
   return { status: "saved" };
 }

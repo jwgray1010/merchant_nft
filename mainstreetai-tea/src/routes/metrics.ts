@@ -5,6 +5,7 @@ import {
   storedMetricsSchema,
   type StoredMetrics,
 } from "../schemas/metricsSchema";
+import { recordTownPulseFromMetrics } from "../services/townPulseService";
 import { getAdapter } from "../storage/getAdapter";
 
 const router = Router();
@@ -58,6 +59,14 @@ router.post("/", async (req, res, next) => {
     }
 
     const response = await adapter.addMetrics(userId, parsedBrandId.data, parsedBody.data);
+    await recordTownPulseFromMetrics({
+      userId,
+      brand,
+      metrics: parsedBody.data,
+      occurredAt: response.createdAt,
+    }).catch(() => {
+      // Town Pulse should not block metrics writes.
+    });
 
     return res.status(201).json(response);
   } catch (error) {

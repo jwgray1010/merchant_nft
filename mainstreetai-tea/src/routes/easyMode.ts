@@ -18,6 +18,7 @@ import {
   suggestTownFromLocation,
   updateTownMembershipForBrand,
 } from "../services/townModeService";
+import { getTownPulseModelForBrand } from "../services/townPulseService";
 import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
 import type { BrandProfile } from "../schemas/brandSchema";
@@ -678,15 +679,23 @@ router.get("/", async (req, res, next) => {
         );
     }
 
-    const [latest, checkin] = await Promise.all([
+    const [latest, checkin, townPulse] = await Promise.all([
       getLatestDailyPack(context.ownerUserId, context.selectedBrandId),
       dailyCheckinStatus(context.ownerUserId, context.selectedBrandId),
+      getTownPulseModelForBrand({
+        userId: context.ownerUserId,
+        brandId: context.selectedBrandId,
+        recomputeIfMissing: true,
+      }).catch(() => null),
     ]);
     const signUrl = withSelection("/app/sign/today", context);
+    const townPulseIndicator = townPulse
+      ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">🟢 Town Pulse Active</a>`
+      : `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">⚪ Town Pulse Warming Up</a>`;
 
     const staffView =
       context.role === "member"
-        ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
+        ? `${townPulseIndicator}<section class="rounded-2xl p-6 shadow-sm bg-white">
             <h2 class="text-xl">Today’s Pack</h2>
             <p class="muted">Copy and post. No extra setup needed.</p>
           </section>
@@ -708,7 +717,7 @@ router.get("/", async (req, res, next) => {
 
     const ownerView =
       context.role !== "member"
-        ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
+        ? `${townPulseIndicator}<section class="rounded-2xl p-6 shadow-sm bg-white">
             <h2 class="text-xl">One thing today</h2>
             <p class="muted">No dashboard. One move. Real-world output.</p>
             <details style="margin-top:10px;">
@@ -2084,6 +2093,7 @@ router.get("/town", async (req, res, next) => {
       <h2 class="text-xl">We’re part of the ${escapeHtml(membership.town.name)} Local Network</h2>
       <p class="muted">Town Mode runs quietly in the background. No extra coordination required.</p>
       <p><strong>${escapeHtml(categories || "Local businesses")}</strong></p>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}">View Town Pulse</a>
     </section>
     <section class="rounded-2xl p-6 shadow-sm bg-white">
       <h3>Participating businesses</h3>
@@ -2097,6 +2107,81 @@ router.get("/town", async (req, res, next) => {
           context,
           active: "settings",
           currentPath: "/app/town",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/town/pulse", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    if (!context.ownerUserId || !context.selectedBrandId) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Town Pulse",
+            context,
+            active: "settings",
+            currentPath: "/app/town/pulse",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Pick a business first.</p></section>`,
+          }),
+        );
+    }
+    const membership = await getTownMembershipForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+    });
+    if (!membership) {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
+    }
+    const pulse = await getTownPulseModelForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+      recomputeIfMissing: true,
+    });
+    const model = pulse?.model;
+    const dayLabel = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const windowsToText = (rows: Array<{ dow: number; hour: number }>) =>
+      rows
+        .slice(0, 3)
+        .map((entry) => {
+          const day = dayLabel[entry.dow] ?? "Day";
+          const hour = `${String(entry.hour).padStart(2, "0")}:00`;
+          return `${day} ${hour}`;
+        })
+        .join(" • ");
+    const busySummary = model?.busyWindows?.length
+      ? windowsToText(model.busyWindows)
+      : "No strong peak yet — still learning local rhythm.";
+    const slowSummary = model?.slowWindows?.length
+      ? windowsToText(model.slowWindows)
+      : "No major dip detected yet.";
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Town Pulse</h2>
+      <p class="muted">Shared local rhythm, no private business data.</p>
+      <p><strong>🟢 Town Pulse Active</strong> — ${escapeHtml(membership.town.name)}</p>
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <p class="output-value"><strong>This town is often busiest:</strong><br/>${escapeHtml(busySummary)}</p>
+      <p class="output-value"><strong>Midweek quieter windows:</strong><br/>${escapeHtml(slowSummary)}</p>
+      <p class="muted">${escapeHtml(model?.seasonalNotes ?? "Seasonal rhythm will appear as more signals arrive.")}</p>
+      <p class="muted">Event energy: ${escapeHtml(model?.eventEnergy ?? "low")}</p>
+    </section>`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Town Pulse",
+          context,
+          active: "settings",
+          currentPath: "/app/town/pulse",
           body,
         }),
       );

@@ -1346,3 +1346,39 @@ Safety:
 - Town Mode never exposes private metrics.
 - No auto-tagging or direct endorsements are generated.
 - Suggestions stay subtle and organic.
+
+## Phase TOWN+: Town Pulse (shared local intelligence)
+
+Town Pulse is an anonymized background intelligence layer that helps businesses align with local rhythm without sharing private business data.
+
+New data model:
+- `town_pulse_signals`
+  - anonymous aggregated signals by town/category/time
+  - **no brand_ref and no user identifiers**
+- `town_pulse_model`
+  - computed town-level model JSON (`busyWindows`, `slowWindows`, `eventEnergy`, `seasonalNotes`)
+
+Automatic signal writes now happen when:
+- metrics are submitted (`POST /api/metrics`)
+- one-tap check-in outcomes are saved (`slow|okay|busy`)
+- rescue runs are generated (`POST /api/rescue`)
+- autopilot outputs run (`POST /api/autopilot/run` and cron runs)
+
+Town Pulse APIs:
+- `POST /api/town/pulse/recompute?townId=...`
+- `GET /api/town/pulse?townId=...`
+- `GET /api/jobs/town-pulse` (cron-secret protected)
+
+Cron schedule includes:
+- `/api/jobs/town-pulse` every hour at minute `15`
+
+Daily integration:
+- `/api/daily` now injects `townPulse` context when available and can produce stronger local timing-aware town boost suggestions.
+- New prompt: `prompts/town_pulse.md`
+
+Easy Mode:
+- Home shows tiny indicator:
+  - `🟢 Town Pulse Active` (or warming up)
+- New page: `/app/town/pulse`
+  - simple sentences only
+  - no charts, no analytics jargon, no private comparisons

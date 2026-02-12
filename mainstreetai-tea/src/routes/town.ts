@@ -9,6 +9,10 @@ import {
   suggestTownFromLocation,
   updateTownMembershipForBrand,
 } from "../services/townModeService";
+import {
+  getTownPulseModel,
+  recomputeTownPulseModel,
+} from "../services/townPulseService";
 
 const router = Router();
 
@@ -39,6 +43,70 @@ router.get("/map", async (req, res, next) => {
       return res.status(404).json({ error: "Town was not found or is not accessible" });
     }
     return res.json(map);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/pulse", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const model = await getTownPulseModel({
+      townId,
+      userId: req.user?.id,
+    });
+    return res.json({
+      town: map.town,
+      model: model?.model ?? null,
+      computedAt: model?.computedAt ?? null,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/pulse/recompute", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const model = await recomputeTownPulseModel({
+      townId,
+      userId: req.user?.id,
+      rangeDays: 45,
+    });
+    return res.json({
+      ok: true,
+      town: map.town,
+      model: model.model,
+      computedAt: model.computedAt,
+    });
   } catch (error) {
     return next(error);
   }

@@ -18,6 +18,7 @@ import {
 import { getAdapter } from "../storage/getAdapter";
 import { getUpcomingLocalEvents } from "./localEventAwareness";
 import { generateInsightsForUser } from "./insightsService";
+import { writeTownPulseForAutopilot } from "./townPulseService";
 import {
   parsePostTimeToHourMinute,
   timezoneOrDefault,
@@ -565,6 +566,15 @@ export async function runAutopilotForBrand(input: {
         scheduledItems,
       },
     );
+    await writeTownPulseForAutopilot({
+      userId: input.userId,
+      brand,
+      goal,
+      hadUpcomingEvents: upcomingEvents.length > 0,
+      occurredAt: scheduledForIso,
+    }).catch(() => {
+      // Town Pulse is best-effort and should not block autopilot.
+    });
 
     locationRuns.push({
       locationId: location?.id,

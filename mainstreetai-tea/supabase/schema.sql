@@ -56,6 +56,24 @@ create table if not exists public.town_rotations (
   last_featured timestamptz not null default now()
 );
 
+create table if not exists public.town_pulse_signals (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  category text not null check (category in ('cafe','fitness','salon','retail','service','food','mixed')),
+  signal_type text not null check (signal_type in ('busy','slow','event_spike','post_success')),
+  day_of_week int check (day_of_week between 0 and 6),
+  hour int check (hour between 0 and 23),
+  weight numeric not null default 1,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.town_pulse_model (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  model jsonb not null default '{}'::jsonb,
+  computed_at timestamptz not null default now()
+);
+
 create table if not exists public.history (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -376,6 +394,15 @@ create unique index if not exists town_rotations_town_brand_unique
 create index if not exists town_rotations_town_last_featured_idx
   on public.town_rotations(town_ref, last_featured);
 
+create index if not exists town_pulse_signals_town_created_idx
+  on public.town_pulse_signals(town_ref, created_at desc);
+
+create index if not exists town_pulse_signals_town_type_idx
+  on public.town_pulse_signals(town_ref, signal_type, day_of_week, hour);
+
+create unique index if not exists town_pulse_model_town_ref_unique
+  on public.town_pulse_model(town_ref);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -553,11 +580,29 @@ as $$
   );
 $$;
 
+create or replace function public.is_town_member(_town_ref uuid)
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.brands b
+    where b.town_ref = _town_ref
+      and (
+        b.owner_id = auth.uid()
+        or public.has_team_role(b.id, array['owner','admin','member']::text[])
+      )
+  );
+$$;
+
 -- RLS: owner can only access own rows.
 alter table public.brands enable row level security;
 alter table public.towns enable row level security;
 alter table public.town_memberships enable row level security;
 alter table public.town_rotations enable row level security;
+alter table public.town_pulse_signals enable row level security;
+alter table public.town_pulse_model enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -661,6 +706,27 @@ with check (
   public.is_brand_owner(brand_ref)
   or public.has_team_role(brand_ref, array['owner','admin']::text[])
 );
+
+drop policy if exists town_pulse_signals_member_select on public.town_pulse_signals;
+create policy town_pulse_signals_member_select on public.town_pulse_signals
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_pulse_signals_member_insert on public.town_pulse_signals;
+create policy town_pulse_signals_member_insert on public.town_pulse_signals
+for insert
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_pulse_model_member_select on public.town_pulse_model;
+create policy town_pulse_model_member_select on public.town_pulse_model
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_pulse_model_member_modify on public.town_pulse_model;
+create policy town_pulse_model_member_modify on public.town_pulse_model
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
 
 drop policy if exists history_owner_all on public.history;
 create policy history_owner_all on public.history
