@@ -44,6 +44,7 @@ import { getTownPulseModelForBrand } from "../services/townPulseService";
 import { getLatestTownStoryForBrand } from "../services/townStoriesService";
 import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
+import { getOwnerConfidenceForBrand, listOwnerWinMoments } from "../services/ownerConfidenceService";
 import type { BrandProfile } from "../schemas/brandSchema";
 import { townGraphCategorySchema, type TownGraphCategory } from "../schemas/townGraphSchema";
 import type { LocationRecord } from "../schemas/locationSchema";
@@ -89,6 +90,14 @@ type EasyContext = {
     launchMessage?: string;
     momentumLine?: string;
   } | null;
+  ownerConfidence: {
+    level: "low" | "steady" | "rising";
+    streakDays: number;
+    line: string;
+    last7DaysActive: boolean[];
+    shownUpDaysThisWeek: number;
+  };
+  recentWinMoment?: string;
 };
 
 const GRAPH_CATEGORY_OPTIONS = [...townGraphCategorySchema.options] as TownGraphCategory[];
@@ -286,6 +295,13 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         active: false,
       },
       townMilestone: null,
+      ownerConfidence: {
+        level: "steady",
+        streakDays: 0,
+        line: "Steady effort matters more than perfect days.",
+        last7DaysActive: [false, false, false, false, false, false, false],
+        shownUpDaysThisWeek: 0,
+      },
     };
   }
 
@@ -313,6 +329,13 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         active: false,
       },
       townMilestone: null,
+      ownerConfidence: {
+        level: "steady",
+        streakDays: 0,
+        line: "Steady effort matters more than perfect days.",
+        last7DaysActive: [false, false, false, false, false, false, false],
+        shownUpDaysThisWeek: 0,
+      },
     };
   }
   req.brandAccess = access;
@@ -348,10 +371,18 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         active: false,
       },
       townMilestone: null,
+      ownerConfidence: {
+        level: "steady",
+        streakDays: 0,
+        line: "Steady effort matters more than perfect days.",
+        last7DaysActive: [false, false, false, false, false, false, false],
+        shownUpDaysThisWeek: 0,
+      },
     };
   }
 
-  const [locations, autopilotSettings, timingModel, communitySupport, ambassador, townMilestone] = await Promise.all([
+  const [locations, autopilotSettings, timingModel, communitySupport, ambassador, townMilestone, confidence, winMoments] =
+    await Promise.all([
     listLocations(access.ownerId, access.brandId).catch(() => []),
     adapter.getAutopilotSettings(access.ownerId, access.brandId).catch(() => null),
     getTimingModel(access.ownerId, access.brandId, "instagram").catch(() => null),
@@ -375,7 +406,24 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
           userId: access.ownerId,
         }).catch(() => null)
       : Promise.resolve(null),
-  ]);
+      getOwnerConfidenceForBrand({
+        ownerId: access.ownerId,
+        brandId: access.brandId,
+        includePromptLine: false,
+      }).catch(() => ({
+        confidenceLevel: "steady" as const,
+        streakDays: 0,
+        momentumHint: "Steady effort matters more than perfect days.",
+        recentTrend: "showing up and keeping momentum simple",
+        shownUpDaysThisWeek: 0,
+        last7DaysActive: [false, false, false, false, false, false, false],
+        line: "Steady effort matters more than perfect days.",
+      })),
+      listOwnerWinMoments({
+        ownerId: access.ownerId,
+        limit: 1,
+      }).catch(() => []),
+    ]);
   const rawLocationQuery = typeof req.query.locationId === "string" ? req.query.locationId : undefined;
   const queryLocationId = rawLocationQuery?.trim();
   const locationIds = locations.map((location) => location.id);
@@ -435,6 +483,14 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
           momentumLine: townMilestone.momentumLine,
         }
       : null,
+    ownerConfidence: {
+      level: confidence.confidenceLevel,
+      streakDays: confidence.streakDays,
+      line: confidence.line,
+      last7DaysActive: confidence.last7DaysActive,
+      shownUpDaysThisWeek: confidence.shownUpDaysThisWeek,
+    },
+    recentWinMoment: winMoments[0]?.message,
   };
 }
 
@@ -505,10 +561,16 @@ function renderHeader(context: EasyContext, currentPath: string): string {
   const badgeRow = [communitySupportBadge, ambassadorBadge]
     .filter((entry) => entry !== "")
     .join("");
+  const confidenceSupportLine = context.ownerConfidence.line || "Steady effort matters more than perfect days.";
+  const winMomentLine = context.recentWinMoment
+    ? `<p class="muted" style="margin-top:6px;">${escapeHtml(context.recentWinMoment)}</p>`
+    : "";
   return `<header class="rounded-2xl p-6 shadow-sm bg-white">
     <p class="section-title">MainStreetAI Easy Mode</p>
     <h1 class="text-xl">${escapeHtml(greeting)}, ${escapeHtml(context.selectedBrand.businessName)}</h1>
     <p class="muted">${escapeHtml(context.selectedBrand.location)}</p>
+    <p class="muted" style="margin-top:6px;">${escapeHtml(confidenceSupportLine)}</p>
+    ${winMomentLine}
     ${badgeRow ? `<div class="chip-row" style="margin-top:8px;">${badgeRow}</div>` : ""}
     ${sponsorshipWaitlistNote}
     <form method="GET" action="${escapeHtml(currentPath)}" class="selector-grid">
@@ -779,6 +841,23 @@ function easyLayout(input: {
         font-size: 0.84rem;
         font-weight: 500;
       }
+      .streak-dots {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .streak-dot {
+        font-size: 0.9rem;
+        line-height: 1;
+      }
+      .streak-dot.active { color: var(--primary); }
+      .streak-dot.inactive { color: #c6ccd6; }
+      .momentum-link {
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
       .result-action-bar {
         position: sticky;
         bottom: 70px;
@@ -923,6 +1002,24 @@ function seasonTagLabel(tag: string): string {
   return "Season";
 }
 
+function confidenceLabel(level: "low" | "steady" | "rising"): string {
+  if (level === "rising") return "Rising";
+  if (level === "steady") return "Steady";
+  return "Low";
+}
+
+function renderStreakDots(days: boolean[]): string {
+  const normalized = [...days];
+  while (normalized.length < 7) {
+    normalized.unshift(false);
+  }
+  const dots = normalized
+    .slice(-7)
+    .map((active) => `<span class="streak-dot ${active ? "active" : "inactive"}">${active ? "●" : "○"}</span>`)
+    .join("");
+  return `<span class="streak-dots" aria-label="Last 7 days streak">${dots}</span>`;
+}
+
 function routeStepsForWindow(window: string | undefined): [string, string, string] {
   if (window === "morning") return ["Coffee", "Quick stop", "Errands"];
   if (window === "lunch") return ["Lunch", "Recharge", "Errands"];
@@ -1056,6 +1153,16 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         <p id="daily-sms" class="output-value">${escapeHtml(pack.optionalSms.message)}</p>
       </article>`
     : "";
+  const ownerConfidenceSection = pack.ownerConfidence
+    ? `<article class="result-card">
+        <p class="section-title">Owner confidence</p>
+        <h2 class="text-lg">Momentum: ${escapeHtml(confidenceLabel(pack.ownerConfidence.level))}</h2>
+        <div class="divider">
+          <p class="output-value">${escapeHtml(pack.ownerConfidence.line)}</p>
+          <p class="muted">Current streak: ${escapeHtml(String(pack.ownerConfidence.streakDays))} day(s)</p>
+        </div>
+      </article>`
+    : "";
   const nextStepCard = `<article class="result-card">
       <p class="section-title">Next step</p>
       <p class="output-value">Post this at <strong>${escapeHtml(pack.post.bestTime)}</strong></p>
@@ -1100,6 +1207,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
     townGraphSection,
     townMicroRouteSection,
     townSeasonalSection,
+    ownerConfidenceSection,
     nextStepCard,
   ].filter(Boolean);
   const stackedCards = cards
@@ -1261,6 +1369,11 @@ router.get("/", async (req, res, next) => {
       ? `<span class="neighborhood-chip">Town businesses: ${escapeHtml(String(context.townMilestone.activeCount))}</span>`
       : "";
     const homeChipRow = `<div class="chip-row">${townPulseIndicator}${chipWindow}${chipSeason}${chipMilestone}</div>`;
+    const confidenceChip = `<a class="momentum-link" href="${escapeHtml(withSelection("/app/progress", context))}">
+      <span class="neighborhood-chip">Momentum: ${escapeHtml(confidenceLabel(context.ownerConfidence.level))}</span>
+      ${renderStreakDots(context.ownerConfidence.last7DaysActive)}
+    </a>`;
+    const confidenceLine = `<p class="muted" style="margin-top:6px;">${escapeHtml(context.ownerConfidence.line)}</p>`;
     const launchFlowMessage = context.townMilestone?.launchMessage
       ? `<p class="muted" style="margin-top:8px;"><strong>${escapeHtml(context.townMilestone.launchMessage)}</strong></p>`
       : "";
@@ -1279,6 +1392,8 @@ router.get("/", async (req, res, next) => {
             <p class="section-title">Today</p>
             <h2 class="text-xl">Your daily pack is ready</h2>
             <p class="muted">Copy and post. No extra setup needed.</p>
+            <div style="margin-top:10px;">${confidenceChip}</div>
+            ${confidenceLine}
             ${launchFlowMessage}
             ${momentumMessage}
             <p class="muted" style="margin-top:8px;">Made for local owners. Built for real life.</p>
@@ -1306,6 +1421,8 @@ router.get("/", async (req, res, next) => {
             <p class="section-title">Daily focus</p>
             <h2 class="text-xl">One clear move for today</h2>
             <p class="muted">No dashboard clutter. Just what to do next.</p>
+            <div style="margin-top:10px;">${confidenceChip}</div>
+            ${confidenceLine}
             ${launchFlowMessage}
             ${momentumMessage}
             <details style="margin-top:10px;">
@@ -1372,6 +1489,11 @@ router.get("/", async (req, res, next) => {
               if (value === "lunch") return "Lunch";
               return "Evening";
             }
+            function confidenceLabel(value) {
+              if (value === "rising") return "Rising";
+              if (value === "steady") return "Steady";
+              return "Low";
+            }
             function routeSteps(windowValue) {
               if (windowValue === "morning") return ["Coffee", "Quick stop", "Errands"];
               if (windowValue === "lunch") return ["Lunch", "Recharge", "Errands"];
@@ -1411,6 +1533,9 @@ router.get("/", async (req, res, next) => {
               const townSeasonalSection = pack.townSeasonalBoost
                 ? '<article class="result-card"><p class="section-title">Town Seasonal Boost (' + esc((pack.townSeasonalBoost.seasonTags || []).join(", ")) + ')</p><h2 class="text-lg">' + esc(pack.townSeasonalBoost.line || "") + '</h2><div class="divider"><p id="daily-town-seasonal-caption" class="output-value">' + esc(pack.townSeasonalBoost.captionAddOn || "") + '</p><p id="daily-town-seasonal-staff-line" class="output-value">' + esc(pack.townSeasonalBoost.staffScript || "") + '</p></div></article>'
                 : '';
+              const ownerConfidenceSection = pack.ownerConfidence
+                ? '<article class="result-card"><p class="section-title">Owner confidence</p><h2 class="text-lg">Momentum: ' + esc(confidenceLabel(pack.ownerConfidence.level || "steady")) + '</h2><div class="divider"><p class="output-value">' + esc(pack.ownerConfidence.line || "") + '</p><p class="muted">Current streak: ' + esc(String(pack.ownerConfidence.streakDays || 0)) + ' day(s)</p></div></article>'
+                : '';
               const nextStepSection = '<article class="result-card"><p class="section-title">Next step</p><p class="output-value">Post this at <strong>' + esc(pack.post?.bestTime || "") + '</strong></p><p class="output-value">Print the sign</p><p class="output-value">If it\\'s slow, tap Rescue</p></article>';
               const cards = [
                 '<article class="result-card"><p class="section-title">Today\\'s Special</p><h2 class="text-lg">' + esc(pack.todaySpecial?.promoName || "") + '</h2><p id="daily-special" class="output-value">' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><div class="divider"><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></div></article>',
@@ -1423,6 +1548,7 @@ router.get("/", async (req, res, next) => {
                 townGraphSection,
                 townMicroRouteSection,
                 townSeasonalSection,
+                ownerConfidenceSection,
                 nextStepSection,
               ].filter(Boolean);
               const stackedCards = cards.map((card, index) => (index === 0 ? card : '<div class="street-divider"></div>' + card)).join("");
@@ -1535,7 +1661,7 @@ router.get("/", async (req, res, next) => {
                   '<div class="output-card"><p class="output-label">SMS</p><p id="rescue-sms" class="output-value">' + esc(json.sms?.message || "") + '</p><button class="secondary-button" data-copy-target="rescue-sms">Copy Rescue SMS</button></div>' +
                   '<div class="output-card"><p class="output-label">3 quick actions</p><p class="output-value">' + esc((json.threeQuickActions || []).join(" | ")) + '</p></div></section>';
               }
-              if (status) status.textContent = "Rescue plan ready.";
+              if (status) status.textContent = json.confidenceBoostMessage || "Taking action is a win - let's try a quick adjustment.";
               window.__setupCopyButtons?.();
             }
             document.getElementById("run-daily")?.addEventListener("click", runDailyPack);
@@ -1737,6 +1863,65 @@ router.get("/schedule", async (req, res, next) => {
           context,
           active: "schedule",
           currentPath: "/app/schedule",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/progress", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    if (!context.selectedBrandId || !context.selectedBrand || !context.ownerUserId) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Progress",
+            context,
+            active: "home",
+            currentPath: "/app/progress",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Pick a business first.</p></section>`,
+          }),
+        );
+    }
+    const moments = await listOwnerWinMoments({
+      ownerId: context.ownerUserId,
+      limit: 3,
+    }).catch(() => []);
+    const latestMoment = moments[0]?.message ?? context.recentWinMoment;
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <p class="section-title">Owner Progress</p>
+      <h2 class="text-xl">You've shown up ${escapeHtml(String(context.ownerConfidence.shownUpDaysThisWeek))} days this week.</h2>
+      <p class="muted">Slow days happen - consistency wins.</p>
+      <div style="margin-top:10px;">${renderStreakDots(context.ownerConfidence.last7DaysActive)}</div>
+      <p class="muted" style="margin-top:10px;">Current momentum: <strong>${escapeHtml(
+        confidenceLabel(context.ownerConfidence.level),
+      )}</strong></p>
+      <p class="muted">${escapeHtml(context.ownerConfidence.line)}</p>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app", context))}" style="margin-top:10px;">Back to Home</a>
+    </section>
+    ${
+      latestMoment
+        ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
+            <h3>Win moment</h3>
+            <p class="output-value">${escapeHtml(latestMoment)}</p>
+          </section>`
+        : ""
+    }`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Progress",
+          context,
+          active: "home",
+          currentPath: "/app/progress",
           body,
         }),
       );

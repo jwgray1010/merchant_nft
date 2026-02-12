@@ -209,6 +209,22 @@ create table if not exists public.town_success_signals (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.owner_progress (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  action_date date not null,
+  action_type text not null check (action_type in ('daily_pack','post_now','rescue_used','story_used')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.owner_win_moments (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  message text not null,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.history (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -616,6 +632,15 @@ create index if not exists town_success_signals_town_created_idx
 create index if not exists town_success_signals_town_signal_idx
   on public.town_success_signals(town_ref, signal, created_at desc);
 
+create unique index if not exists owner_progress_owner_day_action_unique
+  on public.owner_progress(owner_id, action_date, action_type);
+
+create index if not exists owner_progress_owner_brand_day_idx
+  on public.owner_progress(owner_id, brand_ref, action_date desc);
+
+create index if not exists owner_win_moments_owner_created_idx
+  on public.owner_win_moments(owner_id, created_at desc);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -852,6 +877,8 @@ alter table public.sponsored_memberships enable row level security;
 alter table public.town_ambassadors enable row level security;
 alter table public.town_invites enable row level security;
 alter table public.town_success_signals enable row level security;
+alter table public.owner_progress enable row level security;
+alter table public.owner_win_moments enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -1168,6 +1195,18 @@ create policy town_success_signals_member_modify on public.town_success_signals
 for all
 using (public.is_town_member(town_ref))
 with check (public.is_town_member(town_ref));
+
+drop policy if exists owner_progress_owner_all on public.owner_progress;
+create policy owner_progress_owner_all on public.owner_progress
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists owner_win_moments_owner_all on public.owner_win_moments;
+create policy owner_win_moments_owner_all on public.owner_win_moments
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
 
 drop policy if exists history_owner_all on public.history;
 create policy history_owner_all on public.history

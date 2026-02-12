@@ -54,7 +54,7 @@ router.post("/", async (req, res, next) => {
     });
   }
   try {
-    const ownerId = req.user?.id;
+    const ownerId = req.brandAccess?.ownerId ?? req.user?.id;
     if (!ownerId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -136,7 +136,7 @@ router.get("/latest", async (req, res, next) => {
     return res.status(parsedBrand.status).json(parsedBrand.body);
   }
   try {
-    const ownerId = req.user?.id;
+    const ownerId = req.brandAccess?.ownerId ?? req.user?.id;
     if (!ownerId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -168,7 +168,7 @@ router.post("/checkin", async (req, res, next) => {
     });
   }
   try {
-    const ownerId = req.user?.id;
+    const ownerId = req.brandAccess?.ownerId ?? req.user?.id;
     if (!ownerId) {
       return res.status(401).json({ error: "Unauthorized" });
     }

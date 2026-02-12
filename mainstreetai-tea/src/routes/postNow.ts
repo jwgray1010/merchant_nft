@@ -4,6 +4,7 @@ import { brandIdSchema } from "../schemas/brandSchema";
 import { postNowRequestSchema } from "../schemas/postNowSchema";
 import { getAdapter } from "../storage/getAdapter";
 import { runPostNowCoach } from "../services/timingModelService";
+import { recordOwnerProgressAction } from "../services/ownerConfidenceService";
 
 const router = Router();
 
@@ -45,7 +46,7 @@ router.post("/", async (req, res, next) => {
   }
 
   try {
-    const userId = req.user?.id;
+    const userId = req.brandAccess?.ownerId ?? req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -62,6 +63,13 @@ router.post("/", async (req, res, next) => {
       userId,
       brandId: parsedBrand.brandId,
       request: parsedBody.data,
+    });
+    await recordOwnerProgressAction({
+      ownerId: userId,
+      brandId: parsedBrand.brandId,
+      actionType: "post_now",
+    }).catch(() => {
+      // Progress tracking is best-effort.
     });
     return res.json({
       ...result.decision,

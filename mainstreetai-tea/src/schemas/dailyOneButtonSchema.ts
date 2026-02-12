@@ -65,6 +65,12 @@ export const dailyTownSeasonalBoostSchema = z.object({
   staffScript: z.string().min(1),
 });
 
+export const dailyOwnerConfidenceSchema = z.object({
+  level: z.enum(["low", "steady", "rising"]),
+  streakDays: z.number().int().min(0).max(365),
+  line: z.string().min(1),
+});
+
 export const dailyOutputSchema = z.object({
   todaySpecial: z.object({
     promoName: z.string().min(1),
@@ -94,6 +100,7 @@ export const dailyOutputSchema = z.object({
   townGraphBoost: dailyTownGraphBoostSchema.optional(),
   townMicroRoute: dailyTownMicroRouteSchema.optional(),
   townSeasonalBoost: dailyTownSeasonalBoostSchema.optional(),
+  ownerConfidence: dailyOwnerConfidenceSchema.optional(),
   nextStep: z.string().min(1),
 });
 
@@ -114,4 +121,5 @@ export type DailyTownStory = z.infer<typeof dailyTownStorySchema>;
 export type DailyTownGraphBoost = z.infer<typeof dailyTownGraphBoostSchema>;
 export type DailyTownMicroRoute = z.infer<typeof dailyTownMicroRouteSchema>;
 export type DailyTownSeasonalBoost = z.infer<typeof dailyTownSeasonalBoostSchema>;
+export type DailyOwnerConfidence = z.infer<typeof dailyOwnerConfidenceSchema>;
 export type DailyCheckinRequest = z.infer<typeof dailyCheckinRequestSchema>;

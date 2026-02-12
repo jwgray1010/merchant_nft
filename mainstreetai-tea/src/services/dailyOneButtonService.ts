@@ -46,6 +46,11 @@ import { getBrandVoiceProfile } from "./voiceStore";
 import { getOrRecomputeTimingModel } from "./timingModelService";
 import type { TownMicroRouteWindow } from "../schemas/townGraphSchema";
 import type { TownSeasonKey } from "../schemas/townSeasonSchema";
+import {
+  getOwnerConfidenceForBrand,
+  maybeRecordOutcomeWinMoments,
+  recordOwnerProgressAction,
+} from "./ownerConfidenceService";
 
 type DailyPackRecord = {
   id: string;
@@ -524,7 +529,7 @@ export async function runDailyOneButton(input: {
   }
 
   const twilioIntegration = await adapter.getIntegration(input.userId, input.brandId, "twilio");
-  const pack = dailyOutputSchema.parse({
+  const packBase = dailyOutputSchema.parse({
     ...promptOutput,
     post: {
       ...promptOutput.post,
@@ -546,6 +551,30 @@ export async function runDailyOneButton(input: {
     townGraphBoost: townGraphBoostSuggestion?.townGraphBoost,
     townMicroRoute: townMicroRouteSuggestion?.townMicroRoute,
     townSeasonalBoost: townSeasonalBoostSuggestion?.townSeasonalBoost,
+  });
+  await recordOwnerProgressAction({
+    ownerId: input.userId,
+    brandId: input.brandId,
+    actionType: "daily_pack",
+  }).catch(() => {
+    // Progress tracking should not block daily output.
+  });
+  const ownerConfidence = await getOwnerConfidenceForBrand({
+    ownerId: input.userId,
+    brandId: input.brandId,
+    includePromptLine: true,
+  }).catch(() => ({
+    confidenceLevel: "steady" as const,
+    streakDays: 0,
+    line: "Steady effort matters more than perfect days.",
+  }));
+  const pack = dailyOutputSchema.parse({
+    ...packBase,
+    ownerConfidence: {
+      level: ownerConfidence.confidenceLevel,
+      streakDays: ownerConfidence.streakDays,
+      line: ownerConfidence.line,
+    },
   });
 
   const history = await adapter.addHistory(
@@ -575,6 +604,13 @@ export async function runDailyOneButton(input: {
       townStoryRef: latestTownStory.id,
     }).catch(() => {
       // Story usage tracking is best-effort.
+    });
+    await recordOwnerProgressAction({
+      ownerId: input.userId,
+      brandId: input.brandId,
+      actionType: "story_used",
+    }).catch(() => {
+      // Story progress tracking is best-effort.
     });
   }
   await recordTownSuccessSignalForBrand({
@@ -768,13 +804,20 @@ export async function runRescueOneButton(input: {
   brandId: string;
   locationId?: string;
   request?: RescueRequest;
-}): Promise<{ output: RescueOutput; historyId: string }> {
+}): Promise<{ output: RescueOutput; historyId: string; confidenceBoostMessage: string }> {
   const adapter = getAdapter();
   const parsedRequest = rescueRequestSchema.parse(input.request ?? {});
   const brand = await adapter.getBrand(input.userId, input.brandId);
   if (!brand) {
     throw new Error(`Brand '${input.brandId}' was not found`);
   }
+  await recordOwnerProgressAction({
+    ownerId: input.userId,
+    brandId: input.brandId,
+    actionType: "rescue_used",
+  }).catch(() => {
+    // Progress tracking should not block rescue generation.
+  });
   const location =
     input.locationId && input.locationId.trim() !== ""
       ? await getLocationById(input.userId, input.brandId, input.locationId.trim())
@@ -846,6 +889,7 @@ export async function runRescueOneButton(input: {
   return {
     output,
     historyId: history.id,
+    confidenceBoostMessage: "Taking action is a win - let's try a quick adjustment.",
   };
 }
 
@@ -993,5 +1037,13 @@ export async function submitDailyCheckin(input: {
       // Success signal writes are best-effort.
     });
   }
+  await maybeRecordOutcomeWinMoments({
+    ownerId: input.userId,
+    brandId: input.brandId,
+    outcome: parsed.outcome,
+    actionDate: new Date(metricsRecord.createdAt).toISOString().slice(0, 10),
+  }).catch(() => {
+    // Win-moment tracking is best-effort.
+  });
   return { status: "saved" };
 }

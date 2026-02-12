@@ -47,7 +47,7 @@ router.post("/", async (req, res, next) => {
     });
   }
   try {
-    const ownerId = req.user?.id;
+    const ownerId = req.brandAccess?.ownerId ?? req.user?.id;
     if (!ownerId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -71,6 +71,7 @@ router.post("/", async (req, res, next) => {
     });
     return res.json({
       ...result.output,
+      confidenceBoostMessage: result.confidenceBoostMessage,
       meta: {
         historyId: result.historyId,
       },

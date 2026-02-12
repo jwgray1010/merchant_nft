@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 14)
+# MainStreetAI Platform API (Phase 15)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -1718,3 +1718,68 @@ Behavior updates:
 - System prompt includes explicit anti-corporate growth guardrails:
   - no aggressive sales language
   - no competitive framing between neighboring local businesses
+
+## Phase 15: Owner Confidence Engine (reduce overwhelm, reinforce momentum)
+
+Phase 15 adds an emotional-support layer for owners who need practical momentum without analytics pressure.
+
+New data model:
+- `owner_progress`
+  - lightweight consistency tracking by day/action
+  - action types:
+    - `daily_pack`
+    - `post_now`
+    - `rescue_used`
+    - `story_used`
+- `owner_win_moments`
+  - occasional encouragement notes for meaningful progress moments
+
+Confidence model:
+- `src/confidence/calcConfidence.ts`
+- Inputs:
+  - last 7 days actions
+  - last 30 days actions
+  - check-in outcomes (`slow|okay|busy`)
+  - rescue usage
+- Output:
+  - `confidenceLevel` (`low|steady|rising`)
+  - `streakDays`
+  - `momentumHint`
+
+Prompt:
+- `prompts/owner_confidence.md`
+- Generates one calm micro-encouragement line.
+
+Daily integration:
+- `POST /api/daily` now:
+  - records `owner_progress` (`daily_pack`)
+  - computes confidence summary
+  - adds prompt-based supportive line
+  - returns `ownerConfidence`:
+    - `level`
+    - `streakDays`
+    - `line`
+
+Rescue integration:
+- `POST /api/rescue` now:
+  - records `owner_progress` (`rescue_used`) immediately
+  - returns `confidenceBoostMessage`:
+    - `"Taking action is a win - let's try a quick adjustment."`
+
+Post-now integration:
+- `POST /api/post-now` records `owner_progress` (`post_now`) on successful decision generation.
+
+UI additions (Easy Mode):
+- Momentum chip near primary daily flow:
+  - `Momentum: Rising|Steady|Low`
+- 7-day streak dots (gentle, non-gamified)
+- `/app/progress` page:
+  - "You've shown up X days this week."
+  - "Slow days happen - consistency wins."
+
+Ethical support rules:
+- system prompt now includes:
+  - support owners emotionally as well as strategically
+  - encourage without pressure
+  - recognize effort over performance
+  - never compare owners or imply personal failure

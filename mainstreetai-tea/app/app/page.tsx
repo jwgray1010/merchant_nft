@@ -4,6 +4,7 @@ import { NeighborhoodChip } from "../../components/ui/Chip";
 import { PrimaryButton } from "../../components/ui/PrimaryButton";
 import { RouteCard } from "../../components/ui/RouteCard";
 import { SectionTitle } from "../../components/ui/SectionTitle";
+import { StreakDots } from "../../components/ui/StreakDots";
 import { StreetDivider } from "../../components/ui/StreetDivider";
 import { COLORS } from "../../styles/localPremiumTokens";
 
@@ -25,6 +26,17 @@ export default function PremiumLocalHomePage() {
         </p>
       </Card>
 
+      <Card>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <NeighborhoodChip>Momentum: Rising</NeighborhoodChip>
+          <a href="/app/progress" className="no-underline">
+            <StreakDots days={[true, true, true, false, false, true, true]} />
+          </a>
+        </div>
+        <p className="text-base leading-relaxed" style={{ marginTop: 8, color: COLORS.subtext }}>
+          You've been showing up consistently - keep today's step simple.
+        </p>
+      </Card>
       <PrimaryButton className="py-6 text-xl rounded-2xl bg-[#1F4E79]" type="button">
         <span className="inline-flex items-center gap-2">
           <Sparkles size={20} strokeWidth={1.5} />
