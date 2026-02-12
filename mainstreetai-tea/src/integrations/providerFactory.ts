@@ -12,6 +12,12 @@ import { SendgridProvider } from "./providers/sendgrid";
 import { TwilioProvider } from "./providers/twilio";
 import { decrypt, encrypt } from "../security/crypto";
 import { getAdapter } from "../storage/getAdapter";
+import { refreshGoogleToken } from "./google/tokenRefresh";
+import {
+  buildGoogleBusinessAuthorizeUrl,
+  completeGoogleBusinessOauthAndSave,
+  createGoogleBusinessOauthState,
+} from "./gbpOauth";
 import {
   isBufferEnabled,
   isEmailEnabled,
@@ -51,24 +57,28 @@ const bufferConfigSchema = z.object({
   apiBaseUrl: z.string().optional(),
 });
 
-const gbpSecretSchema = z.object({
-  accessToken: z.string().min(1),
+const gbpSecretEnvelopeSchema = z.object({
+  access_token: z.string().optional(),
+  refresh_token: z.string().optional(),
+  expiry_date: z.number().int().optional(),
+  accessToken: z.string().optional(),
   refreshToken: z.string().optional(),
   expiresAt: z.string().datetime({ offset: true }).optional(),
 });
 
 const gbpConfigSchema = z.object({
-  locationName: z.string().min(1),
+  locations: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        title: z.string().optional().default(""),
+      }),
+    )
+    .default([]),
+  connectedAt: z.string().datetime({ offset: true }).optional(),
+  locationName: z.string().optional(),
   apiBaseUrl: z.string().optional(),
 });
-
-type GoogleOauthState = {
-  userId: string;
-  brandId: string;
-  locationName: string;
-  nonce: string;
-  requestedAt: string;
-};
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -213,66 +223,49 @@ export async function getTwilioProvider(userId: string, brandId: string): Promis
   return provider;
 }
 
+function normalizeGoogleSecretPayload(
+  raw: z.infer<typeof gbpSecretEnvelopeSchema>,
+): { access_token: string; refresh_token?: string; expiry_date?: number } {
+  const accessToken =
+    typeof raw.access_token === "string" && raw.access_token.trim() !== ""
+      ? raw.access_token
+      : typeof raw.accessToken === "string" && raw.accessToken.trim() !== ""
+        ? raw.accessToken
+        : "";
+  const refreshToken =
+    typeof raw.refresh_token === "string" && raw.refresh_token.trim() !== ""
+      ? raw.refresh_token
+      : typeof raw.refreshToken === "string" && raw.refreshToken.trim() !== ""
+        ? raw.refreshToken
+        : undefined;
+  const expiryDate =
+    typeof raw.expiry_date === "number" && Number.isFinite(raw.expiry_date)
+      ? raw.expiry_date
+      : typeof raw.expiresAt === "string"
+        ? new Date(raw.expiresAt).getTime()
+        : undefined;
+
+  if (!accessToken) {
+    throw new Error("Google Business integration token payload missing access token");
+  }
+
+  return {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expiry_date: Number.isFinite(expiryDate ?? Number.NaN) ? expiryDate : undefined,
+  };
+}
+
 export function createGoogleBusinessConnectUrl(
   userId: string,
   brandId: string,
-  locationName: string,
+  _locationName?: string,
 ): string {
   if (!isGoogleBusinessEnabled()) {
     throw new Error("Google Business integration is disabled. Set ENABLE_GBP_INTEGRATION=true");
   }
-
-  const clientId = requiredEnv("GOOGLE_CLIENT_ID");
-  const redirectUri = requiredEnv("GOOGLE_REDIRECT_URI");
-
-  const statePayload: GoogleOauthState = {
-    userId,
-    brandId,
-    locationName,
-    nonce: Math.random().toString(36).slice(2),
-    requestedAt: new Date().toISOString(),
-  };
-  const state = encodeURIComponent(encrypt(JSON.stringify(statePayload)));
-  const scope = encodeURIComponent("https://www.googleapis.com/auth/business.manage");
-
-  return `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(
-    clientId,
-  )}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
-}
-
-async function refreshGoogleAccessToken(refreshToken: string) {
-  const clientId = requiredEnv("GOOGLE_CLIENT_ID");
-  const clientSecret = requiredEnv("GOOGLE_CLIENT_SECRET");
-
-  const payload = new URLSearchParams();
-  payload.set("client_id", clientId);
-  payload.set("client_secret", clientSecret);
-  payload.set("grant_type", "refresh_token");
-  payload.set("refresh_token", refreshToken);
-
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: payload,
-  });
-
-  const rawText = await response.text();
-  let parsed: unknown = rawText;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    // keep text
-  }
-
-  if (!response.ok) {
-    throw new Error(`Google token refresh failed (${response.status}): ${rawText}`);
-  }
-
-  const record = parsed as Record<string, unknown>;
-  return {
-    accessToken: String(record.access_token ?? ""),
-    expiresIn: Number(record.expires_in ?? 3600),
-  };
+  const state = createGoogleBusinessOauthState(userId, brandId);
+  return buildGoogleBusinessAuthorizeUrl(state);
 }
 
 export async function completeGoogleBusinessOauth(
@@ -283,71 +276,18 @@ export async function completeGoogleBusinessOauth(
   if (!isGoogleBusinessEnabled()) {
     throw new Error("Google Business integration is disabled. Set ENABLE_GBP_INTEGRATION=true");
   }
-
-  const redirectUri = requiredEnv("GOOGLE_REDIRECT_URI");
-  const clientId = requiredEnv("GOOGLE_CLIENT_ID");
-  const clientSecret = requiredEnv("GOOGLE_CLIENT_SECRET");
-
-  const stateJson = decrypt(decodeURIComponent(stateToken));
-  const parsedState = JSON.parse(stateJson) as GoogleOauthState;
-  if (parsedState.userId !== userId) {
+  const result = await completeGoogleBusinessOauthAndSave({
+    code,
+    stateToken,
+  });
+  if (result.userId !== userId) {
     throw new Error("OAuth state user mismatch");
   }
-
-  const tokenPayload = new URLSearchParams();
-  tokenPayload.set("code", code);
-  tokenPayload.set("client_id", clientId);
-  tokenPayload.set("client_secret", clientSecret);
-  tokenPayload.set("redirect_uri", redirectUri);
-  tokenPayload.set("grant_type", "authorization_code");
-
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: tokenPayload,
-  });
-  const rawText = await response.text();
-  let parsed: unknown = rawText;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    // keep text
-  }
-
-  if (!response.ok) {
-    throw new Error(`Google OAuth exchange failed (${response.status}): ${rawText}`);
-  }
-
-  const parsedRecord = parsed as Record<string, unknown>;
-  const accessToken = String(parsedRecord.access_token ?? "");
-  if (!accessToken) {
-    throw new Error("Google OAuth response did not include access_token");
-  }
-
-  const refreshToken = String(parsedRecord.refresh_token ?? "");
-  const expiresIn = Number(parsedRecord.expires_in ?? 3600);
-  const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
-
   const adapter = getAdapter();
-  const secretsEnc = encrypt(
-    JSON.stringify({
-      accessToken,
-      refreshToken: refreshToken || undefined,
-      expiresAt,
-    }),
-  );
-
-  const integration = await adapter.upsertIntegration(
-    userId,
-    parsedState.brandId,
-    "google_business",
-    "connected",
-    {
-      locationName: parsedState.locationName,
-    },
-    secretsEnc,
-  );
-
+  const integration = await adapter.getIntegration(userId, result.brandId, "google_business");
+  if (!integration) {
+    throw new Error("Google Business integration was not persisted");
+  }
   return integration;
 }
 
@@ -366,17 +306,18 @@ export async function getGoogleBusinessProvider(
   }
 
   const config = gbpConfigSchema.parse(integration.config);
-  let secrets = parseEncryptedJson(integration.secretsEnc, gbpSecretSchema);
+  const rawSecrets = parseEncryptedJson(integration.secretsEnc, gbpSecretEnvelopeSchema);
+  let secrets = normalizeGoogleSecretPayload(rawSecrets);
 
-  if (secrets.expiresAt && new Date(secrets.expiresAt).getTime() <= Date.now() + 15_000) {
-    if (!secrets.refreshToken) {
+  if (secrets.expiry_date && secrets.expiry_date <= Date.now() + 15_000) {
+    if (!secrets.refresh_token) {
       throw new Error("Google Business access token expired and no refresh token is available");
     }
-    const refreshed = await refreshGoogleAccessToken(secrets.refreshToken);
+    const refreshed = await refreshGoogleToken(secrets.refresh_token);
     secrets = {
-      accessToken: refreshed.accessToken,
-      refreshToken: secrets.refreshToken,
-      expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
+      access_token: refreshed.access_token,
+      refresh_token: refreshed.refresh_token ?? secrets.refresh_token,
+      expiry_date: refreshed.expiry_date,
     };
     await adapter.upsertIntegration(
       userId,
@@ -388,9 +329,16 @@ export async function getGoogleBusinessProvider(
     );
   }
 
+  const defaultLocationName = config.locations[0]?.name ?? config.locationName;
+  if (!defaultLocationName) {
+    throw new Error(
+      "Google Business integration has no connected locations. Reconnect and grant location access.",
+    );
+  }
+
   return new GoogleBusinessProvider({
-    accessToken: secrets.accessToken,
-    locationName: config.locationName,
+    accessToken: secrets.access_token,
+    defaultLocationName,
     apiBaseUrl: config.apiBaseUrl,
   });
 }

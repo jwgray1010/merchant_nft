@@ -1,8 +1,6 @@
 import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
 import {
-  createGoogleBusinessConnectUrl,
-  getGoogleBusinessProvider,
   getTwilioProvider,
 } from "../integrations/providerFactory";
 import {
@@ -2371,6 +2369,30 @@ router.get("/integrations/gbp", async (req, res, next) => {
       selectedBrandId !== null
         ? await adapter.getIntegration(userId, selectedBrandId, "google_business")
         : null;
+    const locations =
+      existing &&
+      typeof existing.config === "object" &&
+      existing.config !== null &&
+      Array.isArray((existing.config as { locations?: unknown }).locations)
+        ? ((existing.config as { locations: unknown[] }).locations
+            .map((entry) => {
+              if (typeof entry !== "object" || entry === null) {
+                return null;
+              }
+              const row = entry as Record<string, unknown>;
+              const name = typeof row.name === "string" ? row.name : "";
+              if (!name) {
+                return null;
+              }
+              return {
+                name,
+                title: typeof row.title === "string" ? row.title : "",
+              };
+            })
+            .filter(
+              (entry): entry is { name: string; title: string } => entry !== null,
+            ) as Array<{ name: string; title: string }>)
+        : [];
 
     const notice =
       status === "connected"
@@ -2390,10 +2412,22 @@ router.get("/integrations/gbp", async (req, res, next) => {
         <h2>Connect OAuth</h2>
         ${
           selectedBrandId
-            ? `<form method="POST" action="/admin/integrations/gbp/connect?brandId=${encodeURIComponent(selectedBrandId)}">
-                <div class="field"><label>Location Name (example: accounts/123/locations/456)</label><input name="locationName" value="${escapeHtml(String((existing?.config as { locationName?: string } | undefined)?.locationName ?? ""))}" required /></div>
-                <button type="submit">Start Google OAuth</button>
-              </form>`
+            ? `<p class="muted">Connect your Google account, then select one of your business locations automatically.</p>
+              <a class="button" href="/api/integrations/gbp/start?brandId=${encodeURIComponent(selectedBrandId)}">Connect Google Business</a>
+              <div style="margin-top:12px;">
+                <h3 style="margin-bottom:6px;">Connected Locations</h3>
+                ${
+                  locations.length > 0
+                    ? `<table><thead><tr><th>Location Name</th><th>Title</th></tr></thead><tbody>${locations
+                        .map(
+                          (location) => `<tr><td><code>${escapeHtml(location.name)}</code></td><td>${escapeHtml(
+                            location.title || "-",
+                          )}</td></tr>`,
+                        )
+                        .join("")}</tbody></table>`
+                    : `<p class="muted">No Google Business locations saved yet.</p>`
+                }
+              </div>`
             : "<p>Select a brand first.</p>"
         }
       </div>
@@ -2409,18 +2443,11 @@ router.get("/integrations/gbp", async (req, res, next) => {
 
 router.post("/integrations/gbp/connect", async (req, res, next) => {
   try {
-    const userId = req.user?.id ?? "local-dev-user";
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("GBP Integration", "<h1>Missing brandId query parameter.</h1>"));
     }
-    const locationName = optionalText((req.body as Record<string, unknown> | undefined)?.locationName);
-    if (!locationName) {
-      return res.status(400).type("html").send(renderLayout("GBP Integration", "<h1>Missing locationName.</h1>"));
-    }
-
-    const authUrl = createGoogleBusinessConnectUrl(userId, brandId, locationName);
-    return res.redirect(authUrl);
+    return res.redirect(`/api/integrations/gbp/start?brandId=${encodeURIComponent(brandId)}`);
   } catch (error) {
     return next(error);
   }
@@ -2764,8 +2791,8 @@ router.get("/gbp", async (req, res, next) => {
     const status = optionalText(req.query.status);
 
     const notice =
-      status === "sent"
-        ? { type: "success" as const, text: "Google Business post created." }
+      status === "queued"
+        ? { type: "success" as const, text: "Google Business post queued." }
         : undefined;
 
     const html = renderLayout(
@@ -2783,13 +2810,15 @@ router.get("/gbp", async (req, res, next) => {
             ? `<form method="POST" action="/admin/gbp/post?brandId=${encodeURIComponent(selectedBrandId)}">
                 <div class="field"><label>Summary</label><textarea name="summary" required></textarea></div>
                 <div class="grid">
-                  <div class="field"><label>CTA (optional)</label><input name="cta" /></div>
-                  <div class="field"><label>URL (optional)</label><input name="url" /></div>
+                  <div class="field"><label>Call-to-action URL (optional)</label><input name="callToActionUrl" /></div>
+                  <div class="field"><label>Media URL (optional)</label><input name="mediaUrl" /></div>
+                  <div class="field"><label>Scheduled For (optional, local datetime)</label><input type="datetime-local" name="scheduledFor" /></div>
                 </div>
-                <button type="submit">Post to GBP</button>
+                <button type="submit">Queue GBP Post</button>
               </form>`
             : "<p>Select a brand first.</p>"
         }
+        <p class="muted">Posts are always queued and published by /api/jobs/outbox cron.</p>
         <p class="muted">Need to connect first? <a href="/admin/integrations/gbp${selectedBrandId ? `?brandId=${encodeURIComponent(selectedBrandId)}` : ""}">Open GBP integration</a></p>
       </div>
       `,
@@ -2812,15 +2841,62 @@ router.post("/gbp/post", async (req, res, next) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const parsed = gbpPostSchema.parse({
       summary: String(body.summary ?? ""),
-      cta: optionalText(body.cta),
-      url: optionalText(body.url),
+      callToActionUrl: optionalText(body.callToActionUrl),
+      mediaUrl: optionalText(body.mediaUrl),
+      scheduledFor: optionalText(body.scheduledFor)
+        ? parseLocalDateTimeToIso(String(body.scheduledFor))
+        : undefined,
     });
+    const adapter = getAdapter();
+    const integration = await adapter.getIntegration(userId, brandId, "google_business");
+    if (!integration) {
+      return res.status(400).type("html").send(
+        renderLayout("GBP", "<h1>Google Business integration is not connected for this brand.</h1>"),
+      );
+    }
 
-    const provider = await getGoogleBusinessProvider(userId, brandId);
-    const result = await provider.createPost(parsed);
-    await getAdapter().addHistory(userId, brandId, "gbp-post", parsed, result);
+    const config =
+      typeof integration.config === "object" && integration.config !== null
+        ? (integration.config as Record<string, unknown>)
+        : {};
+    const locations = Array.isArray(config.locations)
+      ? config.locations
+          .map((entry) => {
+            if (typeof entry !== "object" || entry === null) {
+              return null;
+            }
+            const record = entry as Record<string, unknown>;
+            const name = typeof record.name === "string" ? record.name : "";
+            return name ? name : null;
+          })
+          .filter((entry): entry is string => entry !== null)
+      : [];
+    const locationName =
+      locations[0] ??
+      (typeof config.locationName === "string" ? config.locationName : undefined);
+    if (!locationName) {
+      return res.status(400).type("html").send(
+        renderLayout(
+          "GBP",
+          "<h1>No Google Business locations were found. Reconnect GBP and grant location access.</h1>",
+        ),
+      );
+    }
 
-    return res.redirect(`/admin/gbp?brandId=${encodeURIComponent(brandId)}&status=sent`);
+    await adapter.enqueueOutbox(
+      userId,
+      brandId,
+      "gbp_post",
+      {
+        locationName,
+        summary: parsed.summary,
+        callToActionUrl: parsed.callToActionUrl,
+        mediaUrl: parsed.mediaUrl,
+      },
+      parsed.scheduledFor ? new Date(parsed.scheduledFor).toISOString() : new Date().toISOString(),
+    );
+
+    return res.redirect(`/admin/gbp?brandId=${encodeURIComponent(brandId)}&status=queued`);
   } catch (error) {
     return next(error);
   }

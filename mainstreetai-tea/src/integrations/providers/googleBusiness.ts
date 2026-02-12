@@ -2,18 +2,18 @@ import type { GbpPostInput, GbpPostResult, GbpProvider } from "../Provider";
 
 export type GoogleBusinessProviderOptions = {
   accessToken: string;
-  locationName: string;
+  defaultLocationName: string;
   apiBaseUrl?: string;
 };
 
 export class GoogleBusinessProvider implements GbpProvider {
   private readonly accessToken: string;
-  private readonly locationName: string;
+  private readonly defaultLocationName: string;
   private readonly apiBaseUrl: string;
 
   constructor(options: GoogleBusinessProviderOptions) {
     this.accessToken = options.accessToken;
-    this.locationName = options.locationName;
+    this.defaultLocationName = options.defaultLocationName;
     this.apiBaseUrl = (options.apiBaseUrl ?? "https://mybusiness.googleapis.com/v4").replace(
       /\/+$/,
       "",
@@ -21,21 +21,36 @@ export class GoogleBusinessProvider implements GbpProvider {
   }
 
   async createPost(input: GbpPostInput): Promise<GbpPostResult> {
+    const locationName = (input.locationName ?? this.defaultLocationName).trim();
+    if (!locationName) {
+      throw new Error("Google Business locationName is required");
+    }
+
     const payload: Record<string, unknown> = {
       languageCode: "en-US",
       summary: input.summary,
       topicType: "STANDARD",
     };
 
-    if (input.url) {
+    const ctaUrl = input.callToActionUrl ?? input.url;
+    if (ctaUrl) {
       payload.callToAction = {
         actionType: (input.cta ?? "LEARN_MORE").toUpperCase(),
-        url: input.url,
+        url: ctaUrl,
       };
     }
 
+    if (input.mediaUrl) {
+      payload.media = [
+        {
+          mediaFormat: "PHOTO",
+          sourceUrl: input.mediaUrl,
+        },
+      ];
+    }
+
     const response = await fetch(
-      `${this.apiBaseUrl}/${this.locationName.replace(/^\/+/, "")}/localPosts`,
+      `${this.apiBaseUrl}/${locationName.replace(/^\/+/, "")}/localPosts`,
       {
         method: "POST",
         headers: {

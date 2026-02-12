@@ -10,6 +10,7 @@ import bufferOAuthRouter from "./routes/bufferOAuth";
 import emailDigestRouter from "./routes/emailDigest";
 import eventsRouter from "./routes/events";
 import gbpRouter from "./routes/gbp";
+import gbpOAuthRouter from "./routes/gbpOAuth";
 import historyRouter from "./routes/history";
 import integrationsRouter from "./routes/integrations";
 import insightsRouter from "./routes/insights";
@@ -71,12 +72,14 @@ app.use(
 
 // Next.js-style API aliases for phased workflow compatibility
 app.use("/api/integrations/buffer", bufferOAuthRouter);
+app.use("/api/integrations/gbp", gbpOAuthRouter);
 app.use("/api/integrations", verifyAuth, integrationsRouter);
 app.use("/api/publish", verifyAuth, publishRouter);
 app.use("/api/posts", verifyAuth, postsRouter);
 app.use("/api/history", verifyAuth, historyRouter);
 app.use("/api/sms", verifyAuth, smsRouter);
 app.use("/api/email", verifyAuth, emailDigestRouter);
+app.use("/api/gbp", verifyAuth, gbpRouter);
 app.use("/api/jobs/outbox", jobsOutboxRouter);
 app.use("/api/jobs/digests", jobsDigestsRouter);
 

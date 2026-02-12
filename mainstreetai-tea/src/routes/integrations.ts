@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { bufferConnectSchema } from "../schemas/bufferSchema";
-import { gbpConnectSchema } from "../schemas/gbpSchema";
 import { getAdapter } from "../storage/getAdapter";
 import {
   completeGoogleBusinessOauth,
@@ -115,14 +114,6 @@ router.post("/gbp/connect", async (req, res, next) => {
     return res.status(parsedBrand.response.status).json(parsedBrand.response.body);
   }
 
-  const parsedBody = gbpConnectSchema.safeParse(req.body);
-  if (!parsedBody.success) {
-    return res.status(400).json({
-      error: "Invalid GBP connect payload",
-      details: parsedBody.error.flatten(),
-    });
-  }
-
   try {
     const userId = req.user?.id;
     if (!userId) {
@@ -135,11 +126,7 @@ router.post("/gbp/connect", async (req, res, next) => {
       return res.status(404).json({ error: `Brand '${parsedBrand.brandId}' was not found` });
     }
 
-    const authUrl = createGoogleBusinessConnectUrl(
-      userId,
-      parsedBrand.brandId,
-      parsedBody.data.locationName,
-    );
+    const authUrl = createGoogleBusinessConnectUrl(userId, parsedBrand.brandId);
 
     if (req.query.redirect === "1") {
       return res.redirect(authUrl);

@@ -105,9 +105,44 @@ export async function dispatchOutboxRecord(record: OutboxRecord): Promise<unknow
 
     const provider = await getGoogleBusinessProvider(record.ownerId, record.brandId);
     const result = await provider.createPost({
+      locationName:
+        typeof payload.locationName === "string" && payload.locationName.trim() !== ""
+          ? payload.locationName
+          : undefined,
       summary,
-      cta: typeof payload.cta === "string" && payload.cta.trim() !== "" ? payload.cta : undefined,
-      url: typeof payload.url === "string" && payload.url.trim() !== "" ? payload.url : undefined,
+      cta:
+        typeof payload.cta === "string" && payload.cta.trim() !== ""
+          ? payload.cta
+          : undefined,
+      callToActionUrl:
+        typeof payload.callToActionUrl === "string" && payload.callToActionUrl.trim() !== ""
+          ? payload.callToActionUrl
+          : typeof payload.ctaUrl === "string" && payload.ctaUrl.trim() !== ""
+            ? payload.ctaUrl
+            : typeof payload.url === "string" && payload.url.trim() !== ""
+              ? payload.url
+              : undefined,
+      mediaUrl:
+        typeof payload.mediaUrl === "string" && payload.mediaUrl.trim() !== ""
+          ? payload.mediaUrl
+          : undefined,
+    });
+    await adapter.addPost(record.ownerId, record.brandId, {
+      platform: "other",
+      postedAt: new Date().toISOString(),
+      mediaType:
+        typeof payload.mediaUrl === "string" && payload.mediaUrl.trim() !== ""
+          ? "photo"
+          : "text",
+      captionUsed: summary,
+      notes: `Posted to Google Business (${String(payload.locationName ?? "default location")})`,
+      status: "posted",
+      providerMeta: {
+        outboxId: record.id,
+        provider: "google_business",
+        locationName: payload.locationName,
+        providerResult: result,
+      },
     });
     await adapter.addHistory(record.ownerId, record.brandId, "gbp-post", payload, result);
     return result;

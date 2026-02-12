@@ -26,6 +26,9 @@ export type SmsResult = {
 
 export type GbpPostInput = {
   summary: string;
+  locationName?: string;
+  callToActionUrl?: string;
+  mediaUrl?: string;
   cta?: string;
   url?: string;
 };

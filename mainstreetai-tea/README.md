@@ -110,7 +110,8 @@ DEFAULT_DIGEST_TO=
 
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=http://localhost:3001/integrations/gbp/callback
+GOOGLE_REDIRECT_URI=http://localhost:3001/api/integrations/gbp/callback
+GOOGLE_OAUTH_SCOPES=https://www.googleapis.com/auth/business.manage
 ```
 
 ## Storage modes
@@ -552,6 +553,8 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `GET /integrations?brandId=...`
 - `GET /api/integrations/buffer/start?brandId=...`
 - `GET /api/integrations/buffer/callback`
+- `GET /api/integrations/gbp/start?brandId=...`
+- `GET /api/integrations/gbp/callback`
 - `POST /api/publish?brandId=...`
 - `POST /api/jobs/outbox` (cron; requires `x-cron-secret`)
 - `GET /api/jobs/digests` (cron; requires `x-cron-secret`)
@@ -569,12 +572,11 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `POST /api/email/digest/preview?brandId=...`
 - `POST /api/email/digest/send?brandId=...`
 - `GET /api/email/log?brandId=...`
-- `POST /integrations/gbp/connect?brandId=...`
-- `GET /integrations/gbp/callback`
+- `POST /api/gbp/post?brandId=...`
 - `POST /publish?brandId=...`
 - `POST /sms/send?brandId=...`
 - `POST /sms/campaign?brandId=...`
-- `POST /gbp/post?brandId=...`
+- `POST /gbp/post?brandId=...` (legacy alias)
 - `POST /email/digest/preview?brandId=...`
 - `POST /email/digest/send?brandId=...`
 - `GET /outbox?brandId=...`
@@ -592,7 +594,8 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - Google Business Profile:
   - enable `ENABLE_GBP_INTEGRATION=true`
   - set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
-  - connect per brand with `POST /integrations/gbp/connect`
+  - optional scopes var: `GOOGLE_OAUTH_SCOPES=https://www.googleapis.com/auth/business.manage`
+  - connect per brand with `GET /api/integrations/gbp/start?brandId=...`
 - Email digest (SendGrid):
   - enable `ENABLE_EMAIL_INTEGRATION=true`
   - set `SENDGRID_API_KEY`, `DIGEST_FROM_EMAIL`
@@ -610,10 +613,21 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 
 Vercel Cron example target:
 
-- `POST https://yourapp.vercel.app/api/jobs/outbox`
+- `POST https://yourapp.vercel.app/api/jobs/outbox` (every 5 minutes)
 - header: `x-cron-secret: <CRON_SECRET>`
-- `GET https://yourapp.vercel.app/api/jobs/digests`
+- `GET https://yourapp.vercel.app/api/jobs/digests` (every hour)
 - header: `x-cron-secret: <CRON_SECRET>`
+
+`vercel.json`:
+
+```json
+{
+  "crons": [
+    { "path": "/api/jobs/outbox", "schedule": "*/5 * * * *" },
+    { "path": "/api/jobs/digests", "schedule": "0 * * * *" }
+  ]
+}
+```
 
 ### SMS examples (Twilio)
 
@@ -678,20 +692,45 @@ curl "http://localhost:3001/api/sms/log?brandId=main-street-nutrition&limit=100"
 Start OAuth:
 
 ```bash
-curl -X POST "http://localhost:3001/integrations/gbp/connect?brandId=main-street-nutrition" \
-  -H "$AUTH_HEADER" \
-  -H "Content-Type: application/json" \
-  -d '{"locationName":"accounts/<account-id>/locations/<location-id>"}'
+curl -L "http://localhost:3001/api/integrations/gbp/start?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER"
 ```
 
-Create GBP post:
+Queue GBP post:
 
 ```bash
-curl -X POST "http://localhost:3001/gbp/post?brandId=main-street-nutrition" \
+curl -X POST "http://localhost:3001/api/gbp/post?brandId=main-street-nutrition" \
   -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
-  -d '{"summary":"Fresh daily specials are ready!","cta":"LEARN_MORE","url":"https://example.com"}'
+  -d '{
+    "summary":"Fresh daily specials are ready!",
+    "callToActionUrl":"https://example.com",
+    "mediaUrl":"https://example.com/promo.jpg",
+    "scheduledFor":"2026-02-20T21:00:00Z"
+  }'
 ```
+
+Posts are always queued to outbox (`type="gbp_post"`) and published by cron.
+
+### Google Business Profile setup
+
+1. Create a Google Cloud project.
+2. Enable Business Profile APIs for your project.
+3. Configure OAuth consent screen.
+4. Add redirect URI:
+   - `<APP_BASE_URL>/api/integrations/gbp/callback`
+5. Set env vars in Vercel:
+   - `GOOGLE_CLIENT_ID`
+   - `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_REDIRECT_URI`
+   - `GOOGLE_OAUTH_SCOPES=https://www.googleapis.com/auth/business.manage`
+   - `APP_BASE_URL`
+
+Cron workflow:
+
+- GBP posts are queued into outbox.
+- Vercel Cron calls `/api/jobs/outbox` every 5 minutes.
+- Outbox publishes due GBP posts automatically.
 
 ### Email digest examples
 

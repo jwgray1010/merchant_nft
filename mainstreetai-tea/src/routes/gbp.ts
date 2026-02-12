@@ -1,10 +1,22 @@
 import { Router } from "express";
+import { z } from "zod";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { gbpPostSchema } from "../schemas/gbpSchema";
 import { getAdapter } from "../storage/getAdapter";
-import { getGoogleBusinessProvider } from "../integrations/providerFactory";
 
 const router = Router();
+
+const gbpIntegrationConfigSchema = z.object({
+  locations: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        title: z.string().optional(),
+      }),
+    )
+    .default([]),
+  locationName: z.string().optional(),
+});
 
 router.post("/post", async (req, res, next) => {
   const rawBrandId = req.query.brandId;
@@ -41,13 +53,46 @@ router.post("/post", async (req, res, next) => {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const provider = await getGoogleBusinessProvider(userId, parsedBrandId.data);
-    const result = await provider.createPost(parsedBody.data);
-    await adapter.addHistory(userId, parsedBrandId.data, "gbp-post", parsedBody.data, result);
+    const integration = await adapter.getIntegration(userId, parsedBrandId.data, "google_business");
+    if (!integration) {
+      return res.status(400).json({
+        error: "Google Business integration is not connected for this brand",
+      });
+    }
 
-    return res.json({
-      status: "sent",
-      result,
+    const config = gbpIntegrationConfigSchema.parse(integration.config);
+    const locationName = config.locations[0]?.name ?? config.locationName;
+    if (!locationName) {
+      return res.status(400).json({
+        error:
+          "Google Business integration has no locations. Reconnect and grant business location permissions.",
+      });
+    }
+
+    const ctaUrl = parsedBody.data.callToActionUrl ?? parsedBody.data.url;
+    const nowIso = new Date().toISOString();
+    const scheduledFor = parsedBody.data.scheduledFor
+      ? new Date(parsedBody.data.scheduledFor).toISOString()
+      : nowIso;
+    const outbox = await adapter.enqueueOutbox(
+      userId,
+      parsedBrandId.data,
+      "gbp_post",
+      {
+        locationName,
+        summary: parsedBody.data.summary,
+        callToActionUrl: ctaUrl,
+        mediaUrl: parsedBody.data.mediaUrl,
+        cta: parsedBody.data.cta,
+      },
+      scheduledFor,
+    );
+
+    return res.status(202).json({
+      queued: true,
+      outboxId: outbox.id,
+      scheduledFor: outbox.scheduledFor ?? undefined,
+      warning: "GBP post queued. /api/jobs/outbox cron publishes due posts automatically.",
     });
   } catch (error) {
     return next(error);
