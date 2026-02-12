@@ -8,6 +8,3 @@ export const COLORS = {
   subtext: "#6B7280",
   border: "#E6E7EB",
 };
-
-export const RADIUS = "rounded-2xl";
-export const SHADOW = "shadow-sm";

@@ -448,17 +448,20 @@ function easyLayout(input: {
     <title>${escapeHtml(input.title)} · MainStreetAI Easy Mode</title>
     <style>
       :root {
-        --background: #F8F9FB;
+        --background: #F7F7F5;
         --card: #FFFFFF;
-        --primary: #1F7AE0;
-        --accent: #22C55E;
-        --text: #111827;
+        --primary: #1F4E79;
+        --accent: #3AA17E;
+        --highlight: #E9F3FF;
+        --text: #0F172A;
         --subtext: #6B7280;
-        --border: #E5E7EB;
+        --border: #E6E7EB;
       }
       body {
         margin: 0;
         font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 1rem;
+        line-height: 1.65;
         background: var(--background);
         color: var(--text);
         padding-bottom: 98px;
@@ -466,22 +469,22 @@ function easyLayout(input: {
       }
       h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; margin: 0; }
       .app-shell { min-height: 100vh; display: flex; justify-content: center; }
-      .app-wrap { width: min(100%, 28rem); margin: 0 auto; padding: 16px 14px 18px; display: grid; gap: 12px; box-sizing: border-box; }
+      .app-wrap { width: min(100%, 28rem); margin: 0 auto; padding: 16px 14px 20px; display: grid; gap: 16px; box-sizing: border-box; }
       .rounded-2xl { border-radius: 1rem; }
       .rounded-xl { border-radius: 0.8rem; }
       .p-6 { padding: 1.5rem; }
       .py-4 { padding-top: 1rem; padding-bottom: 1rem; }
-      .shadow-sm { box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07); }
+      .shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
       .bg-white { background: var(--card); }
       .text-lg { font-size: 1.1rem; }
       .text-xl { font-size: 1.35rem; margin: 0 0 2px 0; letter-spacing: -0.01em; }
       .font-semibold { font-weight: 600; }
       .w-full { width: 100%; box-sizing: border-box; }
-      .muted { color: var(--subtext); font-size: 0.9rem; margin: 0; }
+      .muted { color: var(--subtext); font-size: 0.92rem; margin: 0; line-height: 1.6; }
       .section-title {
         font-size: 0.72rem;
         text-transform: uppercase;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.11em;
         color: var(--subtext);
         margin: 0 0 8px 0;
       }
@@ -493,9 +496,10 @@ function easyLayout(input: {
         border: 1px solid var(--border);
         display: block;
         min-height: 118px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.03);
         transition: all 150ms ease-out;
       }
-      .action-card:hover { transform: translateY(-1px); border-color: #d5dbe3; }
+      .action-card:hover { opacity: 0.95; transform: translateY(-1px); }
       .action-card .emoji { font-size: 1.15rem; display: block; margin-bottom: 8px; color: var(--subtext); }
       .selector-grid { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; margin-top: 12px; }
       .field-label { display: grid; gap: 6px; font-size: 0.88rem; color: #4b5563; }
@@ -530,15 +534,16 @@ function easyLayout(input: {
       }
       .primary-button, .secondary-button {
         width: 100%;
-        font-size: 1.02rem;
-        padding: 1rem;
+        font-size: 1.04rem;
+        padding: 1.08rem;
         border-radius: 0.8rem;
         font-weight: 600;
         box-sizing: border-box;
         transition: all 150ms ease-out;
       }
+      .primary-button:hover, .secondary-button:hover { opacity: 0.95; }
       .primary-button:active, .secondary-button:active { transform: scale(0.98); }
-      .hero-button { padding-top: 1.5rem; padding-bottom: 1.5rem; font-size: 1.24rem; border-radius: 1rem; }
+      .hero-button { padding-top: 1.42rem; padding-bottom: 1.42rem; font-size: 1.22rem; border-radius: 1rem; }
       .output-card {
         border: 1px solid var(--border);
         border-radius: 1rem;
@@ -552,9 +557,17 @@ function easyLayout(input: {
         border-radius: 1rem;
         padding: 14px;
         background: var(--card);
+        box-shadow: 0 1px 2px rgba(0,0,0,0.03);
       }
       .divider { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
-      .button-stack { display: grid; gap: 8px; margin-top: 12px; }
+      .button-stack { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+      .button-stack .primary-button,
+      .button-stack .secondary-button {
+        width: auto;
+        min-width: 120px;
+        padding: 0.66rem 0.92rem;
+        font-size: 0.88rem;
+      }
       .output-label { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--subtext); margin: 0 0 8px 0; }
       .output-value { white-space: pre-wrap; font-size: 1rem; margin: 0 0 8px 0; }
       .copy-button { border: 1px solid var(--border); background: var(--card); border-radius: 10px; padding: 8px 10px; }
@@ -586,6 +599,7 @@ function easyLayout(input: {
         min-height: 56px;
         transition: all 150ms ease-out;
       }
+      .nav-item:hover { opacity: 0.95; }
       .nav-item.active { color: var(--primary); }
       .nav-icon { font-size: 1rem; line-height: 1; }
       .nav-label { font-size: 0.66rem; letter-spacing: 0.01em; }
@@ -609,6 +623,21 @@ function easyLayout(input: {
       .coach-modal.hidden { display: none; }
       .coach-card { width: min(520px, 100%); display: grid; gap: 8px; }
       .notice { border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 0.9rem; padding: 10px; color: #1e3a8a; }
+      .town-pulse-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.3rem 0.75rem;
+        border-radius: 999px;
+        background: var(--highlight);
+        color: var(--primary);
+        border: 1px solid #d8e8fb;
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: 500;
+        transition: all 150ms ease-out;
+      }
+      .town-pulse-badge:hover { opacity: 0.95; }
       .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       @media (max-width: 420px) {
         .action-grid { grid-template-columns: 1fr; }
@@ -984,8 +1013,8 @@ router.get("/", async (req, res, next) => {
       </label>
     </details>`;
     const townPulseIndicator = townPulse
-      ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">Town Pulse Active</a>`
-      : `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">Town Pulse Warming Up</a>`;
+      ? `<a class="town-pulse-badge" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">Town Pulse Active</a>`
+      : `<a class="town-pulse-badge" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">Town Pulse Warming Up</a>`;
 
     const staffView =
       context.role === "member"
@@ -1021,8 +1050,8 @@ router.get("/", async (req, res, next) => {
               <textarea id="daily-notes" placeholder="Only if needed: weather, staffing, special event, etc."></textarea>
             </details>
             ${routeWindowSelect}
-            <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">✦ Make Me Money Today</button>
-            <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">🛟 Fix a Slow Day</button>
+            <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">Make Me Money Today</button>
+            <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">Fix a Slow Day</button>
             <p id="daily-status" class="muted" style="margin-top:8px;"></p>
           </section>
           <section class="rounded-2xl p-6 shadow-sm bg-white">
@@ -2232,53 +2261,66 @@ router.get("/settings", async (req, res, next) => {
       .join("");
     const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
       <h2 class="text-xl">Settings</h2>
-      <p class="muted">Keep this simple. Advanced tools are in Advanced Settings.</p>
-      <form method="POST" action="${escapeHtml(withSelection("/app/settings/automatic-help", context))}">
-        <input type="hidden" name="enabled" value="${autopilotOn ? "false" : "true"}" />
-        <button class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="submit">
-          ${autopilotOn ? "Automatic Help: ON (tap to turn off)" : "Automatic Help: OFF (tap to turn on)"}
-        </button>
-      </form>
+      <p class="muted">Simple, calm controls for your local workspace.</p>
     </section>
     <section class="rounded-2xl p-6 shadow-sm bg-white">
-      <h3>Local Network</h3>
-      <p class="muted">Join Town Mode for subtle local cross-support ideas.</p>
-      <form method="POST" action="${escapeHtml(withSelection("/app/settings/local-network", context))}" style="display:grid;gap:10px;">
-        <label><input type="checkbox" name="enabled" ${townEnabled ? "checked" : ""} /> Participate in Local Town Mode</label>
-        <label class="field-label">Town
-          <input name="townName" value="${escapeHtml(defaultTownName)}" placeholder="Independence KS" />
-        </label>
-        <label class="field-label">Participation level
-          <select name="participationLevel">
-            <option value="standard" ${participationLevel === "standard" ? "selected" : ""}>standard</option>
-            <option value="leader" ${participationLevel === "leader" ? "selected" : ""}>leader</option>
-            <option value="hidden" ${participationLevel === "hidden" ? "selected" : ""}>hidden</option>
-          </select>
-        </label>
-        <fieldset style="border:1px solid #d1d5db;border-radius:12px;padding:10px;">
-          <legend class="muted" style="padding:0 6px;">Pick partner categories for optional collaboration</legend>
-          <div style="display:grid;gap:8px;grid-template-columns:1fr 1fr;">
-            ${partnerCategoryCheckboxes}
-          </div>
-        </fieldset>
-        <button class="secondary-button" type="submit">Save Local Network</button>
-      </form>
+      <p class="section-title">Workspace cards</p>
+      <div style="display:grid;gap:10px;">
+        <a class="action-card rounded-2xl p-6 shadow-sm bg-white" href="${escapeHtml(withSelection("/app/town", context))}">
+          <span class="emoji">📍</span>
+          <strong>Local Network</strong>
+          <p class="muted" style="margin-top:8px;">Town context, pulse, graph, and seasonal flow.</p>
+        </a>
+        <a class="action-card rounded-2xl p-6 shadow-sm bg-white" href="${escapeHtml(withSelection("/admin/autopilot", context))}">
+          <span class="emoji">✦</span>
+          <strong>Automatic Help</strong>
+          <p class="muted" style="margin-top:8px;">Cadence, channels, and everyday automation settings.</p>
+        </a>
+        <a class="action-card rounded-2xl p-6 shadow-sm bg-white" href="${escapeHtml(withSelection("/admin/integrations", context))}">
+          <span class="emoji">📷</span>
+          <strong>Integrations</strong>
+          <p class="muted" style="margin-top:8px;">Connect social, SMS, and local publishing tools.</p>
+        </a>
+        <a class="action-card rounded-2xl p-6 shadow-sm bg-white" href="${escapeHtml(withSelection("/admin/billing", context))}">
+          <span class="emoji">📈</span>
+          <strong>Billing</strong>
+          <p class="muted" style="margin-top:8px;">Plan details and subscription controls.</p>
+        </a>
+      </div>
+      <details style="margin-top:12px;">
+        <summary class="muted">Quick toggles (optional)</summary>
+        <form method="POST" action="${escapeHtml(withSelection("/app/settings/automatic-help", context))}" style="display:grid;gap:10px;margin-top:10px;">
+          <input type="hidden" name="enabled" value="${autopilotOn ? "false" : "true"}" />
+          <button class="primary-button" type="submit">
+            ${autopilotOn ? "Automatic Help is ON (tap to turn off)" : "Automatic Help is OFF (tap to turn on)"}
+          </button>
+        </form>
+        <form method="POST" action="${escapeHtml(withSelection("/app/settings/local-network", context))}" style="display:grid;gap:10px;margin-top:10px;">
+          <label><input type="checkbox" name="enabled" ${townEnabled ? "checked" : ""} /> Participate in Local Town Mode</label>
+          <label class="field-label">Town
+            <input name="townName" value="${escapeHtml(defaultTownName)}" placeholder="Independence KS" />
+          </label>
+          <label class="field-label">Participation level
+            <select name="participationLevel">
+              <option value="standard" ${participationLevel === "standard" ? "selected" : ""}>standard</option>
+              <option value="leader" ${participationLevel === "leader" ? "selected" : ""}>leader</option>
+              <option value="hidden" ${participationLevel === "hidden" ? "selected" : ""}>hidden</option>
+            </select>
+          </label>
+          <fieldset style="border:1px solid var(--border);border-radius:12px;padding:10px;">
+            <legend class="muted" style="padding:0 6px;">Partner categories (optional)</legend>
+            <div style="display:grid;gap:8px;grid-template-columns:1fr 1fr;">
+              ${partnerCategoryCheckboxes}
+            </div>
+          </fieldset>
+          <button class="secondary-button" type="submit">Save Local Network</button>
+        </form>
+      </details>
       ${
         townContext
-          ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town", context))}" style="margin-top:10px;">View Local Network</a>`
+          ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town", context))}" style="margin-top:10px;">Open Local Network</a>`
           : ""
       }
-    </section>
-    <section class="rounded-2xl p-6 shadow-sm bg-white">
-      <div class="grid">
-        ${cardLink(withSelection("/admin/locations", context), "📍", "My Locations", "Manage store locations")}
-        ${cardLink(withSelection("/admin/team", context), "👥", "My Team", "Invite and manage team")}
-        ${cardLink(withSelection("/admin/billing", context), "💳", "Billing", "Plan and subscription")}
-        ${cardLink(withSelection("/admin/integrations", context), "🔌", "Integrations", "Buffer, SMS, Google, email")}
-        ${cardLink(withSelection("/app/town", context), "🏙️", "Local Network", "See your town participation map")}
-        ${cardLink(withSelection("/app/town/graph", context), "🧭", "Town Graph", "View common local customer flow")}
-        ${cardLink(withSelection("/app/town/seasons", context), "🍂", "Town Seasons", "Adjust seasonal context and notes")}
-      </div>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/settings/advanced", context))}" style="margin-top:10px;">Open Advanced Settings</a>
     </section>`;
     return res
