@@ -382,6 +382,8 @@ export class SupabaseAdapter implements StorageAdapter {
       caption_used: string;
       promo_name: string | null;
       notes: string | null;
+      status: string | null;
+      provider_meta: unknown;
       created_at: string;
     };
     return storedPostSchema.parse({
