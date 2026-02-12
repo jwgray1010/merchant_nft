@@ -6,6 +6,8 @@ import {
   listBrands,
   updateBrand,
 } from "../data/brandStore";
+import { buildBrandFromTemplate } from "../data/templateStore";
+import { brandFromTemplateRequestSchema } from "../schemas/brandTemplateSchema";
 import { brandIdSchema, brandProfileSchema } from "../schemas/brandSchema";
 
 const router = Router();
@@ -53,6 +55,30 @@ router.post("/", async (req, res, next) => {
     if (!created) {
       return res.status(409).json({
         error: `Brand '${parsedBody.data.brandId}' already exists`,
+      });
+    }
+
+    return res.status(201).json(created);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/from-template", async (req, res, next) => {
+  const parsedBody = brandFromTemplateRequestSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid from-template payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+
+  try {
+    const brandProfile = await buildBrandFromTemplate(parsedBody.data);
+    const created = await createBrand(brandProfile);
+    if (!created) {
+      return res.status(409).json({
+        error: `Brand '${brandProfile.brandId}' already exists`,
       });
     }
 

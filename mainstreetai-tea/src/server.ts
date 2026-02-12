@@ -7,6 +7,7 @@ import brandRouter from "./routes/brand";
 import eventsRouter from "./routes/events";
 import historyRouter from "./routes/history";
 import insightsRouter from "./routes/insights";
+import localEventsRouter from "./routes/localEvents";
 import metricsRouter from "./routes/metrics";
 import nextWeekPlanRouter from "./routes/nextWeekPlan";
 import postsRouter from "./routes/posts";
@@ -31,6 +32,7 @@ app.get("/health", (_req: Request, res: Response) => {
 
 app.use("/brands", brandRouter);
 app.use("/history", historyRouter);
+app.use("/local-events", localEventsRouter);
 app.use("/posts", postsRouter);
 app.use("/metrics", metricsRouter);
 app.use("/insights", insightsRouter);

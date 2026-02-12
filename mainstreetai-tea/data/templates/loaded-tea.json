@@ -1,0 +1,21 @@
+{
+  "template": "loaded-tea",
+  "type": "loaded-tea",
+  "voice": "Upbeat, welcoming, and community-first with simple language.",
+  "audiences": ["teachers", "families", "teens", "after-school crowd"],
+  "productsOrServices": ["Loaded teas", "Energy add-ons", "Protein shakes"],
+  "hours": "Mon-Fri 7:00am-6:00pm, Sat 9:00am-3:00pm, Sun closed",
+  "typicalRushTimes": "7:00am-9:00am and 3:00pm-6:00pm",
+  "slowHours": "1:00pm-3:00pm weekdays",
+  "offersWeCanUse": [
+    "Buy one drink get second 50% off",
+    "$1 add-on upgrade",
+    "Loyalty punch bonus day"
+  ],
+  "constraints": {
+    "noHugeDiscounts": true,
+    "keepPromosSimple": true,
+    "avoidCorporateLanguage": true,
+    "avoidControversy": true
+  }
+}

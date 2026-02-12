@@ -6,6 +6,7 @@ export const nextWeekPlanRequestSchema = z.object({
   goal: z.enum(["new_customers", "repeat_customers", "slow_hours"]),
   focusAudience: z.string().optional(),
   notes: z.string().optional(),
+  includeLocalEvents: z.boolean().optional(),
 });
 
 export type NextWeekPlanRequest = z.infer<typeof nextWeekPlanRequestSchema>;

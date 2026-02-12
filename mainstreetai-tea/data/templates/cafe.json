@@ -1,0 +1,21 @@
+{
+  "template": "cafe",
+  "type": "cafe",
+  "voice": "Cozy, friendly, and neighborhood-oriented.",
+  "audiences": ["remote workers", "parents", "students", "morning commuters"],
+  "productsOrServices": ["Coffee drinks", "Tea", "Pastries", "Light breakfast"],
+  "hours": "Mon-Sat 6:30am-5:00pm, Sun 8:00am-2:00pm",
+  "typicalRushTimes": "7:00am-9:30am and 11:30am-1:30pm",
+  "slowHours": "2:00pm-4:00pm",
+  "offersWeCanUse": [
+    "Coffee and pastry combo",
+    "Afternoon refill special",
+    "Loyalty card double stamp hour"
+  ],
+  "constraints": {
+    "noHugeDiscounts": true,
+    "keepPromosSimple": true,
+    "avoidCorporateLanguage": true,
+    "avoidControversy": true
+  }
+}

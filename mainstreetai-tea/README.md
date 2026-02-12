@@ -31,6 +31,11 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - `/schedule` CRUD
   - `/schedule.ics` calendar export
   - `/today` automated daily task list
+- Local event awareness:
+  - `/local-events` recurring + one-off community events
+  - event-aware generation using `includeLocalEvents`
+- Faster onboarding templates:
+  - `/brands/from-template`
 
 All OpenAI calls are centralized in:
 - `src/ai/openaiClient.ts`
@@ -69,6 +74,8 @@ Server: `http://localhost:3001`
 ```
 data/
   brands/    # brand profiles + optional index
+  templates/ # starter brand templates by industry
+  local_events/ # recurring and one-off community events
   history/   # auto-saved generation outputs per brand
   posts/     # what was actually posted
   metrics/   # manual performance entries
@@ -116,6 +123,19 @@ curl -X POST http://localhost:3001/brands \
   }'
 ```
 
+### Create brand from template
+
+```bash
+curl -X POST http://localhost:3001/brands/from-template \
+  -H "Content-Type: application/json" \
+  -d '{
+    "brandId":"new-day-cafe",
+    "businessName":"New Day Cafe",
+    "location":"Independence, KS",
+    "template":"cafe"
+  }'
+```
+
 ## Generation endpoints (all require brandId)
 
 ### Promo
@@ -123,7 +143,7 @@ curl -X POST http://localhost:3001/brands \
 ```bash
 curl -X POST "http://localhost:3001/promo?brandId=main-street-nutrition" \
   -H "Content-Type: application/json" \
-  -d '{"dateLabel":"Thursday","weather":"cold","goal":"slow_hours"}'
+  -d '{"dateLabel":"Thursday","weather":"cold","goal":"slow_hours","includeLocalEvents":true}'
 ```
 
 ### Social
@@ -151,7 +171,8 @@ curl -X POST "http://localhost:3001/week-plan?brandId=main-street-nutrition" \
     "startDate":"2026-02-16",
     "weatherWeek":"Cold early week, warmer by Friday",
     "goal":"repeat_customers",
-    "focusAudience":"teachers"
+    "focusAudience":"teachers",
+    "includeLocalEvents":true
   }'
 ```
 
@@ -163,8 +184,35 @@ curl -X POST "http://localhost:3001/next-week-plan?brandId=main-street-nutrition
   -d '{
     "startDate":"2026-02-23",
     "goal":"repeat_customers",
-    "focusAudience":"teachers"
+    "focusAudience":"teachers",
+    "includeLocalEvents":true
   }'
+```
+
+## Local events API
+
+### Get local events
+
+```bash
+curl "http://localhost:3001/local-events?brandId=main-street-nutrition"
+```
+
+### Add/replace local events
+
+```bash
+curl -X POST "http://localhost:3001/local-events?brandId=main-street-nutrition" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode":"append",
+    "recurring":[{"name":"Friday Night Basketball","pattern":"Every Fri","audience":"families","notes":"Game crowd"}],
+    "oneOff":[{"name":"Spring Festival","date":"2026-04-18","time":"10:00am","audience":"families","notes":"Downtown event"}]
+  }'
+```
+
+### Delete one local event
+
+```bash
+curl -X DELETE "http://localhost:3001/local-events/<eventId>?brandId=main-street-nutrition"
 ```
 
 ## Logging + insights endpoints
@@ -298,8 +346,10 @@ From admin you can:
 - print sign PDFs
 - manage schedule items and export calendar reminders
 - view today's checklist
+- manage recurring and one-off local events
+- onboard new brands quickly from templates
 
-## Phase 3 + 4 + 5 Workflow
+## Phase 3 + 4 + 5 + 6 Workflow
 
 1. Generate promo/social/week-plan content.
 2. Log what actually got posted using `POST /posts`.
@@ -309,6 +359,7 @@ From admin you can:
 6. Use `/admin` for day-to-day owner operations without Postman/curl.
 7. Plan upcoming posts in `/admin/schedule` and export reminders via `.ics`.
 8. Check `/admin/today` each morning for a practical to-do list.
+9. Keep `/admin/local-events` updated so promos and plans stay community-aware.
 
 ## Notes
 

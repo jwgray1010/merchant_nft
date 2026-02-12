@@ -6,7 +6,17 @@ Input JSON schema:
   "weatherWeek": "optional string",
   "notes": "optional string",
   "goal": "new_customers | repeat_customers | slow_hours",
-  "focusAudience": "optional string"
+  "focusAudience": "optional string",
+  "includeLocalEvents": "optional boolean",
+  "localEvents": [
+    {
+      "name": "string",
+      "when": "string",
+      "time": "string",
+      "audience": "string",
+      "notes": "string"
+    }
+  ]
 }
 
 Return JSON schema:
@@ -41,4 +51,5 @@ Rules:
 - Must be realistic for small business staffing.
 - Avoid corporate tone.
 - Use the brand's offersWeCanUse and constraints.
+- If localEvents are provided, weave them into communityTieIn across the week where relevant.
 - Mention businessName naturally, but do not spam it.

@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { createBrand, getBrand, listBrands, updateBrand } from "../data/brandStore";
+import { AVAILABLE_TEMPLATE_NAMES, buildBrandFromTemplate } from "../data/templateStore";
 import {
   createScheduleItem,
   deleteScheduleItem,
   listScheduleItems,
   updateScheduleItem,
 } from "../data/scheduleStore";
+import { deleteLocalEvent, getLocalEvents, upsertLocalEvents } from "../data/localEventsStore";
 import {
   brandProfileSchema,
   type BrandProfile,
@@ -152,6 +154,7 @@ function renderLayout(
         <a class="button secondary small" href="/admin">Home</a>
         <a class="button secondary small" href="/admin/brands">Brands</a>
         <a class="button secondary small" href="/admin/schedule">Schedule</a>
+        <a class="button secondary small" href="/admin/local-events">Local Events</a>
         <a class="button secondary small" href="/admin/today">Today</a>
       </div>
       ${noticeHtml}
@@ -367,12 +370,14 @@ function generatorConfig(kind: GeneratorKind): {
             <div class="field"><label>Slow hours (optional)</label><input name="slowHours" value="" placeholder="1:00pm-3:00pm" /></div>
           </div>
           <div class="field"><label>Inventory notes (optional)</label><textarea name="inventoryNotes"></textarea></div>
+          <label><input type="checkbox" name="includeLocalEvents" /> Include local events for tie-ins</label>
         `,
         payloadScript: `
           payload = {
             dateLabel: String(fd.get("dateLabel") || ""),
             weather: String(fd.get("weather") || ""),
             goal: String(fd.get("goal") || ""),
+            includeLocalEvents: fd.get("includeLocalEvents") === "on",
             ...(String(fd.get("slowHours") || "").trim() ? { slowHours: String(fd.get("slowHours")).trim() } : {}),
             ...(String(fd.get("inventoryNotes") || "").trim() ? { inventoryNotes: String(fd.get("inventoryNotes")).trim() } : {})
           };
@@ -437,11 +442,13 @@ function generatorConfig(kind: GeneratorKind): {
           </div>
           <div class="field"><label>Weather week (optional)</label><input name="weatherWeek" /></div>
           <div class="field"><label>Notes (optional)</label><textarea name="notes"></textarea></div>
+          <label><input type="checkbox" name="includeLocalEvents" /> Include local events for tie-ins</label>
         `,
         payloadScript: `
           payload = {
             startDate: String(fd.get("startDate") || ""),
             goal: String(fd.get("goal") || ""),
+            includeLocalEvents: fd.get("includeLocalEvents") === "on",
             ...(String(fd.get("focusAudience") || "").trim() ? { focusAudience: String(fd.get("focusAudience")).trim() } : {}),
             ...(String(fd.get("weatherWeek") || "").trim() ? { weatherWeek: String(fd.get("weatherWeek")).trim() } : {}),
             ...(String(fd.get("notes") || "").trim() ? { notes: String(fd.get("notes")).trim() } : {})
@@ -466,11 +473,13 @@ function generatorConfig(kind: GeneratorKind): {
             <div class="field"><label>Focus audience (optional)</label><input name="focusAudience" /></div>
           </div>
           <div class="field"><label>Notes (optional)</label><textarea name="notes"></textarea></div>
+          <label><input type="checkbox" name="includeLocalEvents" /> Include local events for tie-ins</label>
         `,
         payloadScript: `
           payload = {
             startDate: String(fd.get("startDate") || ""),
             goal: String(fd.get("goal") || ""),
+            includeLocalEvents: fd.get("includeLocalEvents") === "on",
             ...(String(fd.get("focusAudience") || "").trim() ? { focusAudience: String(fd.get("focusAudience")).trim() } : {}),
             ...(String(fd.get("notes") || "").trim() ? { notes: String(fd.get("notes")).trim() } : {})
           };
@@ -674,6 +683,7 @@ router.get("/", async (req, res, next) => {
         <a class="button secondary" href="/admin/posts?brandId=${encodeURIComponent(selectedBrandId)}">Posting Log</a>
         <a class="button secondary" href="/admin/metrics?brandId=${encodeURIComponent(selectedBrandId)}">Metrics Log</a>
         <a class="button secondary" href="/admin/schedule?brandId=${encodeURIComponent(selectedBrandId)}">Schedule</a>
+        <a class="button secondary" href="/admin/local-events?brandId=${encodeURIComponent(selectedBrandId)}">Local Events</a>
         <a class="button secondary" href="/admin/today?brandId=${encodeURIComponent(selectedBrandId)}">Today's Checklist</a>
       </div>`
         : `<p class="muted">Create a brand to unlock generation and tracking.</p>`;
@@ -739,6 +749,7 @@ router.get("/brands", async (req, res, next) => {
       <div class="card">
         <h1>Brand Manager</h1>
         <a class="button" href="/admin/brands/new">Create New Brand</a>
+        <a class="button secondary" style="margin-left:8px;" href="/admin/brands/new-from-template">Create From Template</a>
       </div>
       <div class="card">
         <table>
@@ -820,6 +831,83 @@ router.post("/brands", async (req, res, next) => {
       <div class="card">
         <h1>Create Brand</h1>
         ${renderBrandForm("/admin/brands", "Create Brand", partialBrand)}
+      </div>
+      `,
+      { type: "error", text: message },
+    );
+    return res.status(400).type("html").send(html);
+  }
+});
+
+router.get("/brands/new-from-template", (_req, res) => {
+  const templateOptions = AVAILABLE_TEMPLATE_NAMES.map(
+    (name) => `<option value="${name}">${name}</option>`,
+  ).join("");
+
+  const html = renderLayout(
+    "Create Brand From Template",
+    `
+    <div class="card">
+      <h1>Create Brand From Template</h1>
+      <form method="POST" action="/admin/brands/new-from-template">
+        <div class="grid">
+          <div class="field"><label>Brand ID (slug)</label><input name="brandId" required /></div>
+          <div class="field"><label>Business Name</label><input name="businessName" required /></div>
+          <div class="field"><label>Location</label><input name="location" required /></div>
+          <div class="field"><label>Template</label><select name="template">${templateOptions}</select></div>
+        </div>
+        <button type="submit">Create Brand</button>
+      </form>
+    </div>
+    `,
+  );
+
+  return res.type("html").send(html);
+});
+
+router.post("/brands/new-from-template", async (req, res, next) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const profile = await buildBrandFromTemplate({
+      brandId: String(body.brandId ?? "")
+        .trim()
+        .toLowerCase(),
+      businessName: String(body.businessName ?? "").trim(),
+      location: String(body.location ?? "").trim(),
+      template: String(body.template ?? "") as (typeof AVAILABLE_TEMPLATE_NAMES)[number],
+    });
+
+    const created = await createBrand(profile);
+    if (!created) {
+      const html = renderLayout(
+        "Create Brand From Template",
+        `<p>Brand '${escapeHtml(profile.brandId)}' already exists.</p>`,
+        { type: "error", text: "Brand already exists." },
+      );
+      return res.status(409).type("html").send(html);
+    }
+
+    return res.redirect("/admin/brands?status=created");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid template request";
+    const templateOptions = AVAILABLE_TEMPLATE_NAMES.map(
+      (name) => `<option value="${name}">${name}</option>`,
+    ).join("");
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const html = renderLayout(
+      "Create Brand From Template",
+      `
+      <div class="card">
+        <h1>Create Brand From Template</h1>
+        <form method="POST" action="/admin/brands/new-from-template">
+          <div class="grid">
+            <div class="field"><label>Brand ID (slug)</label><input name="brandId" value="${escapeHtml(String(body.brandId ?? ""))}" required /></div>
+            <div class="field"><label>Business Name</label><input name="businessName" value="${escapeHtml(String(body.businessName ?? ""))}" required /></div>
+            <div class="field"><label>Location</label><input name="location" value="${escapeHtml(String(body.location ?? ""))}" required /></div>
+            <div class="field"><label>Template</label><select name="template">${templateOptions}</select></div>
+          </div>
+          <button type="submit">Create Brand</button>
+        </form>
       </div>
       `,
       { type: "error", text: message },
@@ -1207,6 +1295,302 @@ router.post("/metrics", async (req, res, next) => {
     });
 
     return res.redirect(`/admin/metrics?brandId=${encodeURIComponent(brandId)}&saved=1`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/local-events", async (req, res, next) => {
+  try {
+    const brands = await listBrands();
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+
+    let recurringRows = `<tr><td colspan="6" class="muted">Select a business to manage local events.</td></tr>`;
+    let oneOffRows = `<tr><td colspan="7" class="muted">Select a business to manage local events.</td></tr>`;
+
+    if (selectedBrandId) {
+      const events = await getLocalEvents(selectedBrandId);
+      recurringRows =
+        events.recurring.length > 0
+          ? events.recurring
+              .map(
+                (event) => `<tr>
+                  <td><code>${escapeHtml(event.eventId)}</code></td>
+                  <td>${escapeHtml(event.name)}</td>
+                  <td>${escapeHtml(event.pattern)}</td>
+                  <td>${escapeHtml(event.audience)}</td>
+                  <td>${escapeHtml(event.notes || "-")}</td>
+                  <td>
+                    <form method="POST" action="/admin/local-events/${encodeURIComponent(
+                      event.eventId,
+                    )}/delete?brandId=${encodeURIComponent(selectedBrandId)}">
+                      <button class="button small secondary" type="submit">Delete</button>
+                    </form>
+                  </td>
+                </tr>`,
+              )
+              .join("")
+          : `<tr><td colspan="6" class="muted">No recurring events yet.</td></tr>`;
+
+      oneOffRows =
+        events.oneOff.length > 0
+          ? events.oneOff
+              .map(
+                (event) => `<tr>
+                  <td><code>${escapeHtml(event.eventId)}</code></td>
+                  <td>${escapeHtml(event.name)}</td>
+                  <td>${escapeHtml(event.date)}</td>
+                  <td>${escapeHtml(event.time || "-")}</td>
+                  <td>${escapeHtml(event.audience)}</td>
+                  <td>${escapeHtml(event.notes || "-")}</td>
+                  <td>
+                    <form method="POST" action="/admin/local-events/${encodeURIComponent(
+                      event.eventId,
+                    )}/delete?brandId=${encodeURIComponent(selectedBrandId)}">
+                      <button class="button small secondary" type="submit">Delete</button>
+                    </form>
+                  </td>
+                </tr>`,
+              )
+              .join("")
+          : `<tr><td colspan="7" class="muted">No one-off events yet.</td></tr>`;
+    }
+
+    const notice =
+      status === "added-recurring"
+        ? { type: "success" as const, text: "Recurring event added." }
+        : status === "added-oneoff"
+          ? { type: "success" as const, text: "One-off event added." }
+          : status === "pasted"
+            ? { type: "success" as const, text: "Event list pasted successfully." }
+            : status === "deleted"
+              ? { type: "success" as const, text: "Event deleted." }
+              : undefined;
+
+    const html = renderLayout(
+      "Local Events",
+      `
+      <div class="card">
+        <h1>Local Events</h1>
+        <p class="muted">Manage recurring and one-off community events for local-smart content.</p>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/local-events")}
+      </div>
+
+      <div class="card">
+        <h2>Add Recurring Event</h2>
+        ${
+          selectedBrandId
+            ? `
+            <form method="POST" action="/admin/local-events/recurring?brandId=${encodeURIComponent(
+              selectedBrandId,
+            )}">
+              <div class="grid">
+                <div class="field"><label>Name</label><input name="name" required /></div>
+                <div class="field"><label>Pattern</label><input name="pattern" placeholder="Every Fri" required /></div>
+                <div class="field"><label>Audience</label><input name="audience" required /></div>
+              </div>
+              <div class="field"><label>Notes</label><input name="notes" /></div>
+              <button type="submit">Add Recurring Event</button>
+            </form>
+            `
+            : `<p>Create/select a brand first.</p>`
+        }
+      </div>
+
+      <div class="card">
+        <h2>Add One-Off Event</h2>
+        ${
+          selectedBrandId
+            ? `
+            <form method="POST" action="/admin/local-events/oneoff?brandId=${encodeURIComponent(
+              selectedBrandId,
+            )}">
+              <div class="grid">
+                <div class="field"><label>Name</label><input name="name" required /></div>
+                <div class="field"><label>Date</label><input type="date" name="date" required /></div>
+                <div class="field"><label>Time</label><input name="time" placeholder="7:00pm" /></div>
+                <div class="field"><label>Audience</label><input name="audience" required /></div>
+              </div>
+              <div class="field"><label>Notes</label><input name="notes" /></div>
+              <button type="submit">Add One-Off Event</button>
+            </form>
+            `
+            : `<p>Create/select a brand first.</p>`
+        }
+      </div>
+
+      <div class="card">
+        <h2>Paste Event List (Optional)</h2>
+        <p class="muted">Paste JSON with recurring/oneOff arrays. This appends to existing events.</p>
+        ${
+          selectedBrandId
+            ? `
+            <form method="POST" action="/admin/local-events/paste?brandId=${encodeURIComponent(
+              selectedBrandId,
+            )}">
+              <div class="field">
+                <label>Event JSON</label>
+                <textarea name="eventsJson" required>{
+  "recurring": [{"name":"Friday Game Night","pattern":"Every Fri","audience":"families","notes":""}],
+  "oneOff": [{"name":"Spring Festival","date":"2026-04-18","time":"10:00am","audience":"families","notes":""}]
+}</textarea>
+              </div>
+              <button type="submit">Paste + Append</button>
+            </form>
+            `
+            : `<p>Create/select a brand first.</p>`
+        }
+      </div>
+
+      <div class="card">
+        <h2>Recurring Events</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Pattern</th><th>Audience</th><th>Notes</th><th>Action</th></tr></thead>
+          <tbody>${recurringRows}</tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>One-Off Events</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Date</th><th>Time</th><th>Audience</th><th>Notes</th><th>Action</th></tr></thead>
+          <tbody>${oneOffRows}</tbody>
+        </table>
+      </div>
+      `,
+      notice,
+    );
+
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/local-events/recurring", async (req, res, next) => {
+  try {
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const brand = await getBrand(brandId);
+    if (!brand) {
+      return res.status(404).type("html").send(renderLayout("Local Events", "<h1>Brand not found.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    await upsertLocalEvents(brandId, {
+      mode: "append",
+      recurring: [
+        {
+          name: String(body.name ?? ""),
+          pattern: String(body.pattern ?? ""),
+          audience: String(body.audience ?? ""),
+          notes: String(body.notes ?? ""),
+        },
+      ],
+    });
+
+    return res.redirect(`/admin/local-events?brandId=${encodeURIComponent(brandId)}&status=added-recurring`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/local-events/oneoff", async (req, res, next) => {
+  try {
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const brand = await getBrand(brandId);
+    if (!brand) {
+      return res.status(404).type("html").send(renderLayout("Local Events", "<h1>Brand not found.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    await upsertLocalEvents(brandId, {
+      mode: "append",
+      oneOff: [
+        {
+          name: String(body.name ?? ""),
+          date: String(body.date ?? ""),
+          time: String(body.time ?? ""),
+          audience: String(body.audience ?? ""),
+          notes: String(body.notes ?? ""),
+        },
+      ],
+    });
+
+    return res.redirect(`/admin/local-events?brandId=${encodeURIComponent(brandId)}&status=added-oneoff`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/local-events/paste", async (req, res, next) => {
+  try {
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const brand = await getBrand(brandId);
+    if (!brand) {
+      return res.status(404).type("html").send(renderLayout("Local Events", "<h1>Brand not found.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = JSON.parse(String(body.eventsJson ?? "{}")) as {
+      recurring?: Array<{ name: string; pattern: string; audience: string; notes?: string }>;
+      oneOff?: Array<{ name: string; date: string; time?: string; audience: string; notes?: string }>;
+    };
+
+    await upsertLocalEvents(brandId, {
+      mode: "append",
+      recurring: (parsed.recurring ?? []).map((event) => ({
+        name: event.name,
+        pattern: event.pattern,
+        audience: event.audience,
+        notes: event.notes ?? "",
+      })),
+      oneOff: (parsed.oneOff ?? []).map((event) => ({
+        name: event.name,
+        date: event.date,
+        time: event.time ?? "",
+        audience: event.audience,
+        notes: event.notes ?? "",
+      })),
+    });
+
+    return res.redirect(`/admin/local-events?brandId=${encodeURIComponent(brandId)}&status=pasted`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/local-events/:eventId/delete", async (req, res, next) => {
+  try {
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const brand = await getBrand(brandId);
+    if (!brand) {
+      return res.status(404).type("html").send(renderLayout("Local Events", "<h1>Brand not found.</h1>"));
+    }
+
+    const eventId = req.params.eventId?.trim();
+    if (!eventId) {
+      return res.status(400).type("html").send(renderLayout("Local Events", "<h1>Missing event id.</h1>"));
+    }
+
+    await deleteLocalEvent(brandId, eventId);
+    return res.redirect(`/admin/local-events?brandId=${encodeURIComponent(brandId)}&status=deleted`);
   } catch (error) {
     return next(error);
   }

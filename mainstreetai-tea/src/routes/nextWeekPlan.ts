@@ -4,6 +4,7 @@ import { runPrompt } from "../ai/runPrompt";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { nextWeekPlanRequestSchema } from "../schemas/nextWeekPlanRequestSchema";
 import { weekPlanOutputSchema } from "../schemas/weekPlanOutputSchema";
+import { getUpcomingLocalEvents } from "../services/localEventAwareness";
 import { generateInsights } from "../services/insightsService";
 
 const router = Router();
@@ -50,6 +51,9 @@ router.post("/", async (req, res, next) => {
         insights: learning.insights,
         previousWeekPlans: learning.previousWeekPlans,
         recentTopPosts: learning.recentTopPosts,
+        ...(parsed.data.includeLocalEvents
+          ? { localEvents: await getUpcomingLocalEvents(parsedBrandId.data, 7) }
+          : {}),
       },
       outputSchema: weekPlanOutputSchema,
     });

@@ -3,6 +3,7 @@ import { getBrand } from "../data/brandStore";
 import { runPrompt } from "../ai/runPrompt";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { promoOutputSchema, promoRequestSchema } from "../schemas/promoRequestSchema";
+import { getUpcomingLocalEvents } from "../services/localEventAwareness";
 
 const router = Router();
 
@@ -39,6 +40,9 @@ router.post("/", async (req, res, next) => {
     const promptInput = {
       ...parsed.data,
       slowHours: parsed.data.slowHours ?? brand.slowHours,
+      ...(parsed.data.includeLocalEvents
+        ? { localEvents: await getUpcomingLocalEvents(parsedBrandId.data, 7) }
+        : {}),
     };
 
     const result = await runPrompt({

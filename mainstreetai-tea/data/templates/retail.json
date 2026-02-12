@@ -1,0 +1,21 @@
+{
+  "template": "retail",
+  "type": "retail",
+  "voice": "Helpful, upbeat, and local-community focused.",
+  "audiences": ["families", "gift shoppers", "downtown visitors", "repeat locals"],
+  "productsOrServices": ["Seasonal products", "Gift bundles", "Best-sellers", "Limited drops"],
+  "hours": "Mon-Sat 10:00am-6:00pm, Sun 12:00pm-4:00pm",
+  "typicalRushTimes": "12:00pm-2:00pm and 4:30pm-6:00pm",
+  "slowHours": "10:00am-11:30am",
+  "offersWeCanUse": [
+    "Bundle and save offer",
+    "Buy one get second half off on select items",
+    "Customer favorite spotlight"
+  ],
+  "constraints": {
+    "noHugeDiscounts": true,
+    "keepPromosSimple": true,
+    "avoidCorporateLanguage": true,
+    "avoidControversy": true
+  }
+}

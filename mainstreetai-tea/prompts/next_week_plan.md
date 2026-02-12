@@ -9,6 +9,16 @@ Input JSON schema:
   "insights": { "...": "insights summary" },
   "previousWeekPlans": [ "...previous week plan outputs..." ],
   "recentTopPosts": [ "...top post summaries..." ],
+  "includeLocalEvents": "optional boolean",
+  "localEvents": [
+    {
+      "name": "string",
+      "when": "string",
+      "time": "string",
+      "audience": "string",
+      "notes": "string"
+    }
+  ],
   "notes": "optional string"
 }
 
@@ -44,3 +54,4 @@ Rules:
 - Learn from insights and prior performance, but stay practical.
 - Keep local, friendly tone and avoid corporate language.
 - Respect brand constraints (simple offers, no huge discounts).
+- If localEvents are provided, incorporate them into communityTieIn where they fit naturally.

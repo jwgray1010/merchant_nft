@@ -6,7 +6,17 @@ Input JSON:
   "weather": "cold | hot | rainy | windy | nice",
   "slowHours": "optional, e.g., 1-3pm",
   "inventoryNotes": "optional",
-  "goal": "new_customers | repeat_customers | slow_hours"
+  "goal": "new_customers | repeat_customers | slow_hours",
+  "includeLocalEvents": "optional boolean",
+  "localEvents": [
+    {
+      "name": "string",
+      "when": "string",
+      "time": "string",
+      "audience": "string",
+      "notes": "string"
+    }
+  ]
 }
 
 Return JSON schema:
@@ -26,4 +36,5 @@ Rules:
 - Keep it realistic for small business staffing.
 - Use offers from the BRAND PROFILE when possible.
 - Respect constraints in the BRAND PROFILE.
+- If localEvents are provided, naturally tie at least one event into the promotion.
 - No huge discounts.

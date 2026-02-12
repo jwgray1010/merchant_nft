@@ -4,6 +4,7 @@ import { runPrompt } from "../ai/runPrompt";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { weekPlanRequestSchema } from "../schemas/weekPlanRequestSchema";
 import { weekPlanOutputSchema } from "../schemas/weekPlanOutputSchema";
+import { getUpcomingLocalEvents } from "../services/localEventAwareness";
 
 const router = Router();
 
@@ -41,7 +42,12 @@ router.post("/", async (req, res, next) => {
     const result = await runPrompt({
       promptFile: "week_plan.md",
       brandProfile: brand,
-      input: parsed.data,
+      input: {
+        ...parsed.data,
+        ...(parsed.data.includeLocalEvents
+          ? { localEvents: await getUpcomingLocalEvents(parsedBrandId.data, 7) }
+          : {}),
+      },
       outputSchema: weekPlanOutputSchema,
     });
 

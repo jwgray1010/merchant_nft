@@ -6,6 +6,7 @@ export const promoRequestSchema = z.object({
   slowHours: z.string().min(1).optional(),
   inventoryNotes: z.string().optional(),
   goal: z.enum(["new_customers", "repeat_customers", "slow_hours"]),
+  includeLocalEvents: z.boolean().optional(),
 });
 
 export const promoOutputSchema = z.object({
