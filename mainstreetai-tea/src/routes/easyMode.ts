@@ -25,6 +25,10 @@ import {
   townGraphCategoryFromBrandType,
   townGraphCategoryLabel,
 } from "../services/townGraphService";
+import { recomputeTownMicroRoutesForTown } from "../services/townMicroRoutesService";
+import { deleteTownSeason, listTownSeasons, resolveTownSeasonStateForTown, upsertTownSeason } from "../services/townSeasonService";
+import { townSeasonKeySchema, type TownSeasonKey } from "../schemas/townSeasonSchema";
+import { parseSeasonOverride } from "../town/seasonDetector";
 import { parseTownWindowOverride, townWindowLabel } from "../town/windows";
 import { getTownPulseModelForBrand } from "../services/townPulseService";
 import { getLatestTownStoryForBrand } from "../services/townStoriesService";
@@ -654,6 +658,14 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         <p id="daily-town-micro-route-staff-line" class="output-value">${escapeHtml(pack.townMicroRoute.staffScript)}</p>
       </details>`
     : "";
+  const townSeasonalSection = pack.townSeasonalBoost
+    ? `<details class="output-card">
+        <summary><strong>Town Seasonal Boost (${escapeHtml(pack.townSeasonalBoost.seasonTags.join(", "))})</strong></summary>
+        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townSeasonalBoost.line)}</strong></p>
+        <p id="daily-town-seasonal-caption" class="output-value">${escapeHtml(pack.townSeasonalBoost.captionAddOn)}</p>
+        <p id="daily-town-seasonal-staff-line" class="output-value">${escapeHtml(pack.townSeasonalBoost.staffScript)}</p>
+      </details>`
+    : "";
   return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
     <h3>Your daily money move</h3>
     <details class="output-card" open>
@@ -694,6 +706,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
     ${townStorySection}
     ${townGraphSection}
     ${townMicroRouteSection}
+    ${townSeasonalSection}
     <div class="grid" style="grid-template-columns:1fr; margin-top:8px;">
       <button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>
       <button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>
@@ -730,6 +743,12 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         pack.townMicroRoute
           ? `<button class="primary-button" data-copy-target="daily-town-micro-route-caption">Copy Route Add-on</button>
              <button class="secondary-button" data-copy-target="daily-town-micro-route-staff-line">Copy Route Staff Line</button>`
+          : ""
+      }
+      ${
+        pack.townSeasonalBoost
+          ? `<button class="primary-button" data-copy-target="daily-town-seasonal-caption">Copy Seasonal Add-on</button>
+             <button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Seasonal Staff Line</button>`
           : ""
       }
       <button class="secondary-button" id="share-daily" type="button">Share…</button>
@@ -774,6 +793,7 @@ router.get("/", async (req, res, next) => {
     ]);
     const signUrl = withSelection("/app/sign/today", context);
     const routeWindowOverride = parseTownWindowOverride(optionalText(req.query.window));
+    const seasonOverride = parseSeasonOverride(optionalText(req.query.season));
     const routeWindowOptions = [
       { value: "", label: "Auto (current)" },
       { value: "morning", label: "Morning" },
@@ -781,6 +801,13 @@ router.get("/", async (req, res, next) => {
       { value: "after_work", label: "After Work" },
       { value: "evening", label: "Evening" },
       { value: "weekend", label: "Weekend" },
+    ];
+    const seasonOptions = [
+      { value: "", label: "Auto (detected)" },
+      ...townSeasonKeySchema.options.map((seasonKey) => ({
+        value: seasonKey,
+        label: seasonKey.charAt(0).toUpperCase() + seasonKey.slice(1),
+      })),
     ];
     const routeWindowSelect = `<details style="margin-top:10px;">
       <summary class="muted">Advanced: route window (optional)</summary>
@@ -791,6 +818,18 @@ router.get("/", async (req, res, next) => {
               (option) =>
                 `<option value="${escapeHtml(option.value)}" ${
                   (routeWindowOverride ?? "") === option.value ? "selected" : ""
+                }>${escapeHtml(option.label)}</option>`,
+            )
+            .join("")}
+        </select>
+      </label>
+      <label class="field-label">Season override
+        <select id="daily-season">
+          ${seasonOptions
+            .map(
+              (option) =>
+                `<option value="${escapeHtml(option.value)}" ${
+                  (seasonOverride ?? "") === option.value ? "selected" : ""
                 }>${escapeHtml(option.label)}</option>`,
             )
             .join("")}
@@ -904,6 +943,9 @@ router.get("/", async (req, res, next) => {
               const townMicroRouteSection = pack.townMicroRoute
                 ? '<details class="output-card"><summary><strong>Town Route Tip (' + esc(windowLabel(pack.townMicroRoute.window || "evening")) + ')</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townMicroRoute.line || "") + '</strong></p><p id="daily-town-micro-route-caption" class="output-value">' + esc(pack.townMicroRoute.captionAddOn || "") + '</p><p id="daily-town-micro-route-staff-line" class="output-value">' + esc(pack.townMicroRoute.staffScript || "") + '</p></details>'
                 : '';
+              const townSeasonalSection = pack.townSeasonalBoost
+                ? '<details class="output-card"><summary><strong>Town Seasonal Boost (' + esc((pack.townSeasonalBoost.seasonTags || []).join(", ")) + ')</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townSeasonalBoost.line || "") + '</strong></p><p id="daily-town-seasonal-caption" class="output-value">' + esc(pack.townSeasonalBoost.captionAddOn || "") + '</p><p id="daily-town-seasonal-staff-line" class="output-value">' + esc(pack.townSeasonalBoost.staffScript || "") + '</p></details>'
+                : '';
               return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
                 '<h3>Your daily money move</h3>' +
                 '<details class="output-card" open><summary><strong>Today\\'s Special</strong></summary><p id="daily-special" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.todaySpecial?.promoName || "") + '</strong><br/>' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></details>' +
@@ -915,6 +957,7 @@ router.get("/", async (req, res, next) => {
                 townStorySection +
                 townGraphSection +
                 townMicroRouteSection +
+                townSeasonalSection +
                 '<div class="grid" style="grid-template-columns:1fr; margin-top:8px;">' +
                 '<button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>' +
                 '<button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>' +
@@ -924,6 +967,7 @@ router.get("/", async (req, res, next) => {
                 (pack.townStory ? '<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Caption</button><button class="secondary-button add-town-story-btn" type="button">Add to Today\\'s Post</button>' : '') +
                 (pack.townGraphBoost ? '<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Caption</button><button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Next Stop Staff Line</button>' : '') +
                 (pack.townMicroRoute ? '<button class="primary-button" data-copy-target="daily-town-micro-route-caption">Copy Route Add-on</button><button class="secondary-button" data-copy-target="daily-town-micro-route-staff-line">Copy Route Staff Line</button>' : '') +
+                (pack.townSeasonalBoost ? '<button class="primary-button" data-copy-target="daily-town-seasonal-caption">Copy Seasonal Add-on</button><button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Seasonal Staff Line</button>' : '') +
                 '<button class="secondary-button" id="share-daily" type="button">Share…</button>' +
                 '<a class="secondary-button" href="' + esc(signUrl) + '">Printable Sign</a>' +
                 '</div></section>';
@@ -933,11 +977,17 @@ router.get("/", async (req, res, next) => {
               if (status) status.textContent = "Building your daily pack...";
               const notes = document.getElementById("daily-notes")?.value || "";
               const selectedWindow = document.getElementById("daily-window")?.value || "";
+              const selectedSeason = document.getElementById("daily-season")?.value || "";
               const endpointUrl = new URL(dailyEndpoint, window.location.origin);
               if (selectedWindow) {
                 endpointUrl.searchParams.set("window", selectedWindow);
               } else {
                 endpointUrl.searchParams.delete("window");
+              }
+              if (selectedSeason) {
+                endpointUrl.searchParams.set("season", selectedSeason);
+              } else {
+                endpointUrl.searchParams.delete("season");
               }
               const response = await fetch(endpointUrl.pathname + endpointUrl.search, {
                 method: "POST",
@@ -964,6 +1014,7 @@ router.get("/", async (req, res, next) => {
                   json.townStory?.captionAddOn,
                   json.townGraphBoost?.captionAddOn,
                   json.townMicroRoute?.captionAddOn,
+                  json.townSeasonalBoost?.captionAddOn,
                 ]
                   .filter(Boolean)
                   .join("\\n");
@@ -1010,6 +1061,7 @@ router.get("/", async (req, res, next) => {
                 document.getElementById("daily-town-story-caption")?.textContent || "",
                 document.getElementById("daily-town-graph-caption")?.textContent || "",
                 document.getElementById("daily-town-micro-route-caption")?.textContent || "",
+                document.getElementById("daily-town-seasonal-caption")?.textContent || "",
                 document.getElementById("daily-sms")?.textContent || "",
               ]
                 .filter(Boolean)
@@ -2073,6 +2125,7 @@ router.get("/settings", async (req, res, next) => {
         ${cardLink(withSelection("/admin/integrations", context), "🔌", "Integrations", "Buffer, SMS, Google, email")}
         ${cardLink(withSelection("/app/town", context), "🏙️", "Local Network", "See your town participation map")}
         ${cardLink(withSelection("/app/town/graph", context), "🧭", "Town Graph", "View common local customer flow")}
+        ${cardLink(withSelection("/app/town/seasons", context), "🍂", "Town Seasons", "Adjust seasonal context and notes")}
       </div>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/settings/advanced", context))}" style="margin-top:10px;">Open Advanced Settings</a>
     </section>`;
@@ -2288,6 +2341,7 @@ router.get("/town", async (req, res, next) => {
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}">View Town Pulse</a>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">View Town Graph</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/seasons", context))}" style="margin-top:8px;">Season Overrides</a>
     </section>
     <section class="rounded-2xl p-6 shadow-sm bg-white">
       <h3>Participating businesses</h3>
@@ -2369,6 +2423,7 @@ router.get("/town/pulse", async (req, res, next) => {
       <p class="muted">Event energy: ${escapeHtml(model?.eventEnergy ?? "low")}</p>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">View Town Graph</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/seasons", context))}" style="margin-top:8px;">Season Overrides</a>
     </section>`;
     return res
       .type("html")
@@ -2448,6 +2503,7 @@ router.get("/town/graph", async (req, res, next) => {
       <p class="muted">Category-level flow only. No private business metrics.</p>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-top:8px;">View Town Pulse</a>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/seasons", context))}" style="margin-top:8px;">Season Overrides</a>
     </section>
     <section class="rounded-2xl p-6 shadow-sm bg-white">
       <h3>Common local flow</h3>
@@ -2464,6 +2520,171 @@ router.get("/town/graph", async (req, res, next) => {
           body,
         }),
       );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/town/seasons", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    if (!context.ownerUserId || !context.selectedBrandId) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Town Seasons",
+            context,
+            active: "settings",
+            currentPath: "/app/town/seasons",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Pick a business first.</p></section>`,
+          }),
+        );
+    }
+    if (context.role === "member") {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Season overrides are owner/admin only."));
+    }
+    const membership = await getTownMembershipForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+    });
+    if (!membership) {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
+    }
+    const [seasons, detected] = await Promise.all([
+      listTownSeasons({
+        townId: membership.town.id,
+        userId: context.ownerUserId,
+      }),
+      resolveTownSeasonStateForTown({
+        townId: membership.town.id,
+        userId: context.ownerUserId,
+      }),
+    ]);
+    const seasonByKey = new Map<TownSeasonKey, (typeof seasons)[number]>();
+    for (const row of seasons) {
+      seasonByKey.set(row.seasonKey, row);
+    }
+    const activeTags = new Set(detected?.detected.seasonTags ?? []);
+    const rows = (townSeasonKeySchema.options as unknown as TownSeasonKey[])
+      .map((seasonKey) => {
+        const row = seasonByKey.get(seasonKey);
+        const forcedOff = row?.startDate === "1970-01-01" && row?.endDate === "1970-01-01";
+        const enabled = Boolean(row) && !forcedOff;
+        const autoActive = activeTags.has(seasonKey);
+        return `<form method="POST" action="${escapeHtml(withSelection("/app/town/seasons/save", context))}" style="display:grid;gap:8px;border:1px solid #e5e7eb;border-radius:12px;padding:10px;">
+          <input type="hidden" name="seasonKey" value="${escapeHtml(seasonKey)}" />
+          <label><input type="checkbox" name="enabled" ${enabled ? "checked" : ""} /> Enable ${escapeHtml(
+            seasonKey,
+          )} override</label>
+          <div class="two-col">
+            <label class="field-label">Start date
+              <input type="date" name="startDate" value="${escapeHtml(forcedOff ? "" : row?.startDate ?? "")}" />
+            </label>
+            <label class="field-label">End date
+              <input type="date" name="endDate" value="${escapeHtml(forcedOff ? "" : row?.endDate ?? "")}" />
+            </label>
+          </div>
+          <label class="field-label">Notes (optional)
+            <input name="notes" value="${escapeHtml(row?.notes ?? "")}" placeholder="Home games Friday nights" />
+          </label>
+          <p class="muted">Currently detected: <strong>${autoActive ? "active" : "inactive"}</strong></p>
+          <div class="two-col">
+            <button class="secondary-button" type="submit">Save Override</button>
+            <button class="secondary-button" type="submit" name="resetAuto" value="1">Reset to Auto</button>
+          </div>
+        </form>`;
+      })
+      .join("");
+    const detectedText =
+      detected && detected.detected.seasonTags.length > 0
+        ? detected.detected.seasonTags.join(", ")
+        : "none";
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Town Seasons</h2>
+      <p class="muted">Season-aware context for ${escapeHtml(membership.town.name)}.</p>
+      <p class="muted">Detected now: ${escapeHtml(detectedText)}</p>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">Back to Town Graph</a>
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Season overrides</h3>
+      <div style="display:grid;gap:10px;">${rows}</div>
+    </section>`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Town Seasons",
+          context,
+          active: "settings",
+          currentPath: "/app/town/seasons",
+          body,
+          notice: optionalText(req.query.notice),
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/town/seasons/save", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context || !context.ownerUserId || !context.selectedBrandId) {
+      return;
+    }
+    if (context.role === "member") {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Season overrides are owner/admin only."));
+    }
+    const membership = await getTownMembershipForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+    });
+    if (!membership) {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
+    }
+    const parsedSeason = townSeasonKeySchema.safeParse(String(req.body?.seasonKey ?? "").trim().toLowerCase());
+    if (!parsedSeason.success) {
+      return res.redirect(withNotice(withSelection("/app/town/seasons", context), "Invalid season key."));
+    }
+    const resetAuto = String(req.body?.resetAuto ?? "").trim() === "1";
+    if (resetAuto) {
+      await deleteTownSeason({
+        townId: membership.town.id,
+        seasonKey: parsedSeason.data,
+        userId: context.ownerUserId,
+      });
+      await recomputeTownMicroRoutesForTown({
+        townId: membership.town.id,
+        userId: context.ownerUserId,
+      }).catch(() => {
+        // recompute is best-effort after override changes.
+      });
+      return res.redirect(withNotice(withSelection("/app/town/seasons", context), "Season override reset to auto."));
+    }
+    const enabledRaw = String(req.body?.enabled ?? "").toLowerCase();
+    const enabled = enabledRaw === "on" || enabledRaw === "true" || enabledRaw === "1";
+    const startDate = optionalText(req.body?.startDate) ?? null;
+    const endDate = optionalText(req.body?.endDate) ?? null;
+    const notes = optionalText(req.body?.notes) ?? null;
+    await upsertTownSeason({
+      townId: membership.town.id,
+      userId: context.ownerUserId,
+      seasonKey: parsedSeason.data,
+      startDate: enabled ? startDate : "1970-01-01",
+      endDate: enabled ? endDate : "1970-01-01",
+      notes,
+    });
+    await recomputeTownMicroRoutesForTown({
+      townId: membership.town.id,
+      userId: context.ownerUserId,
+    }).catch(() => {
+      // recompute is best-effort after override changes.
+    });
+    return res.redirect(withNotice(withSelection("/app/town/seasons", context), "Season override saved."));
   } catch (error) {
     return next(error);
   }
@@ -2517,6 +2738,7 @@ router.get("/town/stories", async (req, res, next) => {
       <p class="muted">No metrics. No rankings. Just warm community momentum.</p>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-top:8px;">View Town Pulse</a>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">View Town Graph</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/seasons", context))}" style="margin-top:8px;">Season Overrides</a>
     </section>
     ${storyBody}`;
     return res

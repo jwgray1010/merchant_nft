@@ -15,6 +15,11 @@ import {
   type TownGraphCategory,
   type TownMicroRouteWindow,
 } from "../schemas/townGraphSchema";
+import {
+  townSeasonKeySchema,
+  townSeasonalRoutePromptOutputSchema,
+  type TownSeasonKey,
+} from "../schemas/townSeasonSchema";
 import { townPulseModelDataSchema, type TownPulseModelData } from "../schemas/townPulseSchema";
 import { townRecordSchema, type TownRecord } from "../schemas/townSchema";
 import { getStorageMode } from "../storage/getAdapter";
@@ -33,6 +38,11 @@ import {
   resolveTownWindow,
   townWindowLabel,
 } from "../town/windows";
+import {
+  applySeasonWeightDeltasToEdges,
+  listTownRouteSeasonWeights,
+  resolveTownSeasonStateForTown,
+} from "./townSeasonService";
 
 const LOCAL_ROOT = path.resolve(process.cwd(), "data", "local_mode");
 const MICRO_ROUTE_STALE_HOURS = 28;
@@ -142,6 +152,31 @@ function trendAsGraphCategory(category: string): TownGraphCategory {
   }
   const parsed = townGraphCategorySchema.safeParse(category);
   return parsed.success ? parsed.data : "other";
+}
+
+function parseSeasonTags(raw: unknown): TownSeasonKey[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const parsed = raw
+    .map((entry) => (typeof entry === "string" ? entry.trim().toLowerCase() : ""))
+    .map((entry) => townSeasonKeySchema.safeParse(entry))
+    .filter((entry): entry is { success: true; data: TownSeasonKey } => entry.success)
+    .map((entry) => entry.data);
+  return [...new Set(parsed)];
+}
+
+function seasonTagPhrase(tag: TownSeasonKey): string {
+  if (tag === "holiday") return "holiday shopping windows";
+  if (tag === "school") return "school pickup hours";
+  if (tag === "football") return "game-night traffic";
+  if (tag === "basketball") return "basketball nights";
+  if (tag === "baseball") return "ballpark-day routines";
+  if (tag === "festival") return "festival-week traffic";
+  if (tag === "summer") return "summer downtown routines";
+  if (tag === "winter") return "winter-day local stops";
+  if (tag === "spring") return "spring local movement";
+  return "fall local routines";
 }
 
 async function getTownById(input: { townId: string; userId?: string }): Promise<TownRecord | null> {
@@ -493,11 +528,22 @@ export async function listDueTownMicroRouteTargets(limit = 20): Promise<Array<{ 
 export async function recomputeTownMicroRoutesForTown(input: {
   townId: string;
   userId?: string;
+  seasonOverride?: TownSeasonKey;
 }): Promise<{ updated: number }> {
   const edges = await listTownGraphEdges({
     townId: input.townId,
     userId: input.userId,
   });
+  const seasonState = await resolveTownSeasonStateForTown({
+    townId: input.townId,
+    userId: input.userId,
+    overrideSeason: input.seasonOverride,
+  }).catch(() => null);
+  const seasonTags = seasonState?.detected.seasonTags ?? [];
+  const seasonWeights = await listTownRouteSeasonWeights({
+    townId: input.townId,
+    userId: input.userId,
+  }).catch(() => []);
   const pulseModel = await getTownPulseModel({
     townId: input.townId,
     userId: input.userId,
@@ -505,12 +551,18 @@ export async function recomputeTownMicroRoutesForTown(input: {
   const pulse = pulseModel?.model ?? null;
   let updated = 0;
   for (const window of TOWN_MICRO_ROUTE_WINDOWS) {
-    const candidates = buildRouteCandidates({
+    const adjustedEdges = applySeasonWeightDeltasToEdges({
       edges: edges.map((edge) => ({
         from: edge.fromCategory,
         to: edge.toCategory,
         weight: edge.weight,
       })),
+      seasonWeights,
+      seasonTags,
+      window,
+    });
+    const candidates = buildRouteCandidates({
+      edges: adjustedEdges,
       window,
       townPulse: pulse,
     })
@@ -520,6 +572,8 @@ export async function recomputeTownMicroRoutesForTown(input: {
       townId: input.townId,
       window,
       routes: townMicroRouteRoutesSchema.parse({
+        window,
+        seasonTags,
         topRoutes: candidates,
       }),
       userId: input.userId,
@@ -533,16 +587,21 @@ async function getOrRecomputeWindowRoutes(input: {
   townId: string;
   window: TownMicroRouteWindow;
   userId?: string;
+  seasonOverride?: TownSeasonKey;
 }) {
   let row = await getTownMicroRoutesForWindow({
     townId: input.townId,
     window: input.window,
     userId: input.userId,
   });
-  if (!row || isStale(row.computedAt, MICRO_ROUTE_STALE_HOURS)) {
+  const rowSeasonTags = parseSeasonTags(row?.routes.seasonTags);
+  const overrideMismatch =
+    Boolean(input.seasonOverride) && Boolean(row) && !rowSeasonTags.includes(input.seasonOverride as TownSeasonKey);
+  if (!row || isStale(row.computedAt, MICRO_ROUTE_STALE_HOURS) || overrideMismatch) {
     await recomputeTownMicroRoutesForTown({
       townId: input.townId,
       userId: input.userId,
+      seasonOverride: input.seasonOverride,
     });
     row = await getTownMicroRoutesForWindow({
       townId: input.townId,
@@ -622,21 +681,21 @@ function adjustTopRoutesForGoal(input: {
     .sort((a, b) => b.weight - a.weight);
 }
 
-export async function buildTownMicroRouteForDaily(input: {
+async function prepareTownRouteContextForDaily(input: {
   userId: string;
-  brandId: string;
   brand: BrandProfile;
   goal: DailyGoal;
   timezone: string;
   townPulse?: TownPulseModelData | null;
   windowOverride?: TownMicroRouteWindow;
+  seasonOverride?: TownSeasonKey;
 }): Promise<{
-  townMicroRoute: {
-    window: TownMicroRouteWindow;
-    line: string;
-    captionAddOn: string;
-    staffScript: string;
-  };
+  town: TownRecord;
+  window: TownMicroRouteWindow;
+  topRoutes: z.infer<typeof townMicroRoutePathSchema>[];
+  seasonTags: TownSeasonKey[];
+  seasonNotes: Record<string, string>;
+  townPulse: TownPulseModelData;
 } | null> {
   if (!input.brand.townRef) {
     return null;
@@ -650,17 +709,29 @@ export async function buildTownMicroRouteForDaily(input: {
     townId: input.brand.townRef,
     window,
     userId: input.userId,
+    seasonOverride: input.seasonOverride,
   });
   if (!routeRow || routeRow.routes.topRoutes.length === 0) {
     return null;
   }
-  const town = await getTownById({
+
+  const seasonState = await resolveTownSeasonStateForTown({
     townId: input.brand.townRef,
     userId: input.userId,
-  });
+    overrideSeason: input.seasonOverride,
+  }).catch(() => null);
+  const town =
+    seasonState?.town ??
+    (await getTownById({
+      townId: input.brand.townRef,
+      userId: input.userId,
+    }));
   if (!town) {
     return null;
   }
+  const rowSeasonTags = parseSeasonTags(routeRow.routes.seasonTags);
+  const detectedSeasonTags = seasonState?.detected.seasonTags ?? [];
+  const seasonTags = [...new Set([...detectedSeasonTags, ...rowSeasonTags])];
   const townPulse = input.townPulse ?? defaultTownPulse();
   const topRoutes = adjustTopRoutesForGoal({
     topRoutes: routeRow.routes.topRoutes,
@@ -668,6 +739,46 @@ export async function buildTownMicroRouteForDaily(input: {
     window,
     townPulse,
   });
+  return {
+    town,
+    window,
+    topRoutes,
+    seasonTags,
+    seasonNotes: (seasonState?.detected.seasonNotes ?? {}) as Record<string, string>,
+    townPulse,
+  };
+}
+
+export async function buildTownMicroRouteForDaily(input: {
+  userId: string;
+  brandId: string;
+  brand: BrandProfile;
+  goal: DailyGoal;
+  timezone: string;
+  townPulse?: TownPulseModelData | null;
+  windowOverride?: TownMicroRouteWindow;
+  seasonOverride?: TownSeasonKey;
+}): Promise<{
+  townMicroRoute: {
+    window: TownMicroRouteWindow;
+    line: string;
+    captionAddOn: string;
+    staffScript: string;
+  };
+  seasonTags: TownSeasonKey[];
+} | null> {
+  const context = await prepareTownRouteContextForDaily({
+    userId: input.userId,
+    brand: input.brand,
+    goal: input.goal,
+    timezone: input.timezone,
+    townPulse: input.townPulse,
+    windowOverride: input.windowOverride,
+    seasonOverride: input.seasonOverride,
+  });
+  if (!context) {
+    return null;
+  }
   const explicitPartners = await listExplicitPartnersForBrand({
     userId: input.userId,
     brandId: input.brandId,
@@ -680,22 +791,23 @@ export async function buildTownMicroRouteForDaily(input: {
     input: {
       brand: input.brand,
       town: {
-        id: town.id,
-        name: town.name,
-        region: town.region ?? null,
-        timezone: town.timezone,
+        id: context.town.id,
+        name: context.town.name,
+        region: context.town.region ?? null,
+        timezone: context.town.timezone,
       },
-      window,
-      topRoutes,
-      townPulse,
+      window: context.window,
+      topRoutes: context.topRoutes,
+      townPulse: context.townPulse,
       goal: input.goal,
+      seasonTags: context.seasonTags,
       explicitPartners,
     },
     outputSchema: townMicroRoutePromptOutputSchema,
   }).catch(() => {
-    const first = topRoutes[0];
+    const first = context.topRoutes[0];
     const fallback = fallbackMicroRouteLine({
-      window,
+      window: context.window,
       route: first?.route ?? ["other", "other", "other"],
     });
     return townMicroRoutePromptOutputSchema.parse({
@@ -708,7 +820,7 @@ export async function buildTownMicroRouteForDaily(input: {
 
   const fromCategory = townGraphCategoryFromBrandType(input.brand.type);
   const optionalCategory = promptOutput.optionalCollabCategory;
-  if (optionalCategory && optionalCategory !== fromCategory) {
+  if (optionalCategory && optionalCategory !== fromCategory && input.brand.townRef) {
     await addTownGraphEdge({
       townId: input.brand.townRef,
       fromCategory,
@@ -722,8 +834,79 @@ export async function buildTownMicroRouteForDaily(input: {
 
   return {
     townMicroRoute: {
-      window,
+      window: context.window,
       line: promptOutput.microRouteLine,
+      captionAddOn: promptOutput.captionAddOn,
+      staffScript: promptOutput.staffLine,
+    },
+    seasonTags: context.seasonTags,
+  };
+}
+
+export async function buildTownSeasonalBoostForDaily(input: {
+  userId: string;
+  brandId: string;
+  brand: BrandProfile;
+  goal: DailyGoal;
+  timezone: string;
+  townPulse?: TownPulseModelData | null;
+  windowOverride?: TownMicroRouteWindow;
+  seasonOverride?: TownSeasonKey;
+}): Promise<{
+  townSeasonalBoost: {
+    seasonTags: TownSeasonKey[];
+    line: string;
+    captionAddOn: string;
+    staffScript: string;
+  };
+} | null> {
+  const context = await prepareTownRouteContextForDaily({
+    userId: input.userId,
+    brand: input.brand,
+    goal: input.goal,
+    timezone: input.timezone,
+    townPulse: input.townPulse,
+    windowOverride: input.windowOverride,
+    seasonOverride: input.seasonOverride,
+  });
+  if (!context) {
+    return null;
+  }
+  const seasonTags = context.seasonTags.length > 0 ? context.seasonTags : ["fall"];
+  const promptOutput = await runPrompt({
+    promptFile: "town_seasonal_route.md",
+    brandProfile: input.brand,
+    userId: input.userId,
+    input: {
+      brand: input.brand,
+      town: {
+        id: context.town.id,
+        name: context.town.name,
+        region: context.town.region ?? null,
+        timezone: context.town.timezone,
+      },
+      window: context.window,
+      seasonTags,
+      topRoutes: context.topRoutes,
+      seasonNotes: context.seasonNotes,
+      townPulse: context.townPulse,
+      goal: input.goal,
+      localIdentityTags: input.brand.communityVibeProfile?.localIdentityTags ?? [],
+    },
+    outputSchema: townSeasonalRoutePromptOutputSchema,
+  }).catch(() => {
+    const tag = seasonTags[0] ?? "fall";
+    const tagPhrase = seasonTagPhrase(tag);
+    return townSeasonalRoutePromptOutputSchema.parse({
+      seasonalLine: `During ${tagPhrase}, locals often make short downtown stop loops.`,
+      captionAddOn: `A quick local route fits ${tagPhrase} right now.`,
+      staffLine: `If guests ask what fits today, suggest a simple route around ${tagPhrase}.`,
+    });
+  });
+  return {
+    townSeasonalBoost: {
+      seasonTags,
+      line: promptOutput.seasonalLine,
       captionAddOn: promptOutput.captionAddOn,
       staffScript: promptOutput.staffLine,
     },

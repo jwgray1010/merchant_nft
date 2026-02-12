@@ -56,6 +56,8 @@ export const townMicroRoutePathSchema = z.object({
 });
 
 export const townMicroRouteRoutesSchema = z.object({
+  window: townMicroRouteWindowSchema.optional(),
+  seasonTags: z.array(z.string().min(1)).default([]),
   topRoutes: z.array(townMicroRoutePathSchema).max(12),
 });
 

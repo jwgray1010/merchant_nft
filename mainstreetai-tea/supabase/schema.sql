@@ -123,6 +123,27 @@ create table if not exists public.town_micro_routes (
   computed_at timestamptz not null default now()
 );
 
+create table if not exists public.town_seasons (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  season_key text not null check (season_key in ('winter','spring','summer','fall','holiday','school','football','basketball','baseball','festival')),
+  start_date date,
+  end_date date,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.town_route_season_weights (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  season_tag text not null check (season_tag in ('winter','spring','summer','fall','holiday','school','football','basketball','baseball','festival')),
+  window text not null check (window in ('morning','lunch','after_work','evening','weekend')),
+  from_category text not null check (from_category in ('cafe','fitness','salon','retail','service','food','other')),
+  to_category text not null check (to_category in ('cafe','fitness','salon','retail','service','food','other')),
+  weight_delta numeric not null default 1,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.history (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -488,6 +509,18 @@ create unique index if not exists town_micro_routes_town_window_unique
 create index if not exists town_micro_routes_town_computed_idx
   on public.town_micro_routes(town_ref, computed_at desc);
 
+create unique index if not exists town_seasons_town_key_unique
+  on public.town_seasons(town_ref, season_key);
+
+create index if not exists town_seasons_town_created_idx
+  on public.town_seasons(town_ref, created_at desc);
+
+create unique index if not exists town_route_season_weights_unique
+  on public.town_route_season_weights(town_ref, season_tag, window, from_category, to_category);
+
+create index if not exists town_route_season_weights_town_window_idx
+  on public.town_route_season_weights(town_ref, window, created_at desc);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -717,6 +750,8 @@ alter table public.town_graph_edges enable row level security;
 alter table public.town_graph_suggestions enable row level security;
 alter table public.brand_partners enable row level security;
 alter table public.town_micro_routes enable row level security;
+alter table public.town_seasons enable row level security;
+alter table public.town_route_season_weights enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -919,6 +954,28 @@ using (public.is_town_member(town_ref));
 
 drop policy if exists town_micro_routes_member_modify on public.town_micro_routes;
 create policy town_micro_routes_member_modify on public.town_micro_routes
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_seasons_member_select on public.town_seasons;
+create policy town_seasons_member_select on public.town_seasons
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_seasons_member_modify on public.town_seasons;
+create policy town_seasons_member_modify on public.town_seasons
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_route_season_weights_member_select on public.town_route_season_weights;
+create policy town_route_season_weights_member_select on public.town_route_season_weights
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_route_season_weights_member_modify on public.town_route_season_weights;
+create policy town_route_season_weights_member_modify on public.town_route_season_weights
 for all
 using (public.is_town_member(town_ref))
 with check (public.is_town_member(town_ref));

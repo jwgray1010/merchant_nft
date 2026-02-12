@@ -39,10 +39,11 @@ import {
   inferTownGraphCategoryFromText,
   townGraphCategoryFromBrandType,
 } from "./townGraphService";
-import { buildTownMicroRouteForDaily } from "./townMicroRoutesService";
+import { buildTownMicroRouteForDaily, buildTownSeasonalBoostForDaily } from "./townMicroRoutesService";
 import { getBrandVoiceProfile } from "./voiceStore";
 import { getOrRecomputeTimingModel } from "./timingModelService";
 import type { TownMicroRouteWindow } from "../schemas/townGraphSchema";
+import type { TownSeasonKey } from "../schemas/townSeasonSchema";
 
 type DailyPackRecord = {
   id: string;
@@ -287,6 +288,7 @@ export async function runDailyOneButton(input: {
   locationId?: string;
   request?: DailyRequest;
   windowOverride?: TownMicroRouteWindow;
+  seasonOverride?: TownSeasonKey;
 }): Promise<{
   pack: DailyOutput;
   historyId: string;
@@ -462,6 +464,17 @@ export async function runDailyOneButton(input: {
     timezone,
     townPulse: townPulseModel?.model,
     windowOverride: input.windowOverride,
+    seasonOverride: input.seasonOverride,
+  }).catch(() => null);
+  const townSeasonalBoostSuggestion = await buildTownSeasonalBoostForDaily({
+    userId: input.userId,
+    brandId: input.brandId,
+    brand,
+    goal: chosenGoal,
+    timezone,
+    townPulse: townPulseModel?.model,
+    windowOverride: input.windowOverride,
+    seasonOverride: input.seasonOverride,
   }).catch(() => null);
   if (townPulseBoost && mergedTownBoost && townBoostSuggestion?.townBoost) {
     const captionAddOn = `${mergedTownBoost.captionAddOn} ${townPulseBoost.captionAddOn}`.trim();
@@ -508,6 +521,7 @@ export async function runDailyOneButton(input: {
     townStory: dailyTownStory,
     townGraphBoost: townGraphBoostSuggestion?.townGraphBoost,
     townMicroRoute: townMicroRouteSuggestion?.townMicroRoute,
+    townSeasonalBoost: townSeasonalBoostSuggestion?.townSeasonalBoost,
   });
 
   const history = await adapter.addHistory(
@@ -522,6 +536,8 @@ export async function runDailyOneButton(input: {
       timezone,
       eventTieIn: upcomingEvents[0] ?? null,
       locationId: location?.id,
+      windowOverride: input.windowOverride,
+      seasonOverride: input.seasonOverride,
     },
     {
       pack,
@@ -677,6 +693,11 @@ export async function runDailyOneButton(input: {
       ${
         pack.townMicroRoute
           ? `<p><strong>Town Route Tip (${pack.townMicroRoute.window}):</strong> ${pack.townMicroRoute.line}<br/>${pack.townMicroRoute.captionAddOn}<br/>${pack.townMicroRoute.staffScript}</p>`
+          : ""
+      }
+      ${
+        pack.townSeasonalBoost
+          ? `<p><strong>Town Seasonal Boost:</strong> [${pack.townSeasonalBoost.seasonTags.join(", ")}] ${pack.townSeasonalBoost.line}<br/>${pack.townSeasonalBoost.captionAddOn}<br/>${pack.townSeasonalBoost.staffScript}</p>`
           : ""
       }
     </body></html>`;

@@ -2,6 +2,7 @@ import { Router, type Request } from "express";
 import { resolveBrandAccess } from "../auth/brandAccess";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { brandPartnerUpsertSchema, townGraphEdgeUpdateSchema } from "../schemas/townGraphSchema";
+import { townSeasonKeySchema, townSeasonUpsertSchema } from "../schemas/townSeasonSchema";
 import { townStoryGenerateRequestSchema } from "../schemas/townStorySchema";
 import { townMembershipUpdateSchema } from "../schemas/townSchema";
 import { getAdapter } from "../storage/getAdapter";
@@ -23,7 +24,9 @@ import {
   upsertExplicitPartnerForBrand,
 } from "../services/townGraphService";
 import { recomputeTownMicroRoutesForTown } from "../services/townMicroRoutesService";
+import { deleteTownSeason, listTownSeasons, resolveTownSeasonStateForTown, upsertTownSeason } from "../services/townSeasonService";
 import { generateTownStoryForTown, getLatestTownStory } from "../services/townStoriesService";
+import { parseSeasonOverride } from "../town/seasonDetector";
 
 const router = Router();
 
@@ -123,6 +126,131 @@ router.post("/pulse/recompute", async (req, res, next) => {
   }
 });
 
+router.get("/seasons", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  const rawSeason = typeof req.query.season === "string" ? req.query.season.trim().toLowerCase() : "";
+  const seasonOverride = rawSeason ? parseSeasonOverride(rawSeason) : undefined;
+  if (rawSeason && !seasonOverride) {
+    return res.status(400).json({
+      error: "Invalid season query parameter",
+      supported: townSeasonKeySchema.options,
+    });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const [rows, detected] = await Promise.all([
+      listTownSeasons({
+        townId,
+        userId: req.user?.id,
+      }),
+      resolveTownSeasonStateForTown({
+        townId,
+        userId: req.user?.id,
+        overrideSeason: seasonOverride,
+      }),
+    ]);
+    return res.json({
+      town: map.town,
+      seasons: rows,
+      detected: detected?.detected ?? null,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/seasons", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  const parsedBody = townSeasonUpsertSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid season payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const row = await upsertTownSeason({
+      townId,
+      userId: req.user?.id,
+      seasonKey: parsedBody.data.seasonKey,
+      startDate: parsedBody.data.startDate ?? null,
+      endDate: parsedBody.data.endDate ?? null,
+      notes: parsedBody.data.notes ?? null,
+    });
+    return res.json({
+      ok: true,
+      season: row,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/seasons", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  const rawSeasonKey = typeof req.query.seasonKey === "string" ? req.query.seasonKey.trim().toLowerCase() : "";
+  const parsedSeason = townSeasonKeySchema.safeParse(rawSeasonKey);
+  if (!parsedSeason.success) {
+    return res.status(400).json({
+      error: "Missing or invalid seasonKey query parameter",
+      details: parsedSeason.error.flatten(),
+    });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const deleted = await deleteTownSeason({
+      townId,
+      seasonKey: parsedSeason.data,
+      userId: req.user?.id,
+    });
+    return res.json({
+      ok: deleted,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/graph", async (req, res, next) => {
   const actorId = actorUserId(req);
   if (!actorId) {
@@ -210,6 +338,14 @@ router.post("/graph/micro-routes/recompute", async (req, res, next) => {
   if (!townId) {
     return res.status(400).json({ error: "Missing townId query parameter" });
   }
+  const rawSeason = typeof req.query.season === "string" ? req.query.season.trim().toLowerCase() : "";
+  const seasonOverride = rawSeason ? parseSeasonOverride(rawSeason) : undefined;
+  if (rawSeason && !seasonOverride) {
+    return res.status(400).json({
+      error: "Invalid season query parameter",
+      supported: townSeasonKeySchema.options,
+    });
+  }
   try {
     const map = await getTownMapForUser({
       actorUserId: actorId,
@@ -221,6 +357,7 @@ router.post("/graph/micro-routes/recompute", async (req, res, next) => {
     const result = await recomputeTownMicroRoutesForTown({
       townId,
       userId: req.user?.id,
+      seasonOverride,
     });
     return res.json({
       ok: true,

@@ -8,6 +8,7 @@ import {
   runDailyOneButton,
   submitDailyCheckin,
 } from "../services/dailyOneButtonService";
+import { parseSeasonOverride } from "../town/seasonDetector";
 import { parseTownWindowOverride } from "../town/windows";
 
 const router = Router();
@@ -73,11 +74,33 @@ router.post("/", async (req, res, next) => {
       typeof req.query.window === "string" && req.query.window.trim() !== ""
         ? req.query.window.trim().toLowerCase()
         : undefined;
+    const rawSeason =
+      typeof req.query.season === "string" && req.query.season.trim() !== ""
+        ? req.query.season.trim().toLowerCase()
+        : undefined;
     const windowOverride = parseTownWindowOverride(rawWindow);
+    const seasonOverride = parseSeasonOverride(rawSeason);
     if (rawWindow && !windowOverride) {
       return res.status(400).json({
         error: "Invalid window query parameter",
         supported: ["morning", "lunch", "after_work", "evening", "weekend"],
+      });
+    }
+    if (rawSeason && !seasonOverride) {
+      return res.status(400).json({
+        error: "Invalid season query parameter",
+        supported: [
+          "winter",
+          "spring",
+          "summer",
+          "fall",
+          "holiday",
+          "school",
+          "football",
+          "basketball",
+          "baseball",
+          "festival",
+        ],
       });
     }
     const result = await runDailyOneButton({
@@ -87,6 +110,7 @@ router.post("/", async (req, res, next) => {
       locationId,
       request: parsedBody.data,
       windowOverride,
+      seasonOverride,
     });
     return res.json({
       ...result.pack,
