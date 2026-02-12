@@ -1,5 +1,22 @@
 import { historyRecordSchema, type HistoryRecord } from "../../schemas/historySchema";
 import {
+  autopilotSettingsSchema,
+  autopilotSettingsUpsertSchema,
+  modelInsightsCacheSchema,
+  type AutopilotSettings,
+  type AutopilotSettingsUpsert,
+  type ModelInsightsCache,
+} from "../../schemas/autopilotSettingsSchema";
+import {
+  alertCreateSchema,
+  alertSchema,
+  alertUpdateSchema,
+  type AlertCreate,
+  type AlertRecord,
+  type AlertStatus,
+  type AlertUpdate,
+} from "../../schemas/alertSchema";
+import {
   integrationRecordSchema,
   type IntegrationProvider,
   type IntegrationRecord,
@@ -58,6 +75,7 @@ import {
 import { getSupabaseAdminClient } from "../../supabase/supabaseAdmin";
 import { brandProfileSchema, type BrandProfile } from "../../schemas/brandSchema";
 import { normalizeUSPhone } from "../../utils/phone";
+import { nowMatchesLocalHour, timezoneOrDefault } from "../../utils/timezone";
 import type { HistoryEndpoint, StorageAdapter } from "../StorageAdapter";
 
 type BrandRow = {
@@ -165,6 +183,47 @@ type EmailLogRow = {
   subscription_id: string | null;
   created_at: string;
   sent_at: string | null;
+};
+
+type AutopilotSettingsRow = {
+  id: string;
+  owner_id: string;
+  brand_ref: string;
+  enabled: boolean;
+  cadence: string;
+  hour: number;
+  timezone: string;
+  goals: unknown;
+  focus_audiences: unknown;
+  channels: unknown;
+  allow_discounts: boolean;
+  max_discount_text: string | null;
+  notify_email: string | null;
+  notify_sms: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ModelInsightsCacheRow = {
+  id: string;
+  owner_id: string;
+  brand_ref: string;
+  range_days: number;
+  insights: unknown;
+  computed_at: string;
+};
+
+type AlertRow = {
+  id: string;
+  owner_id: string;
+  brand_ref: string;
+  type: string;
+  severity: string;
+  message: string;
+  context: unknown;
+  status: string;
+  created_at: string;
+  resolved_at: string | null;
 };
 
 function isUniqueViolation(error: unknown): boolean {
@@ -307,6 +366,59 @@ function toEmailLog(brandId: string, row: EmailLogRow): EmailLog {
     subscriptionId: row.subscription_id ?? undefined,
     createdAt: row.created_at,
     sentAt: row.sent_at ?? undefined,
+  });
+}
+
+function toAutopilotSettings(brandId: string, row: AutopilotSettingsRow): AutopilotSettings {
+  return autopilotSettingsSchema.parse({
+    id: row.id,
+    ownerId: row.owner_id,
+    brandId,
+    enabled: row.enabled,
+    cadence: row.cadence,
+    hour: row.hour,
+    timezone: timezoneOrDefault(row.timezone),
+    goals: Array.isArray(row.goals) ? row.goals : [],
+    focusAudiences: Array.isArray(row.focus_audiences) ? row.focus_audiences : [],
+    channels: Array.isArray(row.channels) ? row.channels : [],
+    allowDiscounts: row.allow_discounts,
+    maxDiscountText: row.max_discount_text ?? undefined,
+    notifyEmail: row.notify_email ?? undefined,
+    notifySms: row.notify_sms ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function toModelInsightsCache(brandId: string, row: ModelInsightsCacheRow): ModelInsightsCache {
+  return modelInsightsCacheSchema.parse({
+    id: row.id,
+    ownerId: row.owner_id,
+    brandId,
+    rangeDays: row.range_days,
+    insights:
+      typeof row.insights === "object" && row.insights !== null && !Array.isArray(row.insights)
+        ? row.insights
+        : {},
+    computedAt: row.computed_at,
+  });
+}
+
+function toAlertRecord(brandId: string, row: AlertRow): AlertRecord {
+  return alertSchema.parse({
+    id: row.id,
+    ownerId: row.owner_id,
+    brandId,
+    type: row.type,
+    severity: row.severity,
+    message: row.message,
+    context:
+      typeof row.context === "object" && row.context !== null && !Array.isArray(row.context)
+        ? row.context
+        : {},
+    status: row.status,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at ?? undefined,
   });
 }
 
@@ -1562,5 +1674,317 @@ export class SupabaseAdapter implements StorageAdapter {
       return null;
     }
     return toEmailLog(brandId, data as EmailLogRow);
+  }
+
+  async getAutopilotSettings(userId: string, brandId: string): Promise<AutopilotSettings | null> {
+    const brandRow = await this.getBrandRow(userId, brandId);
+    if (!brandRow) {
+      return null;
+    }
+    const { data, error } = await this.table("autopilot_settings")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toAutopilotSettings(brandId, data as AutopilotSettingsRow);
+  }
+
+  async upsertAutopilotSettings(
+    userId: string,
+    brandId: string,
+    input: AutopilotSettingsUpsert,
+  ): Promise<AutopilotSettings> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = autopilotSettingsUpsertSchema.parse(input);
+    const existing = await this.getAutopilotSettings(userId, brandId);
+    const payload = {
+      owner_id: userId,
+      brand_ref: brandRow.id,
+      enabled: parsed.enabled ?? existing?.enabled ?? false,
+      cadence: parsed.cadence ?? existing?.cadence ?? "daily",
+      hour: parsed.hour ?? existing?.hour ?? 7,
+      timezone: timezoneOrDefault(parsed.timezone ?? existing?.timezone),
+      goals: parsed.goals ?? existing?.goals ?? ["repeat_customers", "slow_hours"],
+      focus_audiences: parsed.focusAudiences ?? existing?.focusAudiences ?? [],
+      channels: parsed.channels ?? existing?.channels ?? ["facebook", "instagram"],
+      allow_discounts: parsed.allowDiscounts ?? existing?.allowDiscounts ?? true,
+      max_discount_text: parsed.maxDiscountText ?? existing?.maxDiscountText ?? null,
+      notify_email:
+        parsed.notifyEmail !== undefined
+          ? parsed.notifyEmail.trim().toLowerCase() || null
+          : existing?.notifyEmail ?? null,
+      notify_sms:
+        parsed.notifySms !== undefined
+          ? parsed.notifySms.trim() || null
+          : existing?.notifySms ?? null,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await this.table("autopilot_settings")
+      .upsert(payload, {
+        onConflict: "owner_id,brand_ref",
+      })
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    return toAutopilotSettings(brandId, data as AutopilotSettingsRow);
+  }
+
+  async listDueAutopilotSettings(nowIso: string, limit: number): Promise<AutopilotSettings[]> {
+    const now = new Date(nowIso);
+    const { data, error } = await this.table("autopilot_settings")
+      .select("*, brands!inner(brand_id)")
+      .eq("enabled", true)
+      .order("updated_at", { ascending: true })
+      .limit(Math.max(0, limit * 4));
+    if (error) {
+      throw error;
+    }
+
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const due: AutopilotSettings[] = [];
+    for (const row of rows) {
+      const brands = row.brands as { brand_id?: unknown } | null;
+      if (!brands || typeof brands.brand_id !== "string") {
+        continue;
+      }
+
+      const settingsParsed = autopilotSettingsSchema.safeParse({
+        id: row.id,
+        ownerId: row.owner_id,
+        brandId: brands.brand_id,
+        enabled: row.enabled,
+        cadence: row.cadence,
+        hour: row.hour,
+        timezone: row.timezone,
+        goals: row.goals,
+        focusAudiences: row.focus_audiences,
+        channels: row.channels,
+        allowDiscounts: row.allow_discounts,
+        maxDiscountText: row.max_discount_text ?? undefined,
+        notifyEmail: row.notify_email ?? undefined,
+        notifySms: row.notify_sms ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+      if (!settingsParsed.success || !settingsParsed.data.enabled) {
+        continue;
+      }
+      const settings = settingsParsed.data;
+      const match = nowMatchesLocalHour(now, settings.timezone, settings.hour);
+      if (!match.matches) {
+        continue;
+      }
+      if (settings.cadence === "weekday" && (match.weekdayIndex === 0 || match.weekdayIndex === 6)) {
+        continue;
+      }
+      due.push(settings);
+      if (due.length >= limit) {
+        break;
+      }
+    }
+
+    return due;
+  }
+
+  async listEnabledAutopilotSettings(limit: number): Promise<AutopilotSettings[]> {
+    const { data, error } = await this.table("autopilot_settings")
+      .select("*, brands!inner(brand_id)")
+      .eq("enabled", true)
+      .order("updated_at", { ascending: false })
+      .limit(Math.max(0, limit));
+    if (error) {
+      throw error;
+    }
+
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const mapped: AutopilotSettings[] = [];
+    for (const row of rows) {
+      const brands = row.brands as { brand_id?: unknown } | null;
+      if (!brands || typeof brands.brand_id !== "string") {
+        continue;
+      }
+      const parsed = autopilotSettingsSchema.safeParse({
+        id: row.id,
+        ownerId: row.owner_id,
+        brandId: brands.brand_id,
+        enabled: row.enabled,
+        cadence: row.cadence,
+        hour: row.hour,
+        timezone: row.timezone,
+        goals: row.goals,
+        focusAudiences: row.focus_audiences,
+        channels: row.channels,
+        allowDiscounts: row.allow_discounts,
+        maxDiscountText: row.max_discount_text ?? undefined,
+        notifyEmail: row.notify_email ?? undefined,
+        notifySms: row.notify_sms ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+      if (parsed.success) {
+        mapped.push(parsed.data);
+      }
+    }
+    return mapped;
+  }
+
+  async getModelInsightsCache(
+    userId: string,
+    brandId: string,
+    rangeDays: number,
+  ): Promise<ModelInsightsCache | null> {
+    const brandRow = await this.getBrandRow(userId, brandId);
+    if (!brandRow) {
+      return null;
+    }
+    const { data, error } = await this.table("model_insights_cache")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("range_days", Math.max(1, Math.floor(rangeDays)))
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toModelInsightsCache(brandId, data as ModelInsightsCacheRow);
+  }
+
+  async upsertModelInsightsCache(
+    userId: string,
+    brandId: string,
+    rangeDays: number,
+    insights: Record<string, unknown>,
+    computedAt?: string,
+  ): Promise<ModelInsightsCache> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const normalizedRangeDays = Math.max(1, Math.floor(rangeDays));
+    const { data, error } = await this.table("model_insights_cache")
+      .upsert(
+        {
+          owner_id: userId,
+          brand_ref: brandRow.id,
+          range_days: normalizedRangeDays,
+          insights,
+          computed_at: computedAt ?? new Date().toISOString(),
+        },
+        {
+          onConflict: "owner_id,brand_ref,range_days",
+        },
+      )
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    return toModelInsightsCache(brandId, data as ModelInsightsCacheRow);
+  }
+
+  async addAlert(userId: string, brandId: string, input: AlertCreate): Promise<AlertRecord> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = alertCreateSchema.parse(input);
+    const { data, error } = await this.table("alerts")
+      .insert({
+        owner_id: userId,
+        brand_ref: brandRow.id,
+        type: parsed.type,
+        severity: parsed.severity,
+        message: parsed.message,
+        context: parsed.context ?? {},
+        status: parsed.status,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    return toAlertRecord(brandId, data as AlertRow);
+  }
+
+  async listAlerts(
+    userId: string,
+    brandId: string,
+    options?: { status?: AlertStatus | "all"; limit?: number },
+  ): Promise<AlertRecord[]> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    let query = this.table("alerts")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .order("created_at", { ascending: false })
+      .limit(Math.max(0, options?.limit ?? 100));
+    if (options?.status && options.status !== "all") {
+      query = query.eq("status", options.status);
+    }
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+    return ((data ?? []) as AlertRow[]).map((row) => toAlertRecord(brandId, row));
+  }
+
+  async getAlertById(
+    userId: string,
+    brandId: string,
+    alertId: string,
+  ): Promise<AlertRecord | null> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("alerts")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("id", alertId)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toAlertRecord(brandId, data as AlertRow);
+  }
+
+  async updateAlert(
+    userId: string,
+    brandId: string,
+    alertId: string,
+    updates: AlertUpdate,
+  ): Promise<AlertRecord | null> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = alertUpdateSchema.parse(updates);
+    const payload: Record<string, unknown> = {};
+    if (parsed.status !== undefined) payload.status = parsed.status;
+    if (parsed.context !== undefined) payload.context = parsed.context;
+    if (parsed.resolvedAt !== undefined) {
+      payload.resolved_at = parsed.resolvedAt;
+    } else if (parsed.status === "resolved") {
+      payload.resolved_at = new Date().toISOString();
+    }
+
+    const { data, error } = await this.table("alerts")
+      .update(payload)
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("id", alertId)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toAlertRecord(brandId, data as AlertRow);
   }
 }

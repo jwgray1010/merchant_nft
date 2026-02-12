@@ -558,6 +558,14 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `POST /api/publish?brandId=...`
 - `POST /api/jobs/outbox` (cron; requires `x-cron-secret`)
 - `GET /api/jobs/digests` (cron; requires `x-cron-secret`)
+- `GET /api/autopilot/settings?brandId=...`
+- `POST /api/autopilot/settings?brandId=...`
+- `POST /api/autopilot/run?brandId=...`
+- `GET /api/jobs/autopilot` (cron; requires `x-cron-secret`)
+- `GET /api/jobs/alerts` (cron; requires `x-cron-secret`)
+- `GET /api/alerts?brandId=...&status=open|all`
+- `POST /api/alerts/:id/ack?brandId=...`
+- `POST /api/alerts/:id/resolve?brandId=...`
 - `GET /api/sms/contacts?brandId=...`
 - `POST /api/sms/contacts?brandId=...`
 - `PUT /api/sms/contacts/:contactId?brandId=...`
@@ -617,6 +625,10 @@ Vercel Cron example target:
 - header: `x-cron-secret: <CRON_SECRET>`
 - `GET https://yourapp.vercel.app/api/jobs/digests` (every hour)
 - header: `x-cron-secret: <CRON_SECRET>`
+- `GET https://yourapp.vercel.app/api/jobs/autopilot` (hourly at minute 5)
+- header: `x-cron-secret: <CRON_SECRET>`
+- `GET https://yourapp.vercel.app/api/jobs/alerts` (hourly at minute 10, optional)
+- header: `x-cron-secret: <CRON_SECRET>`
 
 `vercel.json`:
 
@@ -624,9 +636,63 @@ Vercel Cron example target:
 {
   "crons": [
     { "path": "/api/jobs/outbox", "schedule": "*/5 * * * *" },
-    { "path": "/api/jobs/digests", "schedule": "0 * * * *" }
+    { "path": "/api/jobs/digests", "schedule": "0 * * * *" },
+    { "path": "/api/jobs/autopilot", "schedule": "5 * * * *" },
+    { "path": "/api/jobs/alerts", "schedule": "10 * * * *" }
   ]
 }
+```
+
+### Autopilot Growth Engine (Phase 9)
+
+Autopilot generates a **tomorrow-ready pack** per brand (promo + social caption + sign copy + SMS + GBP summary), learns from performance, and queues publishing/notifications through outbox.
+
+Key APIs:
+
+- `GET /api/autopilot/settings?brandId=...`
+- `POST /api/autopilot/settings?brandId=...`
+- `POST /api/autopilot/run?brandId=...`
+- `GET /api/alerts?brandId=...&status=open|all`
+- `POST /api/alerts/:id/ack?brandId=...`
+- `POST /api/alerts/:id/resolve?brandId=...`
+- `GET /api/jobs/autopilot` (cron, protected by `x-cron-secret`)
+- `GET /api/jobs/alerts` (cron, protected by `x-cron-secret`)
+
+Autopilot safety guard:
+
+- max **1 autopilot run per brand within 20 hours** (checked via history endpoint `autopilot_run`).
+
+Enable/configure from Admin:
+
+- `/admin/autopilot` (settings + run now)
+- `/admin/tomorrow` (latest copy-ready tomorrow pack)
+- `/admin/alerts` (open alerts + acknowledge/resolve)
+
+Sample settings upsert:
+
+```bash
+curl -X POST "http://localhost:3001/api/autopilot/settings?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": true,
+    "cadence": "daily",
+    "hour": 7,
+    "timezone": "America/Chicago",
+    "goals": ["repeat_customers","slow_hours"],
+    "channels": ["facebook","instagram","google_business"],
+    "notifyEmail": "owner@example.com",
+    "notifySms": "+15555550123"
+  }'
+```
+
+Manual run:
+
+```bash
+curl -X POST "http://localhost:3001/api/autopilot/run?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"goal":"repeat_customers"}'
 ```
 
 ### SMS examples (Twilio)
@@ -796,6 +862,9 @@ From admin you can:
 - manage recurring and one-off local events
 - onboard new brands quickly from templates
 - connect Buffer/Twilio/GBP/Email integrations
+- configure and run Autopilot
+- monitor/respond to anomaly alerts
+- view tomorrow-ready copy packs
 - manage opt-in SMS contacts, send one-offs, and run campaigns
 - send GBP posts
 - preview and queue email digests
@@ -817,6 +886,9 @@ From admin you can:
 12. Send opt-in SMS via `/admin/sms`.
 13. Post to Google Business from `/admin/gbp`.
 14. Manage digest subscriptions in `/admin/email`, queue/send digests, and monitor `/admin/outbox`.
+15. Enable Autopilot in `/admin/autopilot` for daily tomorrow-ready generation.
+16. Use `/admin/tomorrow` for quick copy/paste execution each day.
+17. Review `/admin/alerts` and apply rescue actions when anomalies are detected.
 
 ## Notes
 

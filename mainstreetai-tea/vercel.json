@@ -7,6 +7,14 @@
     {
       "path": "/api/jobs/digests",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/jobs/autopilot",
+      "schedule": "5 * * * *"
+    },
+    {
+      "path": "/api/jobs/alerts",
+      "schedule": "10 * * * *"
     }
   ]
 }

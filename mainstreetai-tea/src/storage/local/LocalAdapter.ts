@@ -1,6 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  autopilotSettingsSchema,
+  autopilotSettingsUpsertSchema,
+  modelInsightsCacheSchema,
+  type AutopilotSettings,
+  type AutopilotSettingsUpsert,
+  type ModelInsightsCache,
+} from "../../schemas/autopilotSettingsSchema";
+import {
+  alertCreateSchema,
+  alertSchema,
+  alertUpdateSchema,
+  type AlertCreate,
+  type AlertRecord,
+  type AlertStatus,
+  type AlertUpdate,
+} from "../../schemas/alertSchema";
 import { brandProfileSchema, type BrandProfile } from "../../schemas/brandSchema";
 import {
   emailSubscriptionSchema,
@@ -65,6 +82,7 @@ import {
   type ScheduleUpdateRequest,
 } from "../../schemas/scheduleSchema";
 import { normalizeUSPhone } from "../../utils/phone";
+import { nowMatchesLocalHour, timezoneOrDefault } from "../../utils/timezone";
 import type { HistoryEndpoint, StorageAdapter } from "../StorageAdapter";
 
 function safePathSegment(value: string): string {
@@ -165,6 +183,26 @@ export class LocalAdapter implements StorageAdapter {
 
   private emailLogPath(userId: string, brandId: string, logId: string): string {
     return path.join(this.emailLogsDir(userId, brandId), `${logId}.json`);
+  }
+
+  private autopilotSettingsPath(userId: string, brandId: string): string {
+    return path.join(this.userDir(userId), "autopilot_settings", `${brandId}.json`);
+  }
+
+  private modelInsightsCacheDir(userId: string, brandId: string): string {
+    return path.join(this.userDir(userId), "model_insights_cache", brandId);
+  }
+
+  private modelInsightsCachePath(userId: string, brandId: string, rangeDays: number): string {
+    return path.join(this.modelInsightsCacheDir(userId, brandId), `${rangeDays}.json`);
+  }
+
+  private alertsDir(userId: string, brandId: string): string {
+    return path.join(this.userDir(userId), "alerts", brandId);
+  }
+
+  private alertPath(userId: string, brandId: string, alertId: string): string {
+    return path.join(this.alertsDir(userId, brandId), `${alertId}.json`);
   }
 
   private async ensureDir(dirPath: string): Promise<void> {
@@ -298,6 +336,9 @@ export class LocalAdapter implements StorageAdapter {
       rm(this.smsMessagesDir(userId, brandId), { recursive: true, force: true }),
       rm(this.emailSubscriptionsDir(userId, brandId), { recursive: true, force: true }),
       rm(this.emailLogsDir(userId, brandId), { recursive: true, force: true }),
+      rm(this.autopilotSettingsPath(userId, brandId), { force: true }),
+      rm(this.modelInsightsCacheDir(userId, brandId), { recursive: true, force: true }),
+      rm(this.alertsDir(userId, brandId), { recursive: true, force: true }),
     ]);
 
     const outboxRecords = await this.listOutbox(userId, brandId, 1000);
@@ -1261,6 +1302,264 @@ export class LocalAdapter implements StorageAdapter {
         parsedUpdates.error === null
           ? undefined
           : parsedUpdates.error ?? current.error,
+    });
+    await this.atomicWriteJson(filePath, next);
+    return next;
+  }
+
+  async getAutopilotSettings(userId: string, brandId: string): Promise<AutopilotSettings | null> {
+    const raw = await this.readJson<unknown>(this.autopilotSettingsPath(userId, brandId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = autopilotSettingsSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
+  }
+
+  async upsertAutopilotSettings(
+    userId: string,
+    brandId: string,
+    input: AutopilotSettingsUpsert,
+  ): Promise<AutopilotSettings> {
+    const parsedInput = autopilotSettingsUpsertSchema.parse(input);
+    const existing = await this.getAutopilotSettings(userId, brandId);
+    const nowIso = new Date().toISOString();
+    const record = autopilotSettingsSchema.parse({
+      id: existing?.id ?? randomUUID(),
+      ownerId: userId,
+      brandId,
+      enabled: parsedInput.enabled ?? existing?.enabled ?? false,
+      cadence: parsedInput.cadence ?? existing?.cadence ?? "daily",
+      hour: parsedInput.hour ?? existing?.hour ?? 7,
+      timezone: timezoneOrDefault(parsedInput.timezone ?? existing?.timezone),
+      goals: parsedInput.goals ?? existing?.goals ?? ["repeat_customers", "slow_hours"],
+      focusAudiences: parsedInput.focusAudiences ?? existing?.focusAudiences ?? [],
+      channels: parsedInput.channels ?? existing?.channels ?? ["facebook", "instagram"],
+      allowDiscounts: parsedInput.allowDiscounts ?? existing?.allowDiscounts ?? true,
+      maxDiscountText: parsedInput.maxDiscountText ?? existing?.maxDiscountText,
+      notifyEmail:
+        parsedInput.notifyEmail !== undefined
+          ? parsedInput.notifyEmail.trim().toLowerCase() || undefined
+          : existing?.notifyEmail,
+      notifySms:
+        parsedInput.notifySms !== undefined
+          ? parsedInput.notifySms.trim() || undefined
+          : existing?.notifySms,
+      createdAt: existing?.createdAt ?? nowIso,
+      updatedAt: nowIso,
+    });
+
+    await this.ensureDir(path.dirname(this.autopilotSettingsPath(userId, brandId)));
+    await this.atomicWriteJson(this.autopilotSettingsPath(userId, brandId), record);
+    return record;
+  }
+
+  async listDueAutopilotSettings(nowIso: string, limit: number): Promise<AutopilotSettings[]> {
+    const now = new Date(nowIso);
+    const userDirs = await this.listUserDirectories();
+    const due: AutopilotSettings[] = [];
+
+    for (const userDirName of userDirs) {
+      const settingsDir = path.join(this.rootDir, userDirName, "autopilot_settings");
+      let entries: string[];
+      try {
+        entries = await readdir(settingsDir);
+      } catch (error) {
+        if (isNotFound(error)) {
+          continue;
+        }
+        throw error;
+      }
+
+      for (const entry of entries.filter((name) => name.endsWith(".json"))) {
+        const raw = await readFile(path.join(settingsDir, entry), "utf8");
+        const parsed = autopilotSettingsSchema.safeParse(JSON.parse(raw));
+        if (!parsed.success) {
+          continue;
+        }
+        const settings = parsed.data;
+        if (!settings.enabled) {
+          continue;
+        }
+
+        const match = nowMatchesLocalHour(now, settings.timezone, settings.hour);
+        if (!match.matches) {
+          continue;
+        }
+        if (settings.cadence === "weekday" && (match.weekdayIndex === 0 || match.weekdayIndex === 6)) {
+          continue;
+        }
+        due.push(settings);
+      }
+    }
+
+    return due
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+      .slice(0, Math.max(0, limit));
+  }
+
+  async listEnabledAutopilotSettings(limit: number): Promise<AutopilotSettings[]> {
+    const userDirs = await this.listUserDirectories();
+    const enabled: AutopilotSettings[] = [];
+
+    for (const userDirName of userDirs) {
+      const settingsDir = path.join(this.rootDir, userDirName, "autopilot_settings");
+      let entries: string[];
+      try {
+        entries = await readdir(settingsDir);
+      } catch (error) {
+        if (isNotFound(error)) {
+          continue;
+        }
+        throw error;
+      }
+
+      for (const entry of entries.filter((name) => name.endsWith(".json"))) {
+        const raw = await readFile(path.join(settingsDir, entry), "utf8");
+        const parsed = autopilotSettingsSchema.safeParse(JSON.parse(raw));
+        if (!parsed.success || !parsed.data.enabled) {
+          continue;
+        }
+        enabled.push(parsed.data);
+      }
+    }
+
+    return enabled
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, Math.max(0, limit));
+  }
+
+  async getModelInsightsCache(
+    userId: string,
+    brandId: string,
+    rangeDays: number,
+  ): Promise<ModelInsightsCache | null> {
+    const raw = await this.readJson<unknown>(
+      this.modelInsightsCachePath(userId, brandId, Math.max(1, Math.floor(rangeDays))),
+    );
+    if (!raw) {
+      return null;
+    }
+    const parsed = modelInsightsCacheSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
+  }
+
+  async upsertModelInsightsCache(
+    userId: string,
+    brandId: string,
+    rangeDays: number,
+    insights: Record<string, unknown>,
+    computedAt?: string,
+  ): Promise<ModelInsightsCache> {
+    const normalizedRangeDays = Math.max(1, Math.floor(rangeDays));
+    const existing = await this.getModelInsightsCache(userId, brandId, normalizedRangeDays);
+    const record = modelInsightsCacheSchema.parse({
+      id: existing?.id ?? randomUUID(),
+      ownerId: userId,
+      brandId,
+      rangeDays: normalizedRangeDays,
+      insights,
+      computedAt: computedAt ?? new Date().toISOString(),
+    });
+
+    await this.ensureDir(this.modelInsightsCacheDir(userId, brandId));
+    await this.atomicWriteJson(
+      this.modelInsightsCachePath(userId, brandId, normalizedRangeDays),
+      record,
+    );
+    return record;
+  }
+
+  async addAlert(userId: string, brandId: string, input: AlertCreate): Promise<AlertRecord> {
+    const parsed = alertCreateSchema.parse(input);
+    const nowIso = new Date().toISOString();
+    const record = alertSchema.parse({
+      id: randomUUID(),
+      ownerId: userId,
+      brandId,
+      type: parsed.type,
+      severity: parsed.severity,
+      message: parsed.message,
+      context: parsed.context ?? {},
+      status: parsed.status,
+      createdAt: nowIso,
+      resolvedAt: undefined,
+    });
+
+    await this.ensureDir(this.alertsDir(userId, brandId));
+    await this.atomicWriteJson(this.alertPath(userId, brandId, record.id), record);
+    return record;
+  }
+
+  async listAlerts(
+    userId: string,
+    brandId: string,
+    options?: { status?: AlertStatus | "all"; limit?: number },
+  ): Promise<AlertRecord[]> {
+    const dir = this.alertsDir(userId, brandId);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const items = await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map(async (entry) => {
+          const raw = await readFile(path.join(dir, entry), "utf8");
+          return alertSchema.safeParse(JSON.parse(raw));
+        }),
+    );
+
+    const parsedItems = items
+      .filter((result): result is { success: true; data: AlertRecord } => result.success)
+      .map((result) => result.data);
+    const statusFilter = options?.status ?? "all";
+    const filtered =
+      statusFilter === "all"
+        ? parsedItems
+        : parsedItems.filter((entry) => entry.status === statusFilter);
+
+    return filtered
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, Math.max(0, options?.limit ?? 100));
+  }
+
+  async getAlertById(userId: string, brandId: string, alertId: string): Promise<AlertRecord | null> {
+    const raw = await this.readJson<unknown>(this.alertPath(userId, brandId, alertId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = alertSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
+  }
+
+  async updateAlert(
+    userId: string,
+    brandId: string,
+    alertId: string,
+    updates: AlertUpdate,
+  ): Promise<AlertRecord | null> {
+    const parsedUpdates = alertUpdateSchema.parse(updates);
+    const filePath = this.alertPath(userId, brandId, alertId);
+    const existing = await this.readJson<unknown>(filePath);
+    if (!existing) {
+      return null;
+    }
+    const current = alertSchema.parse(existing);
+    const next = alertSchema.parse({
+      ...current,
+      ...parsedUpdates,
+      resolvedAt:
+        parsedUpdates.resolvedAt === null
+          ? undefined
+          : parsedUpdates.resolvedAt ?? current.resolvedAt,
+      context: parsedUpdates.context ?? current.context,
     });
     await this.atomicWriteJson(filePath, next);
     return next;

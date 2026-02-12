@@ -7,6 +7,8 @@ export const generationEndpointSchema = z.enum([
   "events",
   "week-plan",
   "next-week-plan",
+  "autopilot_run",
+  "alert-recommendations",
   "publish",
   "sms-send",
   "gbp-post",

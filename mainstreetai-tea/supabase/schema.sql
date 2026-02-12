@@ -171,6 +171,47 @@ create table if not exists public.email_log (
   sent_at timestamptz
 );
 
+create table if not exists public.autopilot_settings (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  enabled boolean not null default false,
+  cadence text not null default 'daily' check (cadence in ('daily', 'weekday', 'custom')),
+  hour int not null default 7 check (hour between 0 and 23),
+  timezone text not null default 'America/Chicago',
+  goals jsonb not null default '["repeat_customers","slow_hours"]'::jsonb,
+  focus_audiences jsonb not null default '[]'::jsonb,
+  channels jsonb not null default '["facebook","instagram"]'::jsonb,
+  allow_discounts boolean not null default true,
+  max_discount_text text,
+  notify_email text,
+  notify_sms text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.model_insights_cache (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  range_days int not null default 30,
+  insights jsonb not null,
+  computed_at timestamptz not null default now()
+);
+
+create table if not exists public.alerts (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  type text not null check (type in ('slow_day','low_engagement','missed_post','spike','other')),
+  severity text not null check (severity in ('info','warning','urgent')),
+  message text not null,
+  context jsonb not null default '{}'::jsonb,
+  status text not null default 'open' check (status in ('open','acknowledged','resolved')),
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+
 alter table public.posts add column if not exists status text not null default 'posted';
 alter table public.posts add column if not exists provider_meta jsonb;
 
@@ -207,6 +248,18 @@ create index if not exists email_subscriptions_due_idx
 create index if not exists email_log_owner_brand_created_idx
   on public.email_log(owner_id, brand_ref, created_at desc);
 
+create unique index if not exists autopilot_settings_owner_brand_unique
+  on public.autopilot_settings(owner_id, brand_ref);
+
+create index if not exists autopilot_settings_due_idx
+  on public.autopilot_settings(owner_id, enabled, hour, cadence, timezone);
+
+create unique index if not exists model_insights_cache_owner_brand_range_unique
+  on public.model_insights_cache(owner_id, brand_ref, range_days);
+
+create index if not exists alerts_owner_brand_created_idx
+  on public.alerts(owner_id, brand_ref, created_at desc);
+
 -- Keep updated_at fresh on brands updates.
 create or replace function public.set_updated_at()
 returns trigger
@@ -233,6 +286,11 @@ create trigger outbox_set_updated_at
 before update on public.outbox
 for each row execute function public.set_updated_at();
 
+drop trigger if exists autopilot_settings_set_updated_at on public.autopilot_settings;
+create trigger autopilot_settings_set_updated_at
+before update on public.autopilot_settings
+for each row execute function public.set_updated_at();
+
 -- RLS: owner can only access own rows.
 alter table public.brands enable row level security;
 alter table public.history enable row level security;
@@ -246,6 +304,9 @@ alter table public.sms_contacts enable row level security;
 alter table public.sms_messages enable row level security;
 alter table public.email_subscriptions enable row level security;
 alter table public.email_log enable row level security;
+alter table public.autopilot_settings enable row level security;
+alter table public.model_insights_cache enable row level security;
+alter table public.alerts enable row level security;
 
 drop policy if exists brands_owner_select on public.brands;
 create policy brands_owner_select on public.brands
@@ -325,6 +386,24 @@ with check (owner_id = auth.uid());
 
 drop policy if exists email_log_owner_all on public.email_log;
 create policy email_log_owner_all on public.email_log
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists autopilot_settings_owner_all on public.autopilot_settings;
+create policy autopilot_settings_owner_all on public.autopilot_settings
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists model_insights_cache_owner_all on public.model_insights_cache;
+create policy model_insights_cache_owner_all on public.model_insights_cache
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists alerts_owner_all on public.alerts;
+create policy alerts_owner_all on public.alerts
 for all
 using (owner_id = auth.uid())
 with check (owner_id = auth.uid());

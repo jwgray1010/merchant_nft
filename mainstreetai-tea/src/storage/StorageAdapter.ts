@@ -1,5 +1,16 @@
 import type { BrandProfile } from "../schemas/brandSchema";
 import type {
+  AutopilotSettings,
+  AutopilotSettingsUpsert,
+  ModelInsightsCache,
+} from "../schemas/autopilotSettingsSchema";
+import type {
+  AlertCreate,
+  AlertRecord,
+  AlertStatus,
+  AlertUpdate,
+} from "../schemas/alertSchema";
+import type {
   EmailSubscription,
   EmailSubscriptionUpdate,
   EmailSubscriptionUpsert,
@@ -45,6 +56,8 @@ export type HistoryEndpoint =
   | "events"
   | "week-plan"
   | "next-week-plan"
+  | "autopilot_run"
+  | "alert-recommendations"
   | "publish"
   | "sms-send"
   | "gbp-post"
@@ -181,4 +194,40 @@ export interface StorageAdapter {
     logId: string,
     updates: EmailLogUpdate,
   ): Promise<EmailLog | null>;
+
+  getAutopilotSettings(userId: string, brandId: string): Promise<AutopilotSettings | null>;
+  upsertAutopilotSettings(
+    userId: string,
+    brandId: string,
+    input: AutopilotSettingsUpsert,
+  ): Promise<AutopilotSettings>;
+  listDueAutopilotSettings(nowIso: string, limit: number): Promise<AutopilotSettings[]>;
+  listEnabledAutopilotSettings(limit: number): Promise<AutopilotSettings[]>;
+
+  getModelInsightsCache(
+    userId: string,
+    brandId: string,
+    rangeDays: number,
+  ): Promise<ModelInsightsCache | null>;
+  upsertModelInsightsCache(
+    userId: string,
+    brandId: string,
+    rangeDays: number,
+    insights: Record<string, unknown>,
+    computedAt?: string,
+  ): Promise<ModelInsightsCache>;
+
+  addAlert(userId: string, brandId: string, input: AlertCreate): Promise<AlertRecord>;
+  listAlerts(
+    userId: string,
+    brandId: string,
+    options?: { status?: AlertStatus | "all"; limit?: number },
+  ): Promise<AlertRecord[]>;
+  getAlertById(userId: string, brandId: string, alertId: string): Promise<AlertRecord | null>;
+  updateAlert(
+    userId: string,
+    brandId: string,
+    alertId: string,
+    updates: AlertUpdate,
+  ): Promise<AlertRecord | null>;
 }

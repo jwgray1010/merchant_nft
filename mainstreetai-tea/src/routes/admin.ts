@@ -11,6 +11,12 @@ import {
 } from "../integrations/env";
 import { AVAILABLE_TEMPLATE_NAMES, buildBrandFromTemplate } from "../data/templateStore";
 import { processDueOutbox } from "../jobs/outboxProcessor";
+import {
+  autopilotSettingsUpsertSchema,
+  type AutopilotChannel,
+  type AutopilotGoal,
+} from "../schemas/autopilotSettingsSchema";
+import { autopilotRunRequestSchema } from "../schemas/autopilotRunSchema";
 import { brandProfileSchema, type BrandProfile, type BrandRegistryItem } from "../schemas/brandSchema";
 import {
   emailSubscriptionUpdateSchema,
@@ -33,6 +39,7 @@ import {
 import { smsCampaignRequestSchema } from "../schemas/smsCampaignSchema";
 import { smsContactUpsertSchema } from "../schemas/smsContactSchema";
 import { smsSendRequestSchema } from "../schemas/smsSendSchema";
+import { runAutopilotForBrand } from "../services/autopilotService";
 import { buildDigestPreview } from "../services/digestService";
 import { buildTodayTasks } from "../services/todayService";
 import { getStorageMode, getAdapter } from "../storage/getAdapter";
@@ -55,6 +62,21 @@ const POST_PLATFORMS = ["facebook", "instagram", "tiktok", "other"] as const;
 const POST_MEDIA_TYPES = ["photo", "reel", "story", "text"] as const;
 const METRIC_WINDOWS = ["24h", "48h", "7d"] as const;
 const SCHEDULE_STATUSES = ["planned", "posted", "skipped"] as const;
+const AUTOPILOT_GOALS: AutopilotGoal[] = ["new_customers", "repeat_customers", "slow_hours"];
+const AUTOPILOT_CHANNELS: AutopilotChannel[] = [
+  "facebook",
+  "instagram",
+  "tiktok",
+  "google_business",
+  "other",
+];
+const AUTOPILOT_TIMEZONES = [
+  "America/Chicago",
+  "America/New_York",
+  "America/Denver",
+  "America/Los_Angeles",
+  "UTC",
+] as const;
 
 type GeneratorKind = "promo" | "social" | "events" | "week-plan" | "next-week-plan";
 
@@ -188,6 +210,9 @@ function renderLayout(
         <a class="button secondary small" href="/admin/sms">SMS</a>
         <a class="button secondary small" href="/admin/email">Email</a>
         <a class="button secondary small" href="/admin/schedule">Schedule</a>
+        <a class="button secondary small" href="/admin/autopilot">Autopilot</a>
+        <a class="button secondary small" href="/admin/alerts">Alerts</a>
+        <a class="button secondary small" href="/admin/tomorrow">Tomorrow</a>
         <a class="button secondary small" href="/admin/outbox">Outbox</a>
         <a class="button secondary small" href="/admin/local-events">Local Events</a>
         <a class="button secondary small" href="/admin/today">Today</a>
@@ -430,6 +455,55 @@ function parseBrandForm(body: Record<string, unknown>): BrandProfile {
       avoidControversy: checkbox(body.avoidControversy),
     },
   });
+}
+
+function parseAutopilotGoals(raw: unknown): AutopilotGoal[] {
+  if (!Array.isArray(raw)) {
+    const single = typeof raw === "string" ? [raw] : [];
+    return single.filter((entry): entry is AutopilotGoal =>
+      AUTOPILOT_GOALS.includes(entry as AutopilotGoal),
+    );
+  }
+  return raw
+    .filter((entry): entry is string => typeof entry === "string")
+    .filter((entry): entry is AutopilotGoal => AUTOPILOT_GOALS.includes(entry as AutopilotGoal));
+}
+
+function parseAutopilotChannels(raw: unknown): AutopilotChannel[] {
+  if (!Array.isArray(raw)) {
+    const single = typeof raw === "string" ? [raw] : [];
+    return single.filter((entry): entry is AutopilotChannel =>
+      AUTOPILOT_CHANNELS.includes(entry as AutopilotChannel),
+    );
+  }
+  return raw
+    .filter((entry): entry is string => typeof entry === "string")
+    .filter((entry): entry is AutopilotChannel =>
+      AUTOPILOT_CHANNELS.includes(entry as AutopilotChannel),
+    );
+}
+
+function parseAutopilotSettingsForm(body: Record<string, unknown>) {
+  const notifySmsRaw = optionalText(body.notifySms);
+  return autopilotSettingsUpsertSchema.parse({
+    enabled: checkbox(body.enabled),
+    cadence: String(body.cadence ?? "daily"),
+    hour: Number(body.hour ?? 7),
+    timezone: String(body.timezone ?? "America/Chicago"),
+    goals: parseAutopilotGoals(body.goals),
+    focusAudiences: parseStringList(body.focusAudiences),
+    channels: parseAutopilotChannels(body.channels),
+    allowDiscounts: checkbox(body.allowDiscounts),
+    maxDiscountText: optionalText(body.maxDiscountText),
+    notifyEmail: optionalText(body.notifyEmail),
+    notifySms: notifySmsRaw ? normalizeUSPhone(notifySmsRaw) : undefined,
+  });
+}
+
+function tomorrowDateInputValue(): string {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  return date.toISOString().slice(0, 10);
 }
 
 function generatorConfig(kind: GeneratorKind): {
@@ -866,6 +940,9 @@ router.get("/", async (req, res, next) => {
       <div class="row" style="margin-top: 10px;">
         <a class="button secondary" href="/admin/posts?brandId=${encodeURIComponent(selectedBrandId)}">Posting Log</a>
         <a class="button secondary" href="/admin/metrics?brandId=${encodeURIComponent(selectedBrandId)}">Metrics Log</a>
+        <a class="button secondary" href="/admin/autopilot?brandId=${encodeURIComponent(selectedBrandId)}">Autopilot</a>
+        <a class="button secondary" href="/admin/alerts?brandId=${encodeURIComponent(selectedBrandId)}">Alerts</a>
+        <a class="button secondary" href="/admin/tomorrow?brandId=${encodeURIComponent(selectedBrandId)}">Tomorrow Pack</a>
         <a class="button secondary" href="/admin/integrations?brandId=${encodeURIComponent(selectedBrandId)}">Integrations</a>
         <a class="button secondary" href="/admin/sms?brandId=${encodeURIComponent(selectedBrandId)}">SMS</a>
         <a class="button secondary" href="/admin/email?brandId=${encodeURIComponent(selectedBrandId)}">Email</a>
@@ -2072,6 +2149,491 @@ router.get("/today", async (req, res, next) => {
     );
 
     return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/autopilot", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+    const notice =
+      status === "saved"
+        ? { type: "success" as const, text: "Autopilot settings saved." }
+        : status === "ran"
+          ? { type: "success" as const, text: "Autopilot run completed." }
+          : status === "guarded"
+            ? {
+                type: "error" as const,
+                text: "Autopilot run was skipped by the 20-hour anti-spam guardrail.",
+              }
+            : status === "error"
+              ? { type: "error" as const, text: "Autopilot action failed. Check server logs." }
+              : undefined;
+
+    let settingsHtml = `<p class="muted">Select a business to configure autopilot.</p>`;
+    if (selectedBrandId) {
+      const settings =
+        (await adapter.getAutopilotSettings(userId, selectedBrandId)) ??
+        (await adapter.upsertAutopilotSettings(userId, selectedBrandId, {}));
+      const timezoneOptions = [...AUTOPILOT_TIMEZONES, settings.timezone]
+        .filter((value, index, all) => all.indexOf(value) === index)
+        .map((value) => {
+          const selected = value === settings.timezone ? "selected" : "";
+          return `<option value="${escapeHtml(value)}" ${selected}>${escapeHtml(value)}</option>`;
+        })
+        .join("");
+      const goalsHtml = AUTOPILOT_GOALS.map((goal) => {
+        const checked = settings.goals.includes(goal) ? "checked" : "";
+        return `<label><input type="checkbox" name="goals" value="${goal}" ${checked} /> ${goal}</label>`;
+      }).join("");
+      const channelsHtml = AUTOPILOT_CHANNELS.map((channel) => {
+        const checked = settings.channels.includes(channel) ? "checked" : "";
+        return `<label><input type="checkbox" name="channels" value="${channel}" ${checked} /> ${channel}</label>`;
+      }).join("");
+      const cadenceOptions = ["daily", "weekday", "custom"]
+        .map((cadence) => {
+          const selected = settings.cadence === cadence ? "selected" : "";
+          return `<option value="${cadence}" ${selected}>${cadence}</option>`;
+        })
+        .join("");
+
+      settingsHtml = `
+        <form method="POST" action="/admin/autopilot?brandId=${encodeURIComponent(selectedBrandId)}" class="card">
+          <h2>Autopilot Settings</h2>
+          <div class="grid">
+            <label><input type="checkbox" name="enabled" ${settings.enabled ? "checked" : ""} /> Enabled</label>
+            <label><input type="checkbox" name="allowDiscounts" ${settings.allowDiscounts ? "checked" : ""} /> Allow discounts</label>
+          </div>
+          <div class="grid">
+            <div class="field">
+              <label>Cadence</label>
+              <select name="cadence">${cadenceOptions}</select>
+            </div>
+            <div class="field">
+              <label>Hour (0-23)</label>
+              <input type="number" min="0" max="23" name="hour" value="${escapeHtml(String(settings.hour))}" />
+            </div>
+            <div class="field">
+              <label>Timezone</label>
+              <select name="timezone">${timezoneOptions}</select>
+            </div>
+          </div>
+          <div class="field">
+            <label>Goals</label>
+            <div class="row">${goalsHtml}</div>
+          </div>
+          <div class="field">
+            <label>Channels</label>
+            <div class="row">${channelsHtml}</div>
+          </div>
+          <div class="field">
+            <label>Focus audiences (comma or newline separated)</label>
+            <textarea name="focusAudiences">${escapeHtml(settings.focusAudiences.join("\n"))}</textarea>
+          </div>
+          <div class="grid">
+            <div class="field">
+              <label>Max discount text (optional)</label>
+              <input name="maxDiscountText" value="${escapeHtml(settings.maxDiscountText ?? "")}" placeholder="$1 off max" />
+            </div>
+            <div class="field">
+              <label>Notify email (optional)</label>
+              <input type="email" name="notifyEmail" value="${escapeHtml(settings.notifyEmail ?? "")}" />
+            </div>
+            <div class="field">
+              <label>Notify SMS (optional, +1...)</label>
+              <input name="notifySms" value="${escapeHtml(settings.notifySms ?? "")}" placeholder="+16205551234" />
+            </div>
+          </div>
+          <button type="submit">Save Autopilot Settings</button>
+        </form>
+
+        <form method="POST" action="/admin/autopilot/run?brandId=${encodeURIComponent(selectedBrandId)}" class="card">
+          <h2>Run Autopilot Now</h2>
+          <div class="grid">
+            <div class="field">
+              <label>Date (optional, defaults to tomorrow)</label>
+              <input type="date" name="date" value="${escapeHtml(tomorrowDateInputValue())}" />
+            </div>
+            <div class="field">
+              <label>Goal (optional override)</label>
+              <select name="goal">
+                <option value="">Use settings default</option>
+                ${AUTOPILOT_GOALS.map((goal) => `<option value="${goal}">${goal}</option>`).join("")}
+              </select>
+            </div>
+            <div class="field">
+              <label>Focus audience (optional override)</label>
+              <input name="focusAudience" />
+            </div>
+          </div>
+          <button type="submit">Run Now</button>
+          <p class="muted" style="margin-top:8px;">Guardrail: max 1 run per brand within 20 hours.</p>
+          <div class="row">
+            <a class="button secondary small" href="/admin/tomorrow?brandId=${encodeURIComponent(
+              selectedBrandId,
+            )}">View Tomorrow Pack</a>
+            <a class="button secondary small" href="/admin/alerts?brandId=${encodeURIComponent(
+              selectedBrandId,
+            )}">View Alerts</a>
+          </div>
+        </form>
+      `;
+    }
+
+    const html = renderLayout(
+      "Autopilot",
+      `
+      <div class="card">
+        <h1>Autopilot Growth Engine</h1>
+        <p class="muted">Generate tomorrow-ready assets, queue publishing jobs, and send owner notifications automatically.</p>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/autopilot")}
+      </div>
+      ${settingsHtml}
+      `,
+      notice,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/autopilot", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res
+        .status(400)
+        .type("html")
+        .send(renderLayout("Autopilot", "<h1>Missing brandId query parameter.</h1>"));
+    }
+    const brand = await adapter.getBrand(userId, brandId);
+    if (!brand) {
+      return res.status(404).type("html").send(renderLayout("Autopilot", "<h1>Brand not found.</h1>"));
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const payload = parseAutopilotSettingsForm(body);
+    await adapter.upsertAutopilotSettings(userId, brandId, payload);
+    return res.redirect(`/admin/autopilot?brandId=${encodeURIComponent(brandId)}&status=saved`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/autopilot/run", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res
+        .status(400)
+        .type("html")
+        .send(renderLayout("Autopilot", "<h1>Missing brandId query parameter.</h1>"));
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const payload = autopilotRunRequestSchema.parse({
+      date: optionalText(body.date),
+      goal: optionalText(body.goal),
+      focusAudience: optionalText(body.focusAudience),
+    });
+    await runAutopilotForBrand({
+      userId,
+      brandId,
+      request: payload,
+      source: "api",
+    });
+    return res.redirect(`/admin/autopilot?brandId=${encodeURIComponent(brandId)}&status=ran`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown autopilot error";
+    if (message.toLowerCase().includes("already ran")) {
+      const brandId = optionalText(req.query.brandId);
+      if (brandId) {
+        return res.redirect(`/admin/autopilot?brandId=${encodeURIComponent(brandId)}&status=guarded`);
+      }
+    }
+    return next(error);
+  }
+});
+
+router.get("/tomorrow", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+
+    let bodyHtml = `<p class="muted">Select a business to view tomorrow-ready output.</p>`;
+    if (selectedBrandId) {
+      const history = await adapter.listHistory(userId, selectedBrandId, 120);
+      const latest = history.find((entry) => entry.endpoint === "autopilot_run");
+      if (!latest) {
+        bodyHtml = `<p class="muted">No autopilot output yet. Run Autopilot once to create tomorrow-ready assets.</p>`;
+      } else {
+        const responseRecord =
+          typeof latest.response === "object" && latest.response !== null
+            ? (latest.response as Record<string, unknown>)
+            : {};
+        const generated =
+          typeof responseRecord.generated === "object" && responseRecord.generated !== null
+            ? (responseRecord.generated as Record<string, unknown>)
+            : responseRecord;
+        const promo =
+          typeof generated.promo === "object" && generated.promo !== null
+            ? (generated.promo as Record<string, unknown>)
+            : {};
+        const post =
+          typeof generated.post === "object" && generated.post !== null
+            ? (generated.post as Record<string, unknown>)
+            : {};
+        const sms =
+          typeof generated.sms === "object" && generated.sms !== null
+            ? (generated.sms as Record<string, unknown>)
+            : {};
+        const gbp =
+          typeof generated.gbp === "object" && generated.gbp !== null
+            ? (generated.gbp as Record<string, unknown>)
+            : {};
+
+        bodyHtml = `
+          <p class="muted">Last generated: ${escapeHtml(formatDateTime(latest.createdAt))}</p>
+          <div class="grid">
+            <div class="copy-item">
+              <strong>Promo Sign</strong>
+              <textarea id="copy-sign">${escapeHtml(String(promo.inStoreSign ?? ""))}</textarea>
+              <button type="button" class="button small secondary" data-copy-target="copy-sign">Copy</button>
+            </div>
+            <div class="copy-item">
+              <strong>Social Caption</strong>
+              <textarea id="copy-caption">${escapeHtml(String(post.caption ?? ""))}</textarea>
+              <button type="button" class="button small secondary" data-copy-target="copy-caption">Copy</button>
+            </div>
+            <div class="copy-item">
+              <strong>SMS</strong>
+              <textarea id="copy-sms">${escapeHtml(String(sms.message ?? ""))}</textarea>
+              <button type="button" class="button small secondary" data-copy-target="copy-sms">Copy</button>
+            </div>
+            <div class="copy-item">
+              <strong>GBP Summary</strong>
+              <textarea id="copy-gbp">${escapeHtml(String(gbp.summary ?? ""))}</textarea>
+              <button type="button" class="button small secondary" data-copy-target="copy-gbp">Copy</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Raw Payload</h3>
+            <pre>${escapeHtml(JSON.stringify(generated, null, 2))}</pre>
+          </div>
+          <script>
+            document.querySelectorAll("button[data-copy-target]").forEach((button) => {
+              button.addEventListener("click", async () => {
+                const target = button.getAttribute("data-copy-target");
+                const source = target ? document.getElementById(target) : null;
+                if (!source) return;
+                await navigator.clipboard.writeText(source.value || "");
+                button.textContent = "Copied";
+                setTimeout(() => { button.textContent = "Copy"; }, 1000);
+              });
+            });
+          </script>
+        `;
+      }
+    }
+
+    const html = renderLayout(
+      "Tomorrow Pack",
+      `
+      <div class="card">
+        <h1>Tomorrow Ready Pack</h1>
+        <p class="muted">Latest autopilot output for copy/paste execution.</p>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/tomorrow")}
+      </div>
+      <div class="card">
+        ${bodyHtml}
+      </div>
+      `,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/alerts", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brands = await adapter.listBrands(userId);
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status) === "all" ? "all" : "open";
+    const flash = optionalText(req.query.flash);
+    const notice =
+      flash === "acked"
+        ? { type: "success" as const, text: "Alert acknowledged." }
+        : flash === "resolved"
+          ? { type: "success" as const, text: "Alert resolved." }
+          : undefined;
+
+    let alertsHtml = `<p class="muted">Select a business to review alerts.</p>`;
+    if (selectedBrandId) {
+      const alerts = await adapter.listAlerts(userId, selectedBrandId, {
+        status,
+        limit: 120,
+      });
+      alertsHtml =
+        alerts.length === 0
+          ? `<p class="muted">No alerts for this filter.</p>`
+          : alerts
+              .map((alert, index) => {
+                const context =
+                  typeof alert.context === "object" && alert.context !== null
+                    ? (alert.context as Record<string, unknown>)
+                    : {};
+                const recommendations =
+                  typeof context.recommendations === "object" && context.recommendations !== null
+                    ? (context.recommendations as Record<string, unknown>)
+                    : {};
+                const actions = Array.isArray(recommendations.actions)
+                  ? recommendations.actions
+                      .map((entry) => {
+                        if (typeof entry !== "object" || entry === null) {
+                          return null;
+                        }
+                        const row = entry as Record<string, unknown>;
+                        return {
+                          action: String(row.action ?? ""),
+                          why: String(row.why ?? ""),
+                          readyCaption: String(row.readyCaption ?? ""),
+                        };
+                      })
+                      .filter(
+                        (entry): entry is { action: string; why: string; readyCaption: string } =>
+                          entry !== null,
+                      )
+                  : [];
+                const actionHtml =
+                  actions.length === 0
+                    ? `<p class="muted">No recommendations attached.</p>`
+                    : `<ol>${actions
+                        .map(
+                          (entry, actionIndex) => `<li style="margin-bottom:10px;">
+                            <strong>${escapeHtml(entry.action)}</strong>
+                            <div class="muted">${escapeHtml(entry.why)}</div>
+                            <textarea id="alert-copy-${index}-${actionIndex}" style="width:100%; min-height:70px; margin-top:6px;">${escapeHtml(
+                              entry.readyCaption,
+                            )}</textarea>
+                            <button type="button" class="button small secondary" data-copy-target="alert-copy-${index}-${actionIndex}">Copy caption</button>
+                          </li>`,
+                        )
+                        .join("")}</ol>`;
+                return `<div class="card">
+                  <div class="row" style="justify-content:space-between;">
+                    <div>
+                      <h3 style="margin-bottom:6px;">${escapeHtml(alert.type)}</h3>
+                      <div class="muted">${escapeHtml(alert.severity)} · ${escapeHtml(
+                        formatDateTime(alert.createdAt),
+                      )} · ${escapeHtml(alert.status)}</div>
+                    </div>
+                    <div class="row">
+                      <form method="POST" action="/admin/alerts/${encodeURIComponent(
+                        alert.id,
+                      )}/ack?brandId=${encodeURIComponent(selectedBrandId)}">
+                        <button type="submit" class="button small secondary">Acknowledge</button>
+                      </form>
+                      <form method="POST" action="/admin/alerts/${encodeURIComponent(
+                        alert.id,
+                      )}/resolve?brandId=${encodeURIComponent(selectedBrandId)}">
+                        <button type="submit" class="button small">Resolve</button>
+                      </form>
+                    </div>
+                  </div>
+                  <p>${escapeHtml(alert.message)}</p>
+                  ${actionHtml}
+                </div>`;
+              })
+              .join("");
+    }
+
+    const html = renderLayout(
+      "Alerts",
+      `
+      <div class="card">
+        <h1>Alerts</h1>
+        <p class="muted">Slowdown and missed-post detection with quick rescue actions.</p>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/alerts")}
+        ${
+          selectedBrandId
+            ? `<div class="row" style="margin-top:10px;">
+                 <a class="button small secondary" href="/admin/alerts?brandId=${encodeURIComponent(
+                   selectedBrandId,
+                 )}&status=open">Open only</a>
+                 <a class="button small secondary" href="/admin/alerts?brandId=${encodeURIComponent(
+                   selectedBrandId,
+                 )}&status=all">All statuses</a>
+               </div>`
+            : ""
+        }
+      </div>
+      ${alertsHtml}
+      <script>
+        document.querySelectorAll("button[data-copy-target]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            const target = button.getAttribute("data-copy-target");
+            const source = target ? document.getElementById(target) : null;
+            if (!source) return;
+            await navigator.clipboard.writeText(source.value || "");
+            button.textContent = "Copied";
+            setTimeout(() => { button.textContent = "Copy caption"; }, 1000);
+          });
+        });
+      </script>
+      `,
+      notice,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/alerts/:id/ack", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brandId = optionalText(req.query.brandId);
+    const alertId = req.params.id?.trim();
+    if (!brandId || !alertId) {
+      return res.status(400).type("html").send(renderLayout("Alerts", "<h1>Missing required parameters.</h1>"));
+    }
+    await adapter.updateAlert(userId, brandId, alertId, {
+      status: "acknowledged",
+      resolvedAt: null,
+    });
+    return res.redirect(`/admin/alerts?brandId=${encodeURIComponent(brandId)}&flash=acked`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/alerts/:id/resolve", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const adapter = getAdapter();
+    const brandId = optionalText(req.query.brandId);
+    const alertId = req.params.id?.trim();
+    if (!brandId || !alertId) {
+      return res.status(400).type("html").send(renderLayout("Alerts", "<h1>Missing required parameters.</h1>"));
+    }
+    await adapter.updateAlert(userId, brandId, alertId, {
+      status: "resolved",
+      resolvedAt: new Date().toISOString(),
+    });
+    return res.redirect(`/admin/alerts?brandId=${encodeURIComponent(brandId)}&flash=resolved`);
   } catch (error) {
     return next(error);
   }
