@@ -1,6 +1,7 @@
 import { Router, type Request } from "express";
 import { resolveBrandAccess } from "../auth/brandAccess";
 import { brandIdSchema } from "../schemas/brandSchema";
+import { brandPartnerUpsertSchema, townGraphEdgeUpdateSchema } from "../schemas/townGraphSchema";
 import { townStoryGenerateRequestSchema } from "../schemas/townStorySchema";
 import { townMembershipUpdateSchema } from "../schemas/townSchema";
 import { getAdapter } from "../storage/getAdapter";
@@ -14,6 +15,13 @@ import {
   getTownPulseModel,
   recomputeTownPulseModel,
 } from "../services/townPulseService";
+import {
+  addTownGraphEdge,
+  getTownGraph,
+  listExplicitPartnersForBrand,
+  removeExplicitPartnerForBrand,
+  upsertExplicitPartnerForBrand,
+} from "../services/townGraphService";
 import { generateTownStoryForTown, getLatestTownStory } from "../services/townStoriesService";
 
 const router = Router();
@@ -108,6 +116,199 @@ router.post("/pulse/recompute", async (req, res, next) => {
       town: map.town,
       model: model.model,
       computedAt: model.computedAt,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/graph", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const graph = await getTownGraph({
+      townId,
+      userId: req.user?.id,
+    });
+    return res.json({
+      town: map.town,
+      nodes: graph.nodes,
+      edges: graph.edges,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/graph/edge", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  const parsedBody = townGraphEdgeUpdateSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid town graph edge payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const edge = await addTownGraphEdge({
+      townId,
+      fromCategory: parsedBody.data.fromCategory,
+      toCategory: parsedBody.data.toCategory,
+      weight: parsedBody.data.weight,
+      userId: req.user?.id,
+    });
+    if (!edge) {
+      return res.status(400).json({ error: "fromCategory and toCategory must be different" });
+    }
+    return res.json({
+      ok: true,
+      edge: {
+        from: edge.fromCategory,
+        to: edge.toCategory,
+        weight: edge.weight,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/graph/partners", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const parsedBrandId = brandIdSchema.safeParse(req.query.brandId);
+  if (!parsedBrandId.success) {
+    return res.status(400).json({
+      error: "Missing or invalid brandId query parameter",
+      details: parsedBrandId.error.flatten(),
+    });
+  }
+  try {
+    const access = await resolveBrandAccess(actorId, parsedBrandId.data);
+    if (!access) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    const partners = await listExplicitPartnersForBrand({
+      userId: access.ownerId,
+      brandId: access.brandId,
+    });
+    return res.json({
+      partners,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/graph/partners", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const parsedBrandId = brandIdSchema.safeParse(req.query.brandId);
+  if (!parsedBrandId.success) {
+    return res.status(400).json({
+      error: "Missing or invalid brandId query parameter",
+      details: parsedBrandId.error.flatten(),
+    });
+  }
+  const parsedBody = brandPartnerUpsertSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid brand partner payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+  try {
+    const access = await resolveBrandAccess(actorId, parsedBrandId.data);
+    if (!access) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    if (!ownerOrAdmin(access.role)) {
+      return res.status(403).json({ error: "Only owners/admins can manage explicit partners" });
+    }
+    const partner = await upsertExplicitPartnerForBrand({
+      userId: access.ownerId,
+      brandId: access.brandId,
+      partnerBrandRef: parsedBody.data.partnerBrandRef,
+      relationship: parsedBody.data.relationship,
+    });
+    if (!partner) {
+      return res.status(400).json({ error: "Brand is not linked to a town yet" });
+    }
+    return res.json({
+      ok: true,
+      partner,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not save partner";
+    if (message.toLowerCase().includes("same town")) {
+      return res.status(400).json({ error: message });
+    }
+    return next(error);
+  }
+});
+
+router.delete("/graph/partners/:partnerBrandRef", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const parsedBrandId = brandIdSchema.safeParse(req.query.brandId);
+  if (!parsedBrandId.success) {
+    return res.status(400).json({
+      error: "Missing or invalid brandId query parameter",
+      details: parsedBrandId.error.flatten(),
+    });
+  }
+  const partnerBrandRef = typeof req.params.partnerBrandRef === "string" ? req.params.partnerBrandRef.trim() : "";
+  if (!partnerBrandRef) {
+    return res.status(400).json({ error: "Missing partnerBrandRef path parameter" });
+  }
+  try {
+    const access = await resolveBrandAccess(actorId, parsedBrandId.data);
+    if (!access) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    if (!ownerOrAdmin(access.role)) {
+      return res.status(403).json({ error: "Only owners/admins can manage explicit partners" });
+    }
+    const removed = await removeExplicitPartnerForBrand({
+      userId: access.ownerId,
+      brandId: access.brandId,
+      partnerBrandRef,
+    });
+    return res.json({
+      ok: removed,
     });
   } catch (error) {
     return next(error);

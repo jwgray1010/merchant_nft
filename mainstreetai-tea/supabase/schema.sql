@@ -89,6 +89,32 @@ create table if not exists public.town_story_usage (
   used_at timestamptz not null default now()
 );
 
+create table if not exists public.town_graph_edges (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  from_category text not null check (from_category in ('cafe','fitness','salon','retail','service','food','other')),
+  to_category text not null check (to_category in ('cafe','fitness','salon','retail','service','food','other')),
+  weight numeric not null default 1,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.town_graph_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  category text not null check (category in ('cafe','fitness','salon','retail','service','food','other')),
+  suggestions jsonb not null default '{}'::jsonb,
+  computed_at timestamptz not null default now()
+);
+
+create table if not exists public.brand_partners (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  partner_brand_ref uuid not null references public.brands(id) on delete cascade,
+  relationship text not null default 'partner' check (relationship in ('partner','favorite','sponsor')),
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.history (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -430,6 +456,24 @@ create unique index if not exists town_story_usage_story_brand_unique
 create index if not exists town_story_usage_brand_used_idx
   on public.town_story_usage(brand_ref, used_at desc);
 
+create unique index if not exists town_graph_edges_town_from_to_unique
+  on public.town_graph_edges(town_ref, from_category, to_category);
+
+create index if not exists town_graph_edges_town_weight_idx
+  on public.town_graph_edges(town_ref, weight desc);
+
+create unique index if not exists town_graph_suggestions_town_category_unique
+  on public.town_graph_suggestions(town_ref, category);
+
+create index if not exists town_graph_suggestions_town_computed_idx
+  on public.town_graph_suggestions(town_ref, computed_at desc);
+
+create unique index if not exists brand_partners_owner_brand_partner_unique
+  on public.brand_partners(owner_id, brand_ref, partner_brand_ref);
+
+create index if not exists brand_partners_owner_brand_created_idx
+  on public.brand_partners(owner_id, brand_ref, created_at desc);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -623,6 +667,29 @@ as $$
   );
 $$;
 
+create or replace function public.same_town_brand_pair(_brand_ref uuid, _partner_brand_ref uuid)
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.brands b1
+    join public.brands b2 on b2.id = _partner_brand_ref
+    where b1.id = _brand_ref
+      and b1.town_ref is not null
+      and b1.town_ref = b2.town_ref
+  );
+$$;
+
+alter table public.brand_partners drop constraint if exists brand_partners_not_self;
+alter table public.brand_partners add constraint brand_partners_not_self
+check (brand_ref <> partner_brand_ref);
+
+alter table public.brand_partners drop constraint if exists brand_partners_same_town_check;
+alter table public.brand_partners add constraint brand_partners_same_town_check
+check (public.same_town_brand_pair(brand_ref, partner_brand_ref));
+
 -- RLS: owner can only access own rows.
 alter table public.brands enable row level security;
 alter table public.towns enable row level security;
@@ -632,6 +699,9 @@ alter table public.town_pulse_signals enable row level security;
 alter table public.town_pulse_model enable row level security;
 alter table public.town_stories enable row level security;
 alter table public.town_story_usage enable row level security;
+alter table public.town_graph_edges enable row level security;
+alter table public.town_graph_suggestions enable row level security;
+alter table public.brand_partners enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -793,6 +863,39 @@ with check (
   public.is_brand_owner(brand_ref)
   or public.has_team_role(brand_ref, array['owner','admin','member']::text[])
 );
+
+drop policy if exists town_graph_edges_member_select on public.town_graph_edges;
+create policy town_graph_edges_member_select on public.town_graph_edges
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_graph_edges_member_insert on public.town_graph_edges;
+create policy town_graph_edges_member_insert on public.town_graph_edges
+for insert
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_graph_edges_member_update on public.town_graph_edges;
+create policy town_graph_edges_member_update on public.town_graph_edges
+for update
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_graph_suggestions_member_select on public.town_graph_suggestions;
+create policy town_graph_suggestions_member_select on public.town_graph_suggestions
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_graph_suggestions_member_modify on public.town_graph_suggestions;
+create policy town_graph_suggestions_member_modify on public.town_graph_suggestions
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists brand_partners_owner_all on public.brand_partners;
+create policy brand_partners_owner_all on public.brand_partners
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
 
 drop policy if exists history_owner_all on public.history;
 create policy history_owner_all on public.history

@@ -33,6 +33,12 @@ import {
   writeTownPulseForDailyOutcome,
 } from "./townPulseService";
 import { getLatestTownStoryForBrand, recordTownStoryUsageForBrand } from "./townStoriesService";
+import {
+  addTownGraphEdge,
+  buildTownGraphBoostForDaily,
+  inferTownGraphCategoryFromText,
+  townGraphCategoryFromBrandType,
+} from "./townGraphService";
 import { getBrandVoiceProfile } from "./voiceStore";
 import { getOrRecomputeTimingModel } from "./timingModelService";
 
@@ -430,10 +436,42 @@ export async function runDailyOneButton(input: {
         staffLine: latestTownStory.content.signLine || latestTownStory.content.conversationStarter,
       }
     : undefined;
+  const townGraphBoostSuggestion = await buildTownGraphBoostForDaily({
+    userId: input.userId,
+    brandId: input.brandId,
+    brand,
+    townPulse: townPulseModel?.model,
+    voiceProfile: voiceProfile
+      ? {
+          styleSummary: voiceProfile.styleSummary,
+          emojiStyle: voiceProfile.emojiStyle,
+          energyLevel: voiceProfile.energyLevel,
+          phrasesToRepeat: voiceProfile.phrasesToRepeat,
+          doNotUse: voiceProfile.doNotUse,
+        }
+      : undefined,
+  }).catch(() => null);
   if (townPulseBoost && mergedTownBoost && townBoostSuggestion?.townBoost) {
     const captionAddOn = `${mergedTownBoost.captionAddOn} ${townPulseBoost.captionAddOn}`.trim();
     mergedTownBoost.captionAddOn = captionAddOn;
     mergedTownBoost.staffScript = `${mergedTownBoost.staffScript} ${townPulseBoost.timingHint}`.trim();
+  }
+  if (brand.townRef && mergedTownBoost) {
+    const fromCategory = townGraphCategoryFromBrandType(brand.type);
+    const hintedCategory = inferTownGraphCategoryFromText(
+      `${mergedTownBoost.line} ${mergedTownBoost.captionAddOn} ${mergedTownBoost.staffScript}`,
+    );
+    if (hintedCategory && hintedCategory !== fromCategory) {
+      await addTownGraphEdge({
+        townId: brand.townRef,
+        fromCategory,
+        toCategory: hintedCategory,
+        weight: 0.75,
+        userId: input.userId,
+      }).catch(() => {
+        // Town Graph is a best-effort intelligence layer.
+      });
+    }
   }
 
   const twilioIntegration = await adapter.getIntegration(input.userId, input.brandId, "twilio");
@@ -456,6 +494,7 @@ export async function runDailyOneButton(input: {
       : undefined,
     townBoost: mergedTownBoost,
     townStory: dailyTownStory,
+    townGraphBoost: townGraphBoostSuggestion?.townGraphBoost,
   });
 
   const history = await adapter.addHistory(
@@ -617,6 +656,11 @@ export async function runDailyOneButton(input: {
           ? `<p><strong>Town Story:</strong> ${pack.townStory.headline}<br/>${pack.townStory.captionAddOn}<br/>${pack.townStory.staffLine}</p>`
           : ""
       }
+      ${
+        pack.townGraphBoost
+          ? `<p><strong>Town Graph Boost:</strong> ${pack.townGraphBoost.nextStopIdea}<br/>${pack.townGraphBoost.captionAddOn}<br/>${pack.townGraphBoost.staffLine}</p>`
+          : ""
+      }
     </body></html>`;
     const log = await adapter.addEmailLog(input.userId, input.brandId, {
       toEmail: emailTarget,
@@ -737,7 +781,7 @@ export async function runLocalCollab(input: {
   const timezone = timezoneOrDefault(settings?.timezone ?? "America/Chicago");
   const chosenGoal = parsedRequest.goal ?? defaultGoalFromClock(timezone);
   const recentPosts = recentPostSnapshots(await adapter.listPosts(input.userId, input.brandId, 30));
-  return runPrompt({
+  const output = await runPrompt({
     promptFile: "local_collab.md",
     brandProfile: brand,
     userId: input.userId,
@@ -750,6 +794,24 @@ export async function runLocalCollab(input: {
     },
     outputSchema: localCollabOutputSchema,
   });
+  if (brand.townRef) {
+    const fromCategory = townGraphCategoryFromBrandType(brand.type);
+    const toCategory =
+      output.partnerCategory ??
+      inferTownGraphCategoryFromText(`${output.idea} ${output.caption} ${output.howToAsk}`);
+    if (toCategory && toCategory !== fromCategory) {
+      await addTownGraphEdge({
+        townId: brand.townRef,
+        fromCategory,
+        toCategory,
+        userId: input.userId,
+        weight: 1.15,
+      }).catch(() => {
+        // Graph updates should not block collab suggestions.
+      });
+    }
+  }
+  return output;
 }
 
 export async function getLatestDailyPack(userId: string, brandId: string): Promise<DailyPackRecord | null> {

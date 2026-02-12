@@ -18,11 +18,19 @@ import {
   suggestTownFromLocation,
   updateTownMembershipForBrand,
 } from "../services/townModeService";
+import {
+  getTownGraph,
+  listPreferredPartnerCategoriesForBrand,
+  recordManualCategoryPreferencesForBrand,
+  townGraphCategoryFromBrandType,
+  townGraphCategoryLabel,
+} from "../services/townGraphService";
 import { getTownPulseModelForBrand } from "../services/townPulseService";
 import { getLatestTownStoryForBrand } from "../services/townStoriesService";
 import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
 import type { BrandProfile } from "../schemas/brandSchema";
+import { townGraphCategorySchema, type TownGraphCategory } from "../schemas/townGraphSchema";
 import type { LocationRecord } from "../schemas/locationSchema";
 import type { AutopilotSettings } from "../schemas/autopilotSettingsSchema";
 import type { AutopilotDailyOutput } from "../schemas/autopilotRunSchema";
@@ -52,6 +60,8 @@ type EasyContext = {
   defaultGoal: "new_customers" | "repeat_customers" | "slow_hours";
   bestPostTimeLabel: string;
 };
+
+const GRAPH_CATEGORY_OPTIONS = [...townGraphCategorySchema.options] as TownGraphCategory[];
 
 function escapeHtml(value: string): string {
   return value
@@ -627,6 +637,14 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         <p id="daily-town-story-staff-line" class="output-value">${escapeHtml(pack.townStory.staffLine)}</p>
       </details>`
     : "";
+  const townGraphSection = pack.townGraphBoost
+    ? `<details class="output-card">
+        <summary><strong>Town Graph Boost (optional)</strong></summary>
+        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townGraphBoost.nextStopIdea)}</strong></p>
+        <p id="daily-town-graph-caption" class="output-value">${escapeHtml(pack.townGraphBoost.captionAddOn)}</p>
+        <p id="daily-town-graph-staff-line" class="output-value">${escapeHtml(pack.townGraphBoost.staffLine)}</p>
+      </details>`
+    : "";
   return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
     <h3>Your daily money move</h3>
     <details class="output-card" open>
@@ -665,6 +683,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
     ${localBoostSection}
     ${townBoostSection}
     ${townStorySection}
+    ${townGraphSection}
     <div class="grid" style="grid-template-columns:1fr; margin-top:8px;">
       <button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>
       <button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>
@@ -689,6 +708,12 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         pack.townStory
           ? `<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Caption</button>
              <button class="secondary-button add-town-story-btn" type="button">Add to Today’s Post</button>`
+          : ""
+      }
+      ${
+        pack.townGraphBoost
+          ? `<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Caption</button>
+             <button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Next Stop Staff Line</button>`
           : ""
       }
       <button class="secondary-button" id="share-daily" type="button">Share…</button>
@@ -825,6 +850,9 @@ router.get("/", async (req, res, next) => {
               const townStorySection = pack.townStory
                 ? '<details class="output-card"><summary><strong>Town Story (optional)</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townStory.headline || "") + '</strong></p><p id="daily-town-story-caption" class="output-value">' + esc(pack.townStory.captionAddOn || "") + '</p><p id="daily-town-story-staff-line" class="output-value">' + esc(pack.townStory.staffLine || "") + '</p></details>'
                 : '';
+              const townGraphSection = pack.townGraphBoost
+                ? '<details class="output-card"><summary><strong>Town Graph Boost (optional)</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townGraphBoost.nextStopIdea || "") + '</strong></p><p id="daily-town-graph-caption" class="output-value">' + esc(pack.townGraphBoost.captionAddOn || "") + '</p><p id="daily-town-graph-staff-line" class="output-value">' + esc(pack.townGraphBoost.staffLine || "") + '</p></details>'
+                : '';
               return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
                 '<h3>Your daily money move</h3>' +
                 '<details class="output-card" open><summary><strong>Today\\'s Special</strong></summary><p id="daily-special" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.todaySpecial?.promoName || "") + '</strong><br/>' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></details>' +
@@ -834,6 +862,7 @@ router.get("/", async (req, res, next) => {
                 localBoostSection +
                 townBoostSection +
                 townStorySection +
+                townGraphSection +
                 '<div class="grid" style="grid-template-columns:1fr; margin-top:8px;">' +
                 '<button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>' +
                 '<button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>' +
@@ -841,6 +870,7 @@ router.get("/", async (req, res, next) => {
                 (pack.townBoost ? '<button class="primary-button" data-copy-target="daily-town-caption-addon">Copy Town Caption Add-on</button><button class="secondary-button" data-copy-target="daily-town-staff-line">Copy Town Staff Line</button>' : '') +
                 (pack.optionalSms?.enabled ? '<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>' : '') +
                 (pack.townStory ? '<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Caption</button><button class="secondary-button add-town-story-btn" type="button">Add to Today\\'s Post</button>' : '') +
+                (pack.townGraphBoost ? '<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Caption</button><button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Next Stop Staff Line</button>' : '') +
                 '<button class="secondary-button" id="share-daily" type="button">Share…</button>' +
                 '<a class="secondary-button" href="' + esc(signUrl) + '">Printable Sign</a>' +
                 '</div></section>';
@@ -872,6 +902,7 @@ router.get("/", async (req, res, next) => {
                   json.localBoost?.captionAddOn,
                   json.townBoost?.captionAddOn,
                   json.townStory?.captionAddOn,
+                  json.townGraphBoost?.captionAddOn,
                 ]
                   .filter(Boolean)
                   .join("\\n");
@@ -916,6 +947,7 @@ router.get("/", async (req, res, next) => {
                 document.getElementById("daily-local-caption-addon")?.textContent || "",
                 document.getElementById("daily-town-caption-addon")?.textContent || "",
                 document.getElementById("daily-town-story-caption")?.textContent || "",
+                document.getElementById("daily-town-graph-caption")?.textContent || "",
                 document.getElementById("daily-sms")?.textContent || "",
               ]
                 .filter(Boolean)
@@ -1909,10 +1941,29 @@ router.get("/settings", async (req, res, next) => {
         : null;
     const townEnabled = townContext ? townContext.membership.participationLevel !== "hidden" : false;
     const participationLevel = townContext?.membership.participationLevel ?? "standard";
+    const preferredPartnerCategories =
+      context.ownerUserId && context.selectedBrandId
+        ? await listPreferredPartnerCategoriesForBrand({
+            userId: context.ownerUserId,
+            brandId: context.selectedBrandId,
+          }).catch(() => [])
+        : [];
+    const baseCategory = context.selectedBrand
+      ? townGraphCategoryFromBrandType(context.selectedBrand.type)
+      : ("other" as TownGraphCategory);
     const defaultTownName =
       townContext?.town.name ??
       suggestTownFromLocation(context.selectedBrand?.location ?? "") ??
       "";
+    const partnerCategoryCheckboxes = GRAPH_CATEGORY_OPTIONS
+      .filter((category) => category !== baseCategory)
+      .map((category) => {
+        const checked = preferredPartnerCategories.includes(category) ? "checked" : "";
+        return `<label><input type="checkbox" name="partnerCategories" value="${escapeHtml(category)}" ${checked} /> ${escapeHtml(
+          townGraphCategoryLabel(category),
+        )}</label>`;
+      })
+      .join("");
     const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
       <h2 class="text-xl">Settings</h2>
       <p class="muted">Keep this simple. Advanced tools are in Advanced Settings.</p>
@@ -1938,6 +1989,12 @@ router.get("/settings", async (req, res, next) => {
             <option value="hidden" ${participationLevel === "hidden" ? "selected" : ""}>hidden</option>
           </select>
         </label>
+        <fieldset style="border:1px solid #d1d5db;border-radius:12px;padding:10px;">
+          <legend class="muted" style="padding:0 6px;">Pick partner categories for optional collaboration</legend>
+          <div style="display:grid;gap:8px;grid-template-columns:1fr 1fr;">
+            ${partnerCategoryCheckboxes}
+          </div>
+        </fieldset>
         <button class="secondary-button" type="submit">Save Local Network</button>
       </form>
       ${
@@ -1953,6 +2010,7 @@ router.get("/settings", async (req, res, next) => {
         ${cardLink(withSelection("/admin/billing", context), "💳", "Billing", "Plan and subscription")}
         ${cardLink(withSelection("/admin/integrations", context), "🔌", "Integrations", "Buffer, SMS, Google, email")}
         ${cardLink(withSelection("/app/town", context), "🏙️", "Local Network", "See your town participation map")}
+        ${cardLink(withSelection("/app/town/graph", context), "🧭", "Town Graph", "View common local customer flow")}
       </div>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/settings/advanced", context))}" style="margin-top:10px;">Open Advanced Settings</a>
     </section>`;
@@ -2012,6 +2070,19 @@ router.post("/settings/local-network", async (req, res, next) => {
     const enabledRaw = String(req.body?.enabled ?? "").toLowerCase();
     const enabled = enabledRaw === "on" || enabledRaw === "true" || enabledRaw === "1";
     const participationLevel = String(req.body?.participationLevel ?? "standard").trim().toLowerCase();
+    const rawPartnerCategories = req.body?.partnerCategories;
+    const partnerCategoryList = (
+      Array.isArray(rawPartnerCategories)
+        ? rawPartnerCategories
+        : rawPartnerCategories !== undefined
+          ? [rawPartnerCategories]
+          : []
+    )
+      .map((entry) => String(entry))
+      .map((entry) => townGraphCategorySchema.safeParse(entry))
+      .filter((entry): entry is { success: true; data: TownGraphCategory } => entry.success)
+      .map((entry) => entry.data);
+    const partnerCategories = [...new Set(partnerCategoryList)];
     const townName = optionalText(req.body?.townName) ?? suggestTownFromLocation(context.selectedBrand?.location ?? "");
     await updateTownMembershipForBrand({
       userId: context.ownerUserId,
@@ -2026,6 +2097,15 @@ router.post("/settings/local-network", async (req, res, next) => {
         townName,
       },
     });
+    if (enabled && partnerCategories.length > 0) {
+      await recordManualCategoryPreferencesForBrand({
+        userId: context.ownerUserId,
+        brandId: context.selectedBrandId,
+        toCategories: partnerCategories,
+      }).catch(() => {
+        // Preference edges are optional and should not block settings save.
+      });
+    }
     return res.redirect(withNotice(withSelection("/app/settings", context), "Local network settings saved."));
   } catch (error) {
     const context = await resolveContext(req, res);
@@ -2145,6 +2225,7 @@ router.get("/town", async (req, res, next) => {
       <p><strong>${escapeHtml(categories || "Local businesses")}</strong></p>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}">View Town Pulse</a>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">View Town Graph</a>
     </section>
     <section class="rounded-2xl p-6 shadow-sm bg-white">
       <h3>Participating businesses</h3>
@@ -2225,6 +2306,7 @@ router.get("/town/pulse", async (req, res, next) => {
       <p class="muted">${escapeHtml(model?.seasonalNotes ?? "Seasonal rhythm will appear as more signals arrive.")}</p>
       <p class="muted">Event energy: ${escapeHtml(model?.eventEnergy ?? "low")}</p>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">View Town Graph</a>
     </section>`;
     return res
       .type("html")
@@ -2234,6 +2316,89 @@ router.get("/town/pulse", async (req, res, next) => {
           context,
           active: "settings",
           currentPath: "/app/town/pulse",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/town/graph", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    if (!context.ownerUserId || !context.selectedBrandId) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Town Graph",
+            context,
+            active: "settings",
+            currentPath: "/app/town/graph",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Pick a business first.</p></section>`,
+          }),
+        );
+    }
+    const membership = await getTownMembershipForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+    });
+    if (!membership) {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Join Local Network first."));
+    }
+    const graph = await getTownGraph({
+      townId: membership.town.id,
+      userId: context.ownerUserId,
+    });
+    const edges = [...graph.edges].sort((a, b) => b.weight - a.weight);
+    const edgeLines =
+      edges.length > 0
+        ? edges
+            .slice(0, 6)
+            .map((edge) => `${townGraphCategoryLabel(edge.from)} → ${townGraphCategoryLabel(edge.to)}`)
+            .map((line) => `<li>${escapeHtml(line)}</li>`)
+            .join("")
+        : `<li class="muted">Still learning local flow.</li>`;
+
+    const first = edges[0];
+    const chain: TownGraphCategory[] = [];
+    if (first) {
+      chain.push(first.from, first.to);
+      while (chain.length < 4) {
+        const last = chain[chain.length - 1];
+        const next = edges.find((edge) => edge.from === last && !chain.includes(edge.to));
+        if (!next) break;
+        chain.push(next.to);
+      }
+    }
+    const chainSummary =
+      chain.length >= 2
+        ? chain.map((category) => townGraphCategoryLabel(category)).join(" → ")
+        : "Coffee / Cafe → Fitness → Salon / Beauty → Retail";
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Town Graph</h2>
+      <p class="muted">Common local flow in ${escapeHtml(membership.town.name)}.</p>
+      <p class="output-value"><strong>${escapeHtml(chainSummary)}</strong></p>
+      <p class="muted">Category-level flow only. No private business metrics.</p>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-top:8px;">View Town Pulse</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/stories", context))}" style="margin-top:8px;">View Town Stories</a>
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Common local flow</h3>
+      <ul>${edgeLines}</ul>
+    </section>`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Town Graph",
+          context,
+          active: "settings",
+          currentPath: "/app/town/graph",
           body,
         }),
       );
@@ -2289,6 +2454,7 @@ router.get("/town/stories", async (req, res, next) => {
       <p class="muted">A shared local narrative for ${escapeHtml(membership.town.name)}.</p>
       <p class="muted">No metrics. No rankings. Just warm community momentum.</p>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-top:8px;">View Town Pulse</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app/town/graph", context))}" style="margin-top:8px;">View Town Graph</a>
     </section>
     ${storyBody}`;
     return res

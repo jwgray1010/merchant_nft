@@ -591,6 +591,9 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `GET /api/jobs/alerts` (cron; requires `x-cron-secret`)
 - `GET /api/jobs/town-pulse` (cron; requires `x-cron-secret`)
 - `GET /api/jobs/town-stories` (cron; requires `x-cron-secret`)
+- `GET /api/jobs/town-graph` (cron; requires `x-cron-secret`)
+- `GET /api/town/graph?townId=...`
+- `POST /api/town/graph/edge?townId=...`
 - `GET /api/alerts?brandId=...&status=open|all`
 - `POST /api/alerts/:id/ack?brandId=...`
 - `POST /api/alerts/:id/resolve?brandId=...`
@@ -668,6 +671,8 @@ Vercel Cron example target:
 - header: `x-cron-secret: <CRON_SECRET>`
 - `GET https://yourapp.vercel.app/api/jobs/town-stories` (hourly at minute 20)
 - header: `x-cron-secret: <CRON_SECRET>`
+- `GET https://yourapp.vercel.app/api/jobs/town-graph` (daily at 2:30am)
+- header: `x-cron-secret: <CRON_SECRET>`
 
 `vercel.json`:
 
@@ -679,7 +684,8 @@ Vercel Cron example target:
     { "path": "/api/jobs/autopilot", "schedule": "5 * * * *" },
     { "path": "/api/jobs/alerts", "schedule": "10 * * * *" },
     { "path": "/api/jobs/town-pulse", "schedule": "15 * * * *" },
-    { "path": "/api/jobs/town-stories", "schedule": "20 * * * *" }
+    { "path": "/api/jobs/town-stories", "schedule": "20 * * * *" },
+    { "path": "/api/jobs/town-graph", "schedule": "30 2 * * *" }
   ]
 }
 ```
@@ -1027,6 +1033,7 @@ From admin you can:
   - `/api/jobs/alerts` (`10 * * * *`, optional but recommended)
   - `/api/jobs/town-pulse` (`15 * * * *`)
   - `/api/jobs/town-stories` (`20 * * * *`)
+  - `/api/jobs/town-graph` (`30 2 * * *`)
 - Set Stripe webhook endpoint:
   - `<APP_BASE_URL>/api/billing/webhook`
 - Keep secrets server-only:
@@ -1439,3 +1446,52 @@ Safety:
 - Stories never auto-name businesses.
 - Stories never imply endorsements.
 - Stories never expose analytics or rankings.
+
+## Phase TOWN+++: Town Graph (local customer flow intelligence)
+
+Town Graph models category-level local flow (example: `cafe -> fitness -> salon`) so daily outputs can suggest natural "next stop" ideas without exposing private business analytics.
+
+New data model:
+- `town_graph_edges`
+  - weighted category-to-category edges per town
+  - unique per `(town_ref, from_category, to_category)`
+- `town_graph_suggestions`
+  - cached category suggestions per town
+- `brand_partners` (optional explicit opt-in)
+  - owner-managed partner relationships
+  - same-town constraint enforced
+
+New prompt:
+- `prompts/town_graph_suggest.md`
+
+Town Graph APIs:
+- `GET /api/town/graph?townId=...`
+- `POST /api/town/graph/edge?townId=...`
+- `GET /api/town/graph/partners?brandId=...`
+- `POST /api/town/graph/partners?brandId=...`
+- `DELETE /api/town/graph/partners/:partnerBrandRef?brandId=...`
+- `GET /api/jobs/town-graph` (cron-secret protected)
+
+Cron schedule includes:
+- `/api/jobs/town-graph` daily at `02:30` (`30 2 * * *`)
+
+Signal sources (privacy-safe):
+- local-collab runs (`POST /api/local-collab`) now add category edges when partner category is inferred or provided
+- local-network settings partner-category checkboxes add/ensure category edges
+- town boost language hints can add low-weight category edges
+
+Daily integration:
+- `/api/daily` now includes optional `townGraphBoost`:
+  - `nextStopIdea`
+  - `captionAddOn`
+  - `staffLine`
+
+Easy Mode additions:
+- `/app/town/graph` lightweight "Common local flow" page
+- Settings includes "Pick partner categories for optional collaboration" checkboxes
+- Daily pack includes optional **Town Graph Boost** copy blocks
+
+Safety:
+- Graph remains category-level by default.
+- No business rankings, engagement numbers, or private analytics are exposed.
+- Partner naming is only used when explicit `brand_partners` opt-in exists.

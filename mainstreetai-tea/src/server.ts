@@ -29,6 +29,7 @@ import jobsAlertsRouter from "./routes/jobsAlerts";
 import jobsAutopilotRouter from "./routes/jobsAutopilot";
 import jobsDigestsRouter from "./routes/jobsDigests";
 import jobsOutboxRouter from "./routes/jobsOutbox";
+import jobsTownGraphRouter from "./routes/jobsTownGraph";
 import jobsTownPulseRouter from "./routes/jobsTownPulse";
 import jobsTownStoriesRouter from "./routes/jobsTownStories";
 import localCollabRouter from "./routes/localCollab";
@@ -167,6 +168,7 @@ app.use("/api/jobs/autopilot", jobsAutopilotRouter);
 app.use("/api/jobs/alerts", jobsAlertsRouter);
 app.use("/api/jobs/town-pulse", jobsTownPulseRouter);
 app.use("/api/jobs/town-stories", jobsTownStoriesRouter);
+app.use("/api/jobs/town-graph", jobsTownGraphRouter);
 app.use("/app", easyModeRouter);
 app.use("/", publicRouter);
 

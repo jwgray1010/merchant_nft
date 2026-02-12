@@ -13,8 +13,11 @@ Output JSON schema:
 {
   "idea": string,
   "caption": string,
-  "howToAsk": string
+  "howToAsk": string,
+  "partnerCategory": "cafe|fitness|salon|retail|service|food|other"
 }
+
+`partnerCategory` is optional.
 
 Rules:
 - Collaboration must be small-business to small-business.
