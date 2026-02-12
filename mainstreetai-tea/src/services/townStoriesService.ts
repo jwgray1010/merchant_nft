@@ -160,6 +160,8 @@ function syntheticBrandProfileForTown(town: TownRecord): BrandProfile {
     location: town.region ? `${town.name}, ${town.region}` : town.name,
     townRef: town.id,
     supportLevel: "steady",
+    localTrustEnabled: true,
+    localTrustStyle: "mainstreet",
     type: "other",
     voice: "Warm, community-first, and neighborly.",
     audiences: ["locals", "neighbors", "families"],
