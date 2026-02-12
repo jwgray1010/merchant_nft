@@ -39,8 +39,10 @@ import {
   inferTownGraphCategoryFromText,
   townGraphCategoryFromBrandType,
 } from "./townGraphService";
+import { buildTownMicroRouteForDaily } from "./townMicroRoutesService";
 import { getBrandVoiceProfile } from "./voiceStore";
 import { getOrRecomputeTimingModel } from "./timingModelService";
+import type { TownMicroRouteWindow } from "../schemas/townGraphSchema";
 
 type DailyPackRecord = {
   id: string;
@@ -284,6 +286,7 @@ export async function runDailyOneButton(input: {
   ownerEmail?: string | null;
   locationId?: string;
   request?: DailyRequest;
+  windowOverride?: TownMicroRouteWindow;
 }): Promise<{
   pack: DailyOutput;
   historyId: string;
@@ -451,6 +454,15 @@ export async function runDailyOneButton(input: {
         }
       : undefined,
   }).catch(() => null);
+  const townMicroRouteSuggestion = await buildTownMicroRouteForDaily({
+    userId: input.userId,
+    brandId: input.brandId,
+    brand,
+    goal: chosenGoal,
+    timezone,
+    townPulse: townPulseModel?.model,
+    windowOverride: input.windowOverride,
+  }).catch(() => null);
   if (townPulseBoost && mergedTownBoost && townBoostSuggestion?.townBoost) {
     const captionAddOn = `${mergedTownBoost.captionAddOn} ${townPulseBoost.captionAddOn}`.trim();
     mergedTownBoost.captionAddOn = captionAddOn;
@@ -495,6 +507,7 @@ export async function runDailyOneButton(input: {
     townBoost: mergedTownBoost,
     townStory: dailyTownStory,
     townGraphBoost: townGraphBoostSuggestion?.townGraphBoost,
+    townMicroRoute: townMicroRouteSuggestion?.townMicroRoute,
   });
 
   const history = await adapter.addHistory(
@@ -659,6 +672,11 @@ export async function runDailyOneButton(input: {
       ${
         pack.townGraphBoost
           ? `<p><strong>Town Graph Boost:</strong> ${pack.townGraphBoost.nextStopIdea}<br/>${pack.townGraphBoost.captionAddOn}<br/>${pack.townGraphBoost.staffLine}</p>`
+          : ""
+      }
+      ${
+        pack.townMicroRoute
+          ? `<p><strong>Town Route Tip (${pack.townMicroRoute.window}):</strong> ${pack.townMicroRoute.line}<br/>${pack.townMicroRoute.captionAddOn}<br/>${pack.townMicroRoute.staffScript}</p>`
           : ""
       }
     </body></html>`;

@@ -25,12 +25,14 @@ import {
   townGraphCategoryFromBrandType,
   townGraphCategoryLabel,
 } from "../services/townGraphService";
+import { parseTownWindowOverride, townWindowLabel } from "../town/windows";
 import { getTownPulseModelForBrand } from "../services/townPulseService";
 import { getLatestTownStoryForBrand } from "../services/townStoriesService";
 import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
 import type { BrandProfile } from "../schemas/brandSchema";
 import { townGraphCategorySchema, type TownGraphCategory } from "../schemas/townGraphSchema";
+import { TOWN_MICRO_ROUTE_WINDOWS, townWindowLabel } from "../town/windows";
 import type { LocationRecord } from "../schemas/locationSchema";
 import type { AutopilotSettings } from "../schemas/autopilotSettingsSchema";
 import type { AutopilotDailyOutput } from "../schemas/autopilotRunSchema";
@@ -645,6 +647,14 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         <p id="daily-town-graph-staff-line" class="output-value">${escapeHtml(pack.townGraphBoost.staffLine)}</p>
       </details>`
     : "";
+  const townMicroRouteSection = pack.townMicroRoute
+    ? `<details class="output-card">
+        <summary><strong>Town Route Tip (${escapeHtml(townWindowLabel(pack.townMicroRoute.window))})</strong></summary>
+        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townMicroRoute.line)}</strong></p>
+        <p id="daily-town-micro-route-caption" class="output-value">${escapeHtml(pack.townMicroRoute.captionAddOn)}</p>
+        <p id="daily-town-micro-route-staff-line" class="output-value">${escapeHtml(pack.townMicroRoute.staffScript)}</p>
+      </details>`
+    : "";
   return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
     <h3>Your daily money move</h3>
     <details class="output-card" open>
@@ -684,6 +694,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
     ${townBoostSection}
     ${townStorySection}
     ${townGraphSection}
+    ${townMicroRouteSection}
     <div class="grid" style="grid-template-columns:1fr; margin-top:8px;">
       <button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>
       <button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>
@@ -714,6 +725,12 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         pack.townGraphBoost
           ? `<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Caption</button>
              <button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Next Stop Staff Line</button>`
+          : ""
+      }
+      ${
+        pack.townMicroRoute
+          ? `<button class="primary-button" data-copy-target="daily-town-micro-route-caption">Copy Route Add-on</button>
+             <button class="secondary-button" data-copy-target="daily-town-micro-route-staff-line">Copy Route Staff Line</button>`
           : ""
       }
       <button class="secondary-button" id="share-daily" type="button">Share…</button>
@@ -757,6 +774,30 @@ router.get("/", async (req, res, next) => {
       }).catch(() => null),
     ]);
     const signUrl = withSelection("/app/sign/today", context);
+    const routeWindowOverride = parseTownWindowOverride(optionalText(req.query.window));
+    const routeWindowOptions = [
+      { value: "", label: "Auto (current)" },
+      { value: "morning", label: "Morning" },
+      { value: "lunch", label: "Lunch" },
+      { value: "after_work", label: "After Work" },
+      { value: "evening", label: "Evening" },
+      { value: "weekend", label: "Weekend" },
+    ];
+    const routeWindowSelect = `<details style="margin-top:10px;">
+      <summary class="muted">Advanced: route window (optional)</summary>
+      <label class="field-label">Switch route window
+        <select id="daily-window">
+          ${routeWindowOptions
+            .map(
+              (option) =>
+                `<option value="${escapeHtml(option.value)}" ${
+                  (routeWindowOverride ?? "") === option.value ? "selected" : ""
+                }>${escapeHtml(option.label)}</option>`,
+            )
+            .join("")}
+        </select>
+      </label>
+    </details>`;
     const townPulseIndicator = townPulse
       ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">🟢 Town Pulse Active</a>`
       : `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">⚪ Town Pulse Warming Up</a>`;
@@ -792,6 +833,7 @@ router.get("/", async (req, res, next) => {
               <summary class="muted">Optional note for today</summary>
               <textarea id="daily-notes" placeholder="Only if needed: weather, staffing, special event, etc."></textarea>
             </details>
+            ${routeWindowSelect}
             <button id="run-daily" class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="button">✅ Make Me Money Today</button>
             <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">🛟 Fix a Slow Day</button>
             <p id="daily-status" class="muted" style="margin-top:8px;"></p>
@@ -837,6 +879,13 @@ router.get("/", async (req, res, next) => {
             function esc(value) {
               return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
             }
+            function windowLabel(value) {
+              if (value === "after_work") return "After Work";
+              if (value === "weekend") return "Weekend";
+              if (value === "morning") return "Morning";
+              if (value === "lunch") return "Lunch";
+              return "Evening";
+            }
             function renderDailyPack(pack) {
               const smsSection = pack.optionalSms?.enabled
                 ? '<details class="output-card"><summary><strong>Optional SMS</strong></summary><p id="daily-sms" class="output-value" style="margin-top:8px;">' + esc(pack.optionalSms.message || "") + '</p></details>'
@@ -853,6 +902,9 @@ router.get("/", async (req, res, next) => {
               const townGraphSection = pack.townGraphBoost
                 ? '<details class="output-card"><summary><strong>Town Graph Boost (optional)</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townGraphBoost.nextStopIdea || "") + '</strong></p><p id="daily-town-graph-caption" class="output-value">' + esc(pack.townGraphBoost.captionAddOn || "") + '</p><p id="daily-town-graph-staff-line" class="output-value">' + esc(pack.townGraphBoost.staffLine || "") + '</p></details>'
                 : '';
+              const townMicroRouteSection = pack.townMicroRoute
+                ? '<details class="output-card"><summary><strong>Town Route Tip (' + esc(windowLabel(pack.townMicroRoute.window || "evening")) + ')</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townMicroRoute.line || "") + '</strong></p><p id="daily-town-micro-route-caption" class="output-value">' + esc(pack.townMicroRoute.captionAddOn || "") + '</p><p id="daily-town-micro-route-staff-line" class="output-value">' + esc(pack.townMicroRoute.staffScript || "") + '</p></details>'
+                : '';
               return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
                 '<h3>Your daily money move</h3>' +
                 '<details class="output-card" open><summary><strong>Today\\'s Special</strong></summary><p id="daily-special" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.todaySpecial?.promoName || "") + '</strong><br/>' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></details>' +
@@ -863,6 +915,7 @@ router.get("/", async (req, res, next) => {
                 townBoostSection +
                 townStorySection +
                 townGraphSection +
+                townMicroRouteSection +
                 '<div class="grid" style="grid-template-columns:1fr; margin-top:8px;">' +
                 '<button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>' +
                 '<button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>' +
@@ -871,6 +924,7 @@ router.get("/", async (req, res, next) => {
                 (pack.optionalSms?.enabled ? '<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>' : '') +
                 (pack.townStory ? '<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Caption</button><button class="secondary-button add-town-story-btn" type="button">Add to Today\\'s Post</button>' : '') +
                 (pack.townGraphBoost ? '<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Caption</button><button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Next Stop Staff Line</button>' : '') +
+                (pack.townMicroRoute ? '<button class="primary-button" data-copy-target="daily-town-micro-route-caption">Copy Route Add-on</button><button class="secondary-button" data-copy-target="daily-town-micro-route-staff-line">Copy Route Staff Line</button>' : '') +
                 '<button class="secondary-button" id="share-daily" type="button">Share…</button>' +
                 '<a class="secondary-button" href="' + esc(signUrl) + '">Printable Sign</a>' +
                 '</div></section>';
@@ -879,7 +933,14 @@ router.get("/", async (req, res, next) => {
               const status = document.getElementById("daily-status");
               if (status) status.textContent = "Building your daily pack...";
               const notes = document.getElementById("daily-notes")?.value || "";
-              const response = await fetch(dailyEndpoint, {
+              const selectedWindow = document.getElementById("daily-window")?.value || "";
+              const endpointUrl = new URL(dailyEndpoint, window.location.origin);
+              if (selectedWindow) {
+                endpointUrl.searchParams.set("window", selectedWindow);
+              } else {
+                endpointUrl.searchParams.delete("window");
+              }
+              const response = await fetch(endpointUrl.pathname + endpointUrl.search, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ notes: notes || undefined })
@@ -903,6 +964,7 @@ router.get("/", async (req, res, next) => {
                   json.townBoost?.captionAddOn,
                   json.townStory?.captionAddOn,
                   json.townGraphBoost?.captionAddOn,
+                  json.townMicroRoute?.captionAddOn,
                 ]
                   .filter(Boolean)
                   .join("\\n");
@@ -948,6 +1010,7 @@ router.get("/", async (req, res, next) => {
                 document.getElementById("daily-town-caption-addon")?.textContent || "",
                 document.getElementById("daily-town-story-caption")?.textContent || "",
                 document.getElementById("daily-town-graph-caption")?.textContent || "",
+                document.getElementById("daily-town-micro-route-caption")?.textContent || "",
                 document.getElementById("daily-sms")?.textContent || "",
               ]
                 .filter(Boolean)

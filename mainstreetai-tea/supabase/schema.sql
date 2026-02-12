@@ -115,6 +115,14 @@ create table if not exists public.brand_partners (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.town_micro_routes (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  window text not null check (window in ('morning','lunch','after_work','evening','weekend')),
+  routes jsonb not null default '{"topRoutes":[]}'::jsonb,
+  computed_at timestamptz not null default now()
+);
+
 create table if not exists public.history (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -474,6 +482,12 @@ create unique index if not exists brand_partners_owner_brand_partner_unique
 create index if not exists brand_partners_owner_brand_created_idx
   on public.brand_partners(owner_id, brand_ref, created_at desc);
 
+create unique index if not exists town_micro_routes_town_window_unique
+  on public.town_micro_routes(town_ref, window);
+
+create index if not exists town_micro_routes_town_computed_idx
+  on public.town_micro_routes(town_ref, computed_at desc);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -702,6 +716,7 @@ alter table public.town_story_usage enable row level security;
 alter table public.town_graph_edges enable row level security;
 alter table public.town_graph_suggestions enable row level security;
 alter table public.brand_partners enable row level security;
+alter table public.town_micro_routes enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -896,6 +911,17 @@ create policy brand_partners_owner_all on public.brand_partners
 for all
 using (owner_id = auth.uid())
 with check (owner_id = auth.uid());
+
+drop policy if exists town_micro_routes_member_select on public.town_micro_routes;
+create policy town_micro_routes_member_select on public.town_micro_routes
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_micro_routes_member_modify on public.town_micro_routes;
+create policy town_micro_routes_member_modify on public.town_micro_routes
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
 
 drop policy if exists history_owner_all on public.history;
 create policy history_owner_all on public.history

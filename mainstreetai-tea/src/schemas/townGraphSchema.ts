@@ -41,6 +41,39 @@ export const townGraphSuggestionRowSchema = z.object({
   computedAt: z.string().datetime({ offset: true }),
 });
 
+export const townMicroRouteWindowSchema = z.enum([
+  "morning",
+  "lunch",
+  "after_work",
+  "evening",
+  "weekend",
+]);
+
+export const townMicroRoutePathSchema = z.object({
+  route: z.array(townGraphCategorySchema).length(3),
+  why: z.string().min(1),
+  weight: z.number().min(0.01).max(100000),
+});
+
+export const townMicroRouteRoutesSchema = z.object({
+  topRoutes: z.array(townMicroRoutePathSchema).max(12),
+});
+
+export const townMicroRouteRowSchema = z.object({
+  id: z.string().min(1),
+  townRef: z.string().min(1),
+  window: townMicroRouteWindowSchema,
+  routes: townMicroRouteRoutesSchema,
+  computedAt: z.string().datetime({ offset: true }),
+});
+
+export const townMicroRoutePromptOutputSchema = z.object({
+  microRouteLine: z.string().min(1),
+  captionAddOn: z.string().min(1),
+  staffLine: z.string().min(1),
+  optionalCollabCategory: townGraphCategorySchema.optional(),
+});
+
 export const townGraphEdgeUpdateSchema = z.object({
   fromCategory: townGraphCategorySchema,
   toCategory: townGraphCategorySchema,
@@ -67,4 +100,7 @@ export type TownGraphCategory = z.infer<typeof townGraphCategorySchema>;
 export type TownGraphEdge = z.infer<typeof townGraphEdgeSchema>;
 export type TownGraphPromptOutput = z.infer<typeof townGraphPromptOutputSchema>;
 export type TownGraphSuggestionRow = z.infer<typeof townGraphSuggestionRowSchema>;
+export type TownMicroRouteWindow = z.infer<typeof townMicroRouteWindowSchema>;
+export type TownMicroRouteRow = z.infer<typeof townMicroRouteRowSchema>;
+export type TownMicroRoutePromptOutput = z.infer<typeof townMicroRoutePromptOutputSchema>;
 export type BrandPartnerRecord = z.infer<typeof brandPartnerRecordSchema>;

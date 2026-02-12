@@ -22,6 +22,7 @@ import {
   removeExplicitPartnerForBrand,
   upsertExplicitPartnerForBrand,
 } from "../services/townGraphService";
+import { recomputeTownMicroRoutesForTown } from "../services/townMicroRoutesService";
 import { generateTownStoryForTown, getLatestTownStory } from "../services/townStoriesService";
 
 const router = Router();
@@ -194,6 +195,37 @@ router.post("/graph/edge", async (req, res, next) => {
         to: edge.toCategory,
         weight: edge.weight,
       },
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/graph/micro-routes/recompute", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const result = await recomputeTownMicroRoutesForTown({
+      townId,
+      userId: req.user?.id,
+    });
+    return res.json({
+      ok: true,
+      town: map.town,
+      updated: result.updated,
     });
   } catch (error) {
     return next(error);

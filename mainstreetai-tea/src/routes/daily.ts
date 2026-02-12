@@ -8,6 +8,7 @@ import {
   runDailyOneButton,
   submitDailyCheckin,
 } from "../services/dailyOneButtonService";
+import { parseTownWindowOverride } from "../town/windows";
 
 const router = Router();
 
@@ -68,12 +69,24 @@ router.post("/", async (req, res, next) => {
       typeof req.query.locationId === "string" && req.query.locationId.trim() !== ""
         ? req.query.locationId.trim()
         : undefined;
+    const rawWindow =
+      typeof req.query.window === "string" && req.query.window.trim() !== ""
+        ? req.query.window.trim().toLowerCase()
+        : undefined;
+    const windowOverride = parseTownWindowOverride(rawWindow);
+    if (rawWindow && !windowOverride) {
+      return res.status(400).json({
+        error: "Invalid window query parameter",
+        supported: ["morning", "lunch", "after_work", "evening", "weekend"],
+      });
+    }
     const result = await runDailyOneButton({
       userId: ownerId,
       brandId: parsedBrand.brandId,
       ownerEmail: req.user?.email ?? null,
       locationId,
       request: parsedBody.data,
+      windowOverride,
     });
     return res.json({
       ...result.pack,

@@ -38,6 +38,13 @@ export const dailyTownGraphBoostSchema = z.object({
   staffLine: z.string().min(1),
 });
 
+export const dailyTownMicroRouteSchema = z.object({
+  window: z.enum(["morning", "lunch", "after_work", "evening", "weekend"]),
+  line: z.string().min(1),
+  captionAddOn: z.string().min(1),
+  staffScript: z.string().min(1),
+});
+
 export const dailyOutputSchema = z.object({
   todaySpecial: z.object({
     promoName: z.string().min(1),
@@ -65,6 +72,7 @@ export const dailyOutputSchema = z.object({
   townBoost: dailyTownBoostSchema.optional(),
   townStory: dailyTownStorySchema.optional(),
   townGraphBoost: dailyTownGraphBoostSchema.optional(),
+  townMicroRoute: dailyTownMicroRouteSchema.optional(),
   nextStep: z.string().min(1),
 });
 
@@ -83,4 +91,5 @@ export type LocalBoostOutput = z.infer<typeof localBoostOutputSchema>;
 export type DailyTownBoost = z.infer<typeof dailyTownBoostSchema>;
 export type DailyTownStory = z.infer<typeof dailyTownStorySchema>;
 export type DailyTownGraphBoost = z.infer<typeof dailyTownGraphBoostSchema>;
+export type DailyTownMicroRoute = z.infer<typeof dailyTownMicroRouteSchema>;
 export type DailyCheckinRequest = z.infer<typeof dailyCheckinRequestSchema>;

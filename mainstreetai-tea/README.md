@@ -592,8 +592,10 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `GET /api/jobs/town-pulse` (cron; requires `x-cron-secret`)
 - `GET /api/jobs/town-stories` (cron; requires `x-cron-secret`)
 - `GET /api/jobs/town-graph` (cron; requires `x-cron-secret`)
+- `GET /api/jobs/town-micro-routes` (cron; requires `x-cron-secret`)
 - `GET /api/town/graph?townId=...`
 - `POST /api/town/graph/edge?townId=...`
+- `POST /api/town/graph/micro-routes/recompute?townId=...`
 - `GET /api/alerts?brandId=...&status=open|all`
 - `POST /api/alerts/:id/ack?brandId=...`
 - `POST /api/alerts/:id/resolve?brandId=...`
@@ -673,6 +675,8 @@ Vercel Cron example target:
 - header: `x-cron-secret: <CRON_SECRET>`
 - `GET https://yourapp.vercel.app/api/jobs/town-graph` (daily at 2:30am)
 - header: `x-cron-secret: <CRON_SECRET>`
+- `GET https://yourapp.vercel.app/api/jobs/town-micro-routes` (daily at 3:15am)
+- header: `x-cron-secret: <CRON_SECRET>`
 
 `vercel.json`:
 
@@ -685,7 +689,8 @@ Vercel Cron example target:
     { "path": "/api/jobs/alerts", "schedule": "10 * * * *" },
     { "path": "/api/jobs/town-pulse", "schedule": "15 * * * *" },
     { "path": "/api/jobs/town-stories", "schedule": "20 * * * *" },
-    { "path": "/api/jobs/town-graph", "schedule": "30 2 * * *" }
+    { "path": "/api/jobs/town-graph", "schedule": "30 2 * * *" },
+    { "path": "/api/jobs/town-micro-routes", "schedule": "15 3 * * *" }
   ]
 }
 ```
@@ -1034,6 +1039,7 @@ From admin you can:
   - `/api/jobs/town-pulse` (`15 * * * *`)
   - `/api/jobs/town-stories` (`20 * * * *`)
   - `/api/jobs/town-graph` (`30 2 * * *`)
+  - `/api/jobs/town-micro-routes` (`15 3 * * *`)
 - Set Stripe webhook endpoint:
   - `<APP_BASE_URL>/api/billing/webhook`
 - Keep secrets server-only:
@@ -1495,3 +1501,50 @@ Safety:
 - Graph remains category-level by default.
 - No business rankings, engagement numbers, or private analytics are exposed.
 - Partner naming is only used when explicit `brand_partners` opt-in exists.
+
+## Phase TOWN Graph+: Micro-Routes by time-of-day
+
+Town Graph+ adds window-aware local flow so "next stop" suggestions match the moment:
+- morning
+- lunch
+- after_work
+- evening
+- weekend (overrides time windows on Sat/Sun)
+
+New data model:
+- `town_micro_routes`
+  - cached routes per `town_ref + window`
+  - `routes.topRoutes[]` contains 3-step category paths with `why` and weighted score
+
+New utility:
+- `src/town/windows.ts`
+  - timezone-aware window selection
+  - supports query override: `?window=morning`
+
+New prompt:
+- `prompts/town_micro_route_suggest.md`
+
+New APIs:
+- `POST /api/town/graph/micro-routes/recompute?townId=...`
+- `GET /api/jobs/town-micro-routes` (cron-secret protected)
+
+Cron schedule includes:
+- `/api/jobs/town-micro-routes` daily at `03:15` (`15 3 * * *`)
+
+Daily integration:
+- `/api/daily` now accepts optional `?window=morning|lunch|after_work|evening|weekend`
+- output now includes optional `townMicroRoute`:
+  - `window`
+  - `line`
+  - `captionAddOn`
+  - `staffScript`
+
+Easy Mode additions:
+- Daily results show **Town Route Tip (Window)**
+- Copy buttons for route add-on + staff line
+- Optional route-window selector that calls `/api/daily?window=...`
+
+Safety:
+- Micro-routes stay category-first by default.
+- No private analytics, rankings, or customer-level tracking are exposed.
+- Business names are still opt-in only through explicit partner settings.
