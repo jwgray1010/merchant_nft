@@ -593,9 +593,13 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `GET /api/jobs/town-stories` (cron; requires `x-cron-secret`)
 - `GET /api/jobs/town-graph` (cron; requires `x-cron-secret`)
 - `GET /api/jobs/town-micro-routes` (cron; requires `x-cron-secret`)
+- `GET /api/jobs/town-seasons` (cron; requires `x-cron-secret`)
 - `GET /api/town/graph?townId=...`
 - `POST /api/town/graph/edge?townId=...`
 - `POST /api/town/graph/micro-routes/recompute?townId=...`
+- `GET /api/town/seasons?townId=...`
+- `POST /api/town/seasons?townId=...`
+- `DELETE /api/town/seasons?townId=...&seasonKey=...`
 - `GET /api/alerts?brandId=...&status=open|all`
 - `POST /api/alerts/:id/ack?brandId=...`
 - `POST /api/alerts/:id/resolve?brandId=...`
@@ -677,6 +681,8 @@ Vercel Cron example target:
 - header: `x-cron-secret: <CRON_SECRET>`
 - `GET https://yourapp.vercel.app/api/jobs/town-micro-routes` (daily at 3:15am)
 - header: `x-cron-secret: <CRON_SECRET>`
+- `GET https://yourapp.vercel.app/api/jobs/town-seasons` (weekly Sunday at 3:45am)
+- header: `x-cron-secret: <CRON_SECRET>`
 
 `vercel.json`:
 
@@ -690,7 +696,8 @@ Vercel Cron example target:
     { "path": "/api/jobs/town-pulse", "schedule": "15 * * * *" },
     { "path": "/api/jobs/town-stories", "schedule": "20 * * * *" },
     { "path": "/api/jobs/town-graph", "schedule": "30 2 * * *" },
-    { "path": "/api/jobs/town-micro-routes", "schedule": "15 3 * * *" }
+    { "path": "/api/jobs/town-micro-routes", "schedule": "15 3 * * *" },
+    { "path": "/api/jobs/town-seasons", "schedule": "45 3 * * 0" }
   ]
 }
 ```
@@ -1040,6 +1047,7 @@ From admin you can:
   - `/api/jobs/town-stories` (`20 * * * *`)
   - `/api/jobs/town-graph` (`30 2 * * *`)
   - `/api/jobs/town-micro-routes` (`15 3 * * *`)
+  - `/api/jobs/town-seasons` (`45 3 * * 0`, optional)
 - Set Stripe webhook endpoint:
   - `<APP_BASE_URL>/api/billing/webhook`
 - Keep secrets server-only:
@@ -1548,3 +1556,56 @@ Safety:
 - Micro-routes stay category-first by default.
 - No private analytics, rankings, or customer-level tracking are exposed.
 - Business names are still opt-in only through explicit partner settings.
+
+## Phase TOWN Graph++: Seasonal Routes
+
+Town Graph++ adapts local route guidance to seasonal rhythms:
+- school cycles vs summer
+- holidays
+- sports windows (football/basketball/baseball)
+- optional local festival windows
+
+New data model:
+- `town_seasons`
+  - per-town seasonal overrides + notes
+  - supports custom date ranges and local context notes
+- `town_route_season_weights`
+  - per-tag edge weight deltas by window/category pair
+  - applied during micro-route recompute when matching season tags are active
+
+New utility:
+- `src/town/seasonDetector.ts`
+  - auto-detects primary season from month (`winter|spring|summer|fall`)
+  - auto-tags: `holiday`, `school`, `football`
+  - supports override query param: `?season=holiday`
+
+Micro-route compute updates:
+- `POST /api/town/graph/micro-routes/recompute?townId=...&season=...`
+- route cache now stores season context per window:
+  - `routes.window`
+  - `routes.seasonTags[]`
+  - `routes.topRoutes[]`
+
+New prompt:
+- `prompts/town_seasonal_route.md`
+
+Daily integration:
+- `/api/daily` now accepts optional `?season=...`
+- output now includes optional `townSeasonalBoost`:
+  - `seasonTags[]`
+  - `line`
+  - `captionAddOn`
+  - `staffScript`
+
+Easy Mode additions:
+- `/app/town/seasons` for lightweight town season overrides
+- Daily advanced controls include optional season override selector
+- Daily results include optional **Town Seasonal Boost** copy block + copy buttons
+
+Cron:
+- `/api/jobs/town-seasons` weekly (`45 3 * * 0`) for notes-template refresh
+
+Safety:
+- Seasonal guidance remains inclusive and category-level.
+- No business ranking, private metrics, or engagement numbers are exposed.
+- Team/school specifics are only referenced when provided via notes/identity context.
