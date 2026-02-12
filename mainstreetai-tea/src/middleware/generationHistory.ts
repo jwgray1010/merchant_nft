@@ -1,17 +1,10 @@
+import { randomUUID } from "node:crypto";
 import type { RequestHandler } from "express";
 import { brandIdSchema } from "../schemas/brandSchema";
+import { historyRecordSchema } from "../schemas/historySchema";
 import { localJsonStore } from "../storage/localJsonStore";
 
 export type GenerationEndpoint = "promo" | "social" | "events" | "week-plan" | "next-week-plan";
-
-type GenerationHistoryRecord = {
-  brandId: string;
-  endpoint: GenerationEndpoint;
-  createdAt: string;
-  request: unknown;
-  response: unknown;
-  tags?: string[];
-};
 
 function parseOptionalTags(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {
@@ -53,20 +46,22 @@ export function createGenerationHistoryMiddleware(endpoint: GenerationEndpoint):
 
       const createdAt = new Date().toISOString();
       const tags = parseOptionalTags((req.body as { tags?: unknown } | undefined)?.tags);
+      const historyId = randomUUID();
 
       void localJsonStore
         .saveBrandRecord({
           collection: "history",
           brandId: parsedBrandId.data,
           fileSuffix: endpoint,
-          record: {
+          record: historyRecordSchema.parse({
+            id: historyId,
             brandId: parsedBrandId.data,
             endpoint,
             createdAt,
             request: req.body,
             response: responseBody,
             ...(tags ? { tags } : {}),
-          } satisfies GenerationHistoryRecord,
+          }),
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : "Unknown history logging error";

@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 3)
+# MainStreetAI Platform API (Phase 4)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -14,9 +14,17 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - `POST /next-week-plan?brandId=<brandId>`
 - Memory and learning:
   - Auto history log for generation endpoints
+  - History APIs (`/history`)
   - Posting log (`/posts`)
   - Performance log (`/metrics`)
   - Insights engine (`/insights`, `/insights/refresh`)
+- Admin UI:
+  - `/admin` home
+  - `/admin/brands` manager
+  - generator pages with copy/paste snippets
+  - post + metrics logging forms
+- Printable in-store signs:
+  - `/sign.pdf?brandId=<brandId>&historyId=<historyId>`
 
 All OpenAI calls are centralized in:
 - `src/ai/openaiClient.ts`
@@ -176,7 +184,7 @@ curl -X POST "http://localhost:3001/metrics?brandId=main-street-nutrition" \
   -H "Content-Type: application/json" \
   -d '{
     "platform":"instagram",
-    "postId":"2026-02-12T19-05-00Z_post",
+    "postId":"<post-uuid>",
     "window":"24h",
     "views":1820,
     "likes":95,
@@ -200,13 +208,47 @@ curl "http://localhost:3001/insights?brandId=main-street-nutrition"
 curl -X POST "http://localhost:3001/insights/refresh?brandId=main-street-nutrition"
 ```
 
-## Phase 3 Workflow
+### List generation history
+
+```bash
+curl "http://localhost:3001/history?brandId=main-street-nutrition&limit=10"
+```
+
+### Get one history record
+
+```bash
+curl "http://localhost:3001/history/<historyId>?brandId=main-street-nutrition"
+```
+
+### Printable sign PDF (from history)
+
+```bash
+curl -L "http://localhost:3001/sign.pdf?brandId=main-street-nutrition&historyId=<historyId>" --output sign.pdf
+```
+
+## Admin UI (no frontend framework)
+
+Open:
+
+```bash
+http://localhost:3001/admin
+```
+
+From admin you can:
+- pick a business
+- generate promo/social/events/week-plan/next-week-plan
+- copy caption/hook/SMS/sign text quickly
+- log posted content and metrics via forms
+- print sign PDFs
+
+## Phase 3 + 4 Workflow
 
 1. Generate promo/social/week-plan content.
 2. Log what actually got posted using `POST /posts`.
 3. Log performance later with `POST /metrics` (24h/48h/7d).
 4. Review recommendations via `GET /insights`.
 5. Generate an improved weekly plan using `POST /next-week-plan`.
+6. Use `/admin` for day-to-day owner operations without Postman/curl.
 
 ## Notes
 

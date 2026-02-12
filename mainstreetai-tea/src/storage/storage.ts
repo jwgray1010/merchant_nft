@@ -18,9 +18,16 @@ export type ListBrandRecordsOptions = {
   limit?: number;
 };
 
+export type GetBrandRecordByIdOptions = {
+  collection: BrandScopedCollection;
+  brandId: string;
+  id: string;
+};
+
 export interface Storage {
   saveBrandRecord<TRecord>(options: SaveBrandRecordOptions<TRecord>): Promise<SavedRecordMeta>;
   listBrandRecords<TRecord>(options: ListBrandRecordsOptions): Promise<TRecord[]>;
+  getBrandRecordById<TRecord>(options: GetBrandRecordByIdOptions): Promise<TRecord | null>;
   writeBrandInsight<TRecord>(brandId: string, record: TRecord): Promise<void>;
   readBrandInsight<TRecord>(brandId: string): Promise<TRecord | null>;
 }

@@ -1,12 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { getBrand } from "../data/brandStore";
 import { brandIdSchema } from "../schemas/brandSchema";
-import {
-  metricsRequestSchema,
-  storedMetricsSchema,
-  type StoredMetrics,
-} from "../schemas/metricsSchema";
+import { historyRecordSchema, type HistoryRecord } from "../schemas/historySchema";
 import { localJsonStore } from "../storage/localJsonStore";
 
 const router = Router();
@@ -21,72 +16,14 @@ function parseLimit(value: unknown, defaultValue: number): number {
     return defaultValue;
   }
 
-  return Math.min(parsed, 300);
+  return Math.min(parsed, 200);
 }
-
-router.post("/", async (req, res, next) => {
-  const rawBrandId = req.query.brandId;
-  if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
-    return res.status(400).json({
-      error: "Missing brandId query parameter. Example: /metrics?brandId=main-street-nutrition",
-    });
-  }
-
-  const parsedBrandId = brandIdSchema.safeParse(rawBrandId);
-  if (!parsedBrandId.success) {
-    return res.status(400).json({
-      error: "Invalid brandId query parameter",
-      details: parsedBrandId.error.flatten(),
-    });
-  }
-
-  const parsedBody = metricsRequestSchema.safeParse(req.body);
-  if (!parsedBody.success) {
-    return res.status(400).json({
-      error: "Invalid metrics payload",
-      details: parsedBody.error.flatten(),
-    });
-  }
-
-  const createdAt = new Date().toISOString();
-
-  try {
-    const brand = await getBrand(parsedBrandId.data);
-    if (!brand) {
-      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
-    }
-
-    const id = randomUUID();
-    await localJsonStore.saveBrandRecord({
-      collection: "metrics",
-      brandId: parsedBrandId.data,
-      fileSuffix: "metrics",
-      record: {
-        id,
-        brandId: parsedBrandId.data,
-        createdAt,
-        ...parsedBody.data,
-      },
-    });
-
-    const response = storedMetricsSchema.parse({
-      id,
-      brandId: parsedBrandId.data,
-      createdAt,
-      ...parsedBody.data,
-    });
-
-    return res.status(201).json(response);
-  } catch (error) {
-    return next(error);
-  }
-});
 
 router.get("/", async (req, res, next) => {
   const rawBrandId = req.query.brandId;
   if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
     return res.status(400).json({
-      error: "Missing brandId query parameter. Example: /metrics?brandId=main-street-nutrition",
+      error: "Missing brandId query parameter. Example: /history?brandId=main-street-nutrition",
     });
   }
 
@@ -98,7 +35,7 @@ router.get("/", async (req, res, next) => {
     });
   }
 
-  const limit = parseLimit(req.query.limit, 100);
+  const limit = parseLimit(req.query.limit, 50);
 
   try {
     const brand = await getBrand(parsedBrandId.data);
@@ -107,17 +44,65 @@ router.get("/", async (req, res, next) => {
     }
 
     const records = await localJsonStore.listBrandRecords<unknown>({
-      collection: "metrics",
+      collection: "history",
       brandId: parsedBrandId.data,
       limit,
     });
 
     const parsedRecords = records
-      .map((record) => storedMetricsSchema.safeParse(record))
-      .filter((result): result is { success: true; data: StoredMetrics } => result.success)
+      .map((record) => historyRecordSchema.safeParse(record))
+      .filter((result): result is { success: true; data: HistoryRecord } => result.success)
       .map((result) => result.data);
 
     return res.json(parsedRecords);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:id", async (req, res, next) => {
+  const rawBrandId = req.query.brandId;
+  if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
+    return res.status(400).json({
+      error: "Missing brandId query parameter. Example: /history/<id>?brandId=main-street-nutrition",
+    });
+  }
+
+  const parsedBrandId = brandIdSchema.safeParse(rawBrandId);
+  if (!parsedBrandId.success) {
+    return res.status(400).json({
+      error: "Invalid brandId query parameter",
+      details: parsedBrandId.error.flatten(),
+    });
+  }
+
+  const id = req.params.id?.trim();
+  if (!id) {
+    return res.status(400).json({ error: "Missing history id route parameter" });
+  }
+
+  try {
+    const brand = await getBrand(parsedBrandId.data);
+    if (!brand) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+
+    const record = await localJsonStore.getBrandRecordById<unknown>({
+      collection: "history",
+      brandId: parsedBrandId.data,
+      id,
+    });
+
+    if (!record) {
+      return res.status(404).json({ error: `History record '${id}' was not found` });
+    }
+
+    const parsedRecord = historyRecordSchema.safeParse(record);
+    if (!parsedRecord.success) {
+      return res.status(404).json({ error: `History record '${id}' was not valid` });
+    }
+
+    return res.json(parsedRecord.data);
   } catch (error) {
     return next(error);
   }

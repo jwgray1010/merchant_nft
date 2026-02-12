@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { getBrand } from "../data/brandStore";
 import { brandIdSchema } from "../schemas/brandSchema";
@@ -52,11 +53,13 @@ router.post("/", async (req, res, next) => {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
-    const saveResult = await localJsonStore.saveBrandRecord({
+    const id = randomUUID();
+    await localJsonStore.saveBrandRecord({
       collection: "posts",
       brandId: parsedBrandId.data,
       fileSuffix: "post",
       record: {
+        id,
         brandId: parsedBrandId.data,
         createdAt,
         ...parsedBody.data,
@@ -65,7 +68,7 @@ router.post("/", async (req, res, next) => {
     });
 
     const response = storedPostSchema.parse({
-      id: saveResult.id,
+      id,
       brandId: parsedBrandId.data,
       createdAt,
       ...parsedBody.data,

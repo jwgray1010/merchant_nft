@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { runPrompt } from "../ai/runPrompt";
 import type { BrandProfile } from "../schemas/brandSchema";
+import { historyRecordSchema } from "../schemas/historySchema";
 import { insightsOutputSchema, type InsightsOutput } from "../schemas/insightsOutputSchema";
 import { storedMetricsSchema, type StoredMetrics } from "../schemas/metricsSchema";
 import { storedPostSchema, type StoredPost } from "../schemas/postSchema";
 import { localJsonStore } from "../storage/localJsonStore";
 
-const historyEntrySchema = z.object({
+const legacyHistoryEntrySchema = z.object({
   id: z.string().optional(),
   brandId: z.string(),
   endpoint: z.string(),
@@ -16,7 +17,7 @@ const historyEntrySchema = z.object({
   tags: z.array(z.string()).optional(),
 });
 
-type HistoryEntry = z.infer<typeof historyEntrySchema>;
+type HistoryEntry = z.infer<typeof legacyHistoryEntrySchema>;
 
 const DAYS_LOOKBACK = 30;
 const MAX_ENTRIES = 100;
@@ -259,7 +260,13 @@ export async function loadRecentLearningData(brandId: string): Promise<{
 
   const history = pickRecentEntries(
     rawHistory
-      .map((record) => historyEntrySchema.safeParse(record))
+      .map((record) => {
+        const strictResult = historyRecordSchema.safeParse(record);
+        if (strictResult.success) {
+          return strictResult;
+        }
+        return legacyHistoryEntrySchema.safeParse(record);
+      })
       .filter((result): result is { success: true; data: HistoryEntry } => result.success)
       .map((result) => result.data),
   );

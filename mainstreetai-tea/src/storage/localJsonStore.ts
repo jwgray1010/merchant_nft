@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   buildTimestampForFile,
+  type GetBrandRecordByIdOptions,
   type ListBrandRecordsOptions,
   type SaveBrandRecordOptions,
   type SavedRecordMeta,
@@ -88,6 +89,57 @@ export class LocalJsonStore implements Storage {
     );
 
     return records;
+  }
+
+  async getBrandRecordById<TRecord>({
+    collection,
+    brandId,
+    id,
+  }: GetBrandRecordByIdOptions): Promise<TRecord | null> {
+    const directory = path.join(this.dataDir, collection, brandId);
+
+    let files: string[];
+    try {
+      files = await readdir(directory);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return null;
+      }
+      throw error;
+    }
+
+    const normalizedId = id.trim();
+    if (normalizedId === "") {
+      return null;
+    }
+
+    const directFile = path.join(directory, `${normalizedId}.json`);
+    try {
+      const raw = await readFile(directFile, "utf8");
+      return JSON.parse(raw) as TRecord;
+    } catch (error) {
+      if (!isNotFound(error)) {
+        throw error;
+      }
+    }
+
+    for (const fileName of files.filter((name) => name.endsWith(".json")).sort((a, b) => b.localeCompare(a))) {
+      const raw = await readFile(path.join(directory, fileName), "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+
+      if (typeof parsed === "object" && parsed !== null && "id" in parsed) {
+        const parsedId = (parsed as { id?: unknown }).id;
+        if (typeof parsedId === "string" && parsedId === normalizedId) {
+          return parsed as TRecord;
+        }
+      }
+
+      if (fileName.replace(/\.json$/i, "") === normalizedId) {
+        return parsed as TRecord;
+      }
+    }
+
+    return null;
   }
 
   async writeBrandInsight<TRecord>(brandId: string, record: TRecord): Promise<void> {
