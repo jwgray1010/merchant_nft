@@ -365,6 +365,8 @@ export class SupabaseAdapter implements StorageAdapter {
         caption_used: parsed.captionUsed,
         promo_name: parsed.promoName ?? null,
         notes: parsed.notes ?? null,
+        status: parsed.status ?? "posted",
+        provider_meta: parsed.providerMeta ?? null,
       })
       .select("*")
       .single();
@@ -392,6 +394,8 @@ export class SupabaseAdapter implements StorageAdapter {
       captionUsed: row.caption_used,
       promoName: row.promo_name ?? undefined,
       notes: row.notes ?? undefined,
+      status: row.status ?? "posted",
+      providerMeta: row.provider_meta ?? undefined,
     });
   }
 
@@ -418,6 +422,8 @@ export class SupabaseAdapter implements StorageAdapter {
         captionUsed: row.caption_used,
         promoName: row.promo_name ?? undefined,
         notes: row.notes ?? undefined,
+        status: row.status ?? "posted",
+        providerMeta: row.provider_meta ?? undefined,
       }),
     );
   }

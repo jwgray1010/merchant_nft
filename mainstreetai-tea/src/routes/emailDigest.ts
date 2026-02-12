@@ -84,7 +84,7 @@ router.post("/digest/send", async (req, res, next) => {
       to: parsedBody.data.to,
     });
 
-    await processDueOutbox(25);
+    await processDueOutbox({ limit: 25 });
     const refreshed = await adapter.getOutboxById(userId, parsedBrandId.data, outbox.id);
 
     return res.status(202).json({

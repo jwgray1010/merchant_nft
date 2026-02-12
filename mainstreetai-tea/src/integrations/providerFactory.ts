@@ -20,10 +20,24 @@ import {
 } from "./env";
 
 const bufferSecretSchema = z.object({
-  accessToken: z.string().min(1),
+  access_token: z.string().min(1),
+  refresh_token: z.string().optional(),
+  expires_at: z.string().datetime({ offset: true }).optional(),
 });
 
 const bufferConfigSchema = z.object({
+  buffer_user_id: z.string().optional(),
+  org_id: z.string().optional(),
+  connectedAt: z.string().datetime({ offset: true }).optional(),
+  profiles: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        service: z.string().min(1),
+        username: z.string().optional().default(""),
+      }),
+    )
+    .optional(),
   channelIdByPlatform: z
     .object({
       facebook: z.string().optional(),
@@ -73,6 +87,33 @@ function parseEncryptedJson<T>(payload: string | null | undefined, schema: z.Zod
   return schema.parse(parsed);
 }
 
+function normalizeBufferSecretPayload(raw: Record<string, unknown>) {
+  const accessToken =
+    typeof raw.access_token === "string"
+      ? raw.access_token
+      : typeof raw.accessToken === "string"
+        ? raw.accessToken
+        : "";
+  const refreshToken =
+    typeof raw.refresh_token === "string"
+      ? raw.refresh_token
+      : typeof raw.refreshToken === "string"
+        ? raw.refreshToken
+        : undefined;
+  const expiresAt =
+    typeof raw.expires_at === "string"
+      ? raw.expires_at
+      : typeof raw.expiresAt === "string"
+        ? raw.expiresAt
+        : undefined;
+
+  return bufferSecretSchema.parse({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_at: expiresAt,
+  });
+}
+
 export async function connectBufferIntegration(
   userId: string,
   brandId: string,
@@ -89,11 +130,12 @@ export async function connectBufferIntegration(
 
   const adapter = getAdapter();
   const config = bufferConfigSchema.parse({
+    connectedAt: new Date().toISOString(),
     channelIdByPlatform: payload.channelIdByPlatform,
     defaultChannelId: payload.defaultChannelId,
     apiBaseUrl: payload.apiBaseUrl,
   });
-  const secret = bufferSecretSchema.parse({ accessToken: payload.accessToken });
+  const secret = bufferSecretSchema.parse({ access_token: payload.accessToken });
   const secretsEnc = encrypt(JSON.stringify(secret));
 
   return adapter.upsertIntegration(
@@ -118,10 +160,28 @@ export async function getBufferProvider(userId: string, brandId: string): Promis
   }
 
   const config = bufferConfigSchema.parse(integration.config);
-  const secrets = parseEncryptedJson(integration.secretsEnc, bufferSecretSchema);
+  const rawSecrets = parseEncryptedJson(integration.secretsEnc, z.record(z.string(), z.unknown()));
+  const secrets = normalizeBufferSecretPayload(rawSecrets);
+  const channelIdByPlatform: Partial<Record<"facebook" | "instagram" | "tiktok" | "other", string>> = {
+    ...config.channelIdByPlatform,
+  };
+
+  for (const profile of config.profiles ?? []) {
+    const service = profile.service.toLowerCase();
+    if (service.includes("instagram") && !channelIdByPlatform.instagram) {
+      channelIdByPlatform.instagram = profile.id;
+    } else if (service.includes("facebook") && !channelIdByPlatform.facebook) {
+      channelIdByPlatform.facebook = profile.id;
+    } else if (service.includes("tiktok") && !channelIdByPlatform.tiktok) {
+      channelIdByPlatform.tiktok = profile.id;
+    } else if (!channelIdByPlatform.other) {
+      channelIdByPlatform.other = profile.id;
+    }
+  }
+
   return new BufferProvider({
-    accessToken: secrets.accessToken,
-    channelIdByPlatform: config.channelIdByPlatform,
+    accessToken: secrets.access_token,
+    channelIdByPlatform,
     defaultChannelId: config.defaultChannelId,
     apiBaseUrl: config.apiBaseUrl,
   });

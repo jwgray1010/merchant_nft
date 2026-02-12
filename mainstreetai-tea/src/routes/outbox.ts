@@ -87,7 +87,7 @@ router.post("/:id/retry", async (req, res, next) => {
       scheduledFor: new Date().toISOString(),
       lastError: null,
     });
-    await processDueOutbox(25);
+    await processDueOutbox({ limit: 25 });
     const refreshed = await adapter.getOutboxById(userId, parsedBrandId.data, id);
 
     return res.json({

@@ -31,7 +31,7 @@ export class BufferProvider implements SchedulerProvider {
   }
 
   async publishPost(input: PublishPostInput): Promise<PublishResult> {
-    const channelId = this.resolveChannelId(input.platform);
+    const channelId = input.profileId?.trim() || this.resolveChannelId(input.platform);
     const params = new URLSearchParams();
     params.set("access_token", this.accessToken);
     params.set("text", input.caption);
@@ -42,6 +42,12 @@ export class BufferProvider implements SchedulerProvider {
     }
     if (input.mediaUrl) {
       params.set("media[photo]", input.mediaUrl);
+    }
+    if (input.linkUrl) {
+      params.set("media[link]", input.linkUrl);
+    }
+    if (input.title) {
+      params.set("media[title]", input.title);
     }
 
     const response = await fetch(`${this.apiBaseUrl}/updates/create.json`, {

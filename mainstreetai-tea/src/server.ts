@@ -6,12 +6,14 @@ import { createGenerationHistoryMiddleware } from "./middleware/generationHistor
 import { verifyAuth } from "./supabase/verifyAuth";
 import adminRouter from "./routes/admin";
 import brandRouter from "./routes/brand";
+import bufferOAuthRouter from "./routes/bufferOAuth";
 import emailDigestRouter from "./routes/emailDigest";
 import eventsRouter from "./routes/events";
 import gbpRouter from "./routes/gbp";
 import historyRouter from "./routes/history";
 import integrationsRouter from "./routes/integrations";
 import insightsRouter from "./routes/insights";
+import jobsOutboxRouter from "./routes/jobsOutbox";
 import localEventsRouter from "./routes/localEvents";
 import metricsRouter from "./routes/metrics";
 import nextWeekPlanRouter from "./routes/nextWeekPlan";
@@ -65,6 +67,14 @@ app.use(
   createGenerationHistoryMiddleware("next-week-plan"),
   nextWeekPlanRouter,
 );
+
+// Next.js-style API aliases for phased workflow compatibility
+app.use("/api/integrations/buffer", bufferOAuthRouter);
+app.use("/api/integrations", verifyAuth, integrationsRouter);
+app.use("/api/publish", verifyAuth, publishRouter);
+app.use("/api/posts", verifyAuth, postsRouter);
+app.use("/api/history", verifyAuth, historyRouter);
+app.use("/api/jobs/outbox", jobsOutboxRouter);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Not found" });

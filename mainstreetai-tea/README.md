@@ -90,10 +90,17 @@ ENABLE_TWILIO_INTEGRATION=false
 ENABLE_GBP_INTEGRATION=false
 ENABLE_EMAIL_INTEGRATION=false
 OUTBOX_RUNNER_ENABLED=true
+APP_BASE_URL=http://localhost:3001
+CRON_SECRET=replace_with_random_cron_secret
 
 TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
 TWILIO_FROM_NUMBER=
+
+BUFFER_CLIENT_ID=
+BUFFER_CLIENT_SECRET=
+BUFFER_REDIRECT_URI=http://localhost:3001/api/integrations/buffer/callback
+BUFFER_WEBHOOK_SECRET=
 
 SENDGRID_API_KEY=
 DIGEST_FROM_EMAIL=
@@ -467,60 +474,83 @@ curl "http://localhost:3001/history/<historyId>?brandId=main-street-nutrition" -
 curl -L "http://localhost:3001/sign.pdf?brandId=main-street-nutrition&historyId=<historyId>" -H "$AUTH_HEADER" --output sign.pdf
 ```
 
-## Integrations (Phase 8)
+## Integrations (Phase 8A) — Buffer-first publishing workflow
 
-### Start with Buffer only (quickstart)
+### Buffer app setup
 
-1. Set env:
+1. Create a Buffer app in Buffer developer settings.
+2. Set redirect URL in Buffer app to:
+   - `<APP_BASE_URL>/api/integrations/buffer/callback`
+3. Set env:
 
 ```env
 ENABLE_BUFFER_INTEGRATION=true
 INTEGRATION_SECRET_KEY=replace_with_long_random_secret_32plus_chars
+BUFFER_CLIENT_ID=...
+BUFFER_CLIENT_SECRET=...
+BUFFER_REDIRECT_URI=https://yourapp.vercel.app/api/integrations/buffer/callback
+APP_BASE_URL=https://yourapp.vercel.app
+CRON_SECRET=replace_with_random_cron_secret
 ```
 
-2. Connect Buffer for a brand:
+### Connect Buffer to a brand (OAuth)
+
+Start OAuth:
 
 ```bash
-curl -X POST "http://localhost:3001/integrations/buffer/connect?brandId=main-street-nutrition" \
-  -H "$AUTH_HEADER" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "accessToken":"<buffer-access-token>",
-    "defaultChannelId":"<buffer-channel-id>"
-  }'
+curl -L "http://localhost:3001/api/integrations/buffer/start?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER"
 ```
 
-3. Publish now:
+Or open in browser while logged into admin:
+
+```text
+/api/integrations/buffer/start?brandId=main-street-nutrition
+```
+
+After callback, integration is saved in `integrations` table (`provider="buffer"`) with:
+- `config`: `buffer_user_id`, `org_id` (if available), `connectedAt`, `profiles[]`
+- `secrets_enc`: encrypted token payload
+
+### Publish via API (queue or immediate)
+
+Immediate (queue now + attempt publish):
 
 ```bash
-curl -X POST "http://localhost:3001/publish?brandId=main-street-nutrition" \
+curl -X POST "http://localhost:3001/api/publish?brandId=main-street-nutrition" \
   -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "platform":"instagram",
     "caption":"Afternoon pick-me-up is ready!",
-    "mediaUrl":"https://example.com/reel-cover.jpg"
+    "mediaUrl":"https://example.com/reel-cover.jpg",
+    "source":"social"
   }'
 ```
 
-4. Publish using a scheduled item:
+Scheduled (queued in outbox):
 
 ```bash
-curl -X POST "http://localhost:3001/publish?brandId=main-street-nutrition" \
+curl -X POST "http://localhost:3001/api/publish?brandId=main-street-nutrition" \
   -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d '{
     "platform":"instagram",
-    "caption":"Scheduled post from planner",
-    "scheduleId":"<schedule-id>"
+    "caption":"Scheduled community promo",
+    "scheduledFor":"2026-02-20T21:00:00Z",
+    "source":"week-plan"
   }'
 ```
 
-If schedule time is in the future, it is queued in outbox.
+On queue/sent, records are written to outbox and persisted into posts/history for learning.
 
 ### Integration endpoints
 
 - `GET /integrations?brandId=...`
+- `GET /api/integrations/buffer/start?brandId=...`
+- `GET /api/integrations/buffer/callback`
+- `POST /api/publish?brandId=...`
+- `POST /api/jobs/outbox` (cron; requires `x-cron-secret`)
 - `POST /integrations/buffer/connect?brandId=...`
 - `POST /integrations/gbp/connect?brandId=...`
 - `GET /integrations/gbp/callback`
@@ -537,7 +567,7 @@ If schedule time is in the future, it is queued in outbox.
 
 - Buffer:
   - enable `ENABLE_BUFFER_INTEGRATION=true`
-  - connect per brand with `POST /integrations/buffer/connect`
+  - connect per brand with `GET /api/integrations/buffer/start?brandId=...`
 - Twilio:
   - enable `ENABLE_TWILIO_INTEGRATION=true`
   - set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
@@ -558,6 +588,11 @@ If schedule time is in the future, it is queued in outbox.
   - keep the Node process running with runner enabled **or**
   - trigger queue processing from external cron / scheduled function.
   - Supabase Scheduled Functions or host-level cron are both valid patterns.
+
+Vercel Cron example target:
+
+- `POST https://yourapp.vercel.app/api/jobs/outbox`
+- header: `x-cron-secret: <CRON_SECRET>`
 
 ### SMS examples (Twilio)
 

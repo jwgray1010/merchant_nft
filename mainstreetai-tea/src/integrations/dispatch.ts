@@ -25,6 +25,14 @@ export async function dispatchOutboxRecord(record: OutboxRecord): Promise<unknow
     const platform = String(payload.platform ?? "other") as "facebook" | "instagram" | "tiktok" | "other";
     const caption = String(payload.caption ?? "");
     const mediaUrl = typeof payload.mediaUrl === "string" && payload.mediaUrl.trim() !== "" ? payload.mediaUrl : undefined;
+    const linkUrl = typeof payload.linkUrl === "string" && payload.linkUrl.trim() !== "" ? payload.linkUrl : undefined;
+    const title = typeof payload.title === "string" && payload.title.trim() !== "" ? payload.title : undefined;
+    const bufferProfileId =
+      typeof payload.bufferProfileId === "string" && payload.bufferProfileId.trim() !== ""
+        ? payload.bufferProfileId
+        : typeof payload.profileId === "string" && payload.profileId.trim() !== ""
+          ? payload.profileId
+          : undefined;
     if (!caption) {
       throw new Error("Outbox post_publish payload missing caption");
     }
@@ -34,6 +42,9 @@ export async function dispatchOutboxRecord(record: OutboxRecord): Promise<unknow
       platform,
       caption,
       mediaUrl,
+      linkUrl,
+      title,
+      profileId: bufferProfileId,
     });
 
     await adapter.addPost(record.ownerId, record.brandId, {
@@ -48,7 +59,17 @@ export async function dispatchOutboxRecord(record: OutboxRecord): Promise<unknow
       notes:
         typeof payload.notes === "string" && payload.notes.trim() !== ""
           ? payload.notes
-          : undefined,
+          : `Published via Buffer (outbox: ${record.id})`,
+      status: "posted",
+      providerMeta: {
+        outboxId: record.id,
+        bufferProfileId,
+        source: typeof payload.source === "string" ? payload.source : undefined,
+        providerResult:
+          typeof result === "object" && result !== null
+            ? result
+            : { value: String(result) },
+      },
     });
 
     if (typeof payload.scheduleId === "string" && payload.scheduleId.trim() !== "") {

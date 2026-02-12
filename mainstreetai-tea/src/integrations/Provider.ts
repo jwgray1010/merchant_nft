@@ -3,6 +3,9 @@ export type PublishPostInput = {
   caption: string;
   mediaUrl?: string;
   scheduledFor?: string;
+  profileId?: string;
+  linkUrl?: string;
+  title?: string;
 };
 
 export type PublishResult = {

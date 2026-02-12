@@ -1,22 +1,32 @@
 import { getAdapter } from "../storage/getAdapter";
 import { dispatchOutboxRecord } from "../integrations/dispatch";
+import type { OutboxType } from "../schemas/outboxSchema";
 
-const MAX_ATTEMPTS = 5;
+const BACKOFF_MINUTES = [5, 15, 60, 240, 1440] as const;
 
 function computeBackoffMs(nextAttemptNumber: number): number {
-  const cappedPower = Math.min(nextAttemptNumber, 6);
-  const minutes = Math.min(60, 2 ** cappedPower);
-  return minutes * 60 * 1000;
+  const idx = Math.min(nextAttemptNumber - 1, BACKOFF_MINUTES.length - 1);
+  return BACKOFF_MINUTES[idx] * 60 * 1000;
 }
 
-export async function processDueOutbox(limit = 20): Promise<{
+type ProcessDueOutboxOptions = {
+  limit?: number;
+  types?: OutboxType[];
+};
+
+export async function processDueOutbox(options: ProcessDueOutboxOptions = {}): Promise<{
   processed: number;
   sent: number;
   failed: number;
 }> {
+  const limit = options.limit ?? 20;
   const adapter = getAdapter();
   const nowIso = new Date().toISOString();
-  const due = await adapter.listDueOutbox(nowIso, limit);
+  const dueAll = await adapter.listDueOutbox(nowIso, limit);
+  const due =
+    options.types && options.types.length > 0
+      ? dueAll.filter((record) => options.types!.includes(record.type))
+      : dueAll;
 
   let sent = 0;
   let failed = 0;
@@ -34,7 +44,7 @@ export async function processDueOutbox(limit = 20): Promise<{
       sent += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown outbox error";
-      const shouldFail = nextAttempts >= MAX_ATTEMPTS;
+      const shouldFail = nextAttempts >= BACKOFF_MINUTES.length;
 
       await adapter.updateOutbox(record.id, {
         status: shouldFail ? "failed" : "queued",

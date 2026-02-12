@@ -1,11 +1,9 @@
 import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
 import {
-  connectBufferIntegration,
   createGoogleBusinessConnectUrl,
   getGoogleBusinessProvider,
   getTwilioProvider,
-  publishWithBuffer,
 } from "../integrations/providerFactory";
 import {
   isBufferEnabled,
@@ -15,7 +13,6 @@ import {
 } from "../integrations/env";
 import { AVAILABLE_TEMPLATE_NAMES, buildBrandFromTemplate } from "../data/templateStore";
 import { processDueOutbox } from "../jobs/outboxProcessor";
-import { bufferConnectSchema } from "../schemas/bufferSchema";
 import { brandProfileSchema, type BrandProfile, type BrandRegistryItem } from "../schemas/brandSchema";
 import { emailDigestSendSchema } from "../schemas/emailDigestSchema";
 import { gbpPostSchema } from "../schemas/gbpSchema";
@@ -344,6 +341,63 @@ function parseLocalDateTimeToIso(value: unknown): string {
     throw new Error("Invalid date-time value");
   }
   return parsed.toISOString();
+}
+
+function resolveBufferProfileId(
+  config: unknown,
+  platform: "facebook" | "instagram" | "tiktok" | "other",
+  preferredProfileId?: string,
+): string | null {
+  if (typeof config !== "object" || config === null) {
+    return null;
+  }
+
+  const profiles = Array.isArray((config as { profiles?: unknown }).profiles)
+    ? ((config as { profiles: unknown[] }).profiles
+        .map((entry) => {
+          if (typeof entry !== "object" || entry === null) {
+            return null;
+          }
+          const record = entry as Record<string, unknown>;
+          const id = typeof record.id === "string" ? record.id.trim() : "";
+          const service = typeof record.service === "string" ? record.service.toLowerCase() : "";
+          if (!id) {
+            return null;
+          }
+          return { id, service };
+        })
+        .filter((entry): entry is { id: string; service: string } => entry !== null))
+    : [];
+
+  if (profiles.length === 0) {
+    const map = (config as { channelIdByPlatform?: Record<string, string> }).channelIdByPlatform ?? {};
+    const mapped = map[platform] ?? map.other;
+    return typeof mapped === "string" && mapped.trim() !== "" ? mapped.trim() : null;
+  }
+
+  if (preferredProfileId) {
+    const selected = profiles.find((entry) => entry.id === preferredProfileId);
+    if (selected) {
+      return selected.id;
+    }
+  }
+
+  const needle =
+    platform === "facebook"
+      ? "facebook"
+      : platform === "instagram"
+        ? "instagram"
+        : platform === "tiktok"
+          ? "tiktok"
+          : "";
+  if (needle) {
+    const matched = profiles.find((entry) => entry.service.includes(needle));
+    if (matched) {
+      return matched.id;
+    }
+  }
+
+  return profiles[0]?.id ?? null;
 }
 
 function parseBrandForm(body: Record<string, unknown>): BrandProfile {
@@ -2093,6 +2147,27 @@ router.get("/integrations/buffer", async (req, res, next) => {
       selectedBrandId !== null
         ? await adapter.getIntegration(userId, selectedBrandId, "buffer")
         : null;
+    const profiles =
+      Array.isArray((existing?.config as { profiles?: unknown } | undefined)?.profiles)
+        ? (((existing?.config as { profiles?: unknown[] }).profiles ?? [])
+            .map((entry) => {
+              if (typeof entry !== "object" || entry === null) {
+                return null;
+              }
+              const record = entry as Record<string, unknown>;
+              return {
+                id: typeof record.id === "string" ? record.id : "",
+                service: typeof record.service === "string" ? record.service : "",
+                username:
+                  typeof record.username === "string"
+                    ? record.username
+                    : typeof record.service_username === "string"
+                      ? record.service_username
+                      : "",
+              };
+            })
+            .filter((entry): entry is { id: string; service: string; username: string } => entry !== null))
+        : [];
 
     const notice =
       status === "connected"
@@ -2116,22 +2191,28 @@ router.get("/integrations/buffer", async (req, res, next) => {
         <h2>Connect Buffer</h2>
         ${
           selectedBrandId
-            ? `<form method="POST" action="/admin/integrations/buffer/connect?brandId=${encodeURIComponent(selectedBrandId)}">
-                <div class="field"><label>Access Token</label><input name="accessToken" required /></div>
-                <div class="grid">
-                  <div class="field"><label>Default Channel ID</label><input name="defaultChannelId" value="${escapeHtml(String((existing?.config as { defaultChannelId?: string } | undefined)?.defaultChannelId ?? ""))}" /></div>
-                  <div class="field"><label>Instagram Channel ID</label><input name="instagramChannelId" value="${escapeHtml(String(((existing?.config as { channelIdByPlatform?: Record<string, string> } | undefined)?.channelIdByPlatform?.instagram ?? "")))}" /></div>
-                  <div class="field"><label>Facebook Channel ID</label><input name="facebookChannelId" value="${escapeHtml(String(((existing?.config as { channelIdByPlatform?: Record<string, string> } | undefined)?.channelIdByPlatform?.facebook ?? "")))}" /></div>
-                  <div class="field"><label>TikTok Channel ID</label><input name="tiktokChannelId" value="${escapeHtml(String(((existing?.config as { channelIdByPlatform?: Record<string, string> } | undefined)?.channelIdByPlatform?.tiktok ?? "")))}" /></div>
-                </div>
-                <button type="submit">Save Buffer Connection</button>
-              </form>`
+            ? `<p class="muted">Use OAuth to connect Buffer channels for this brand.</p>
+               <a class="button" href="/api/integrations/buffer/start?brandId=${encodeURIComponent(selectedBrandId)}">Connect Buffer</a>
+               <div style="margin-top:12px;">
+                 <h3 style="margin-bottom:6px;">Connected Profiles</h3>
+                 ${
+                   profiles.length > 0
+                     ? `<table><thead><tr><th>Profile ID</th><th>Service</th><th>Username</th></tr></thead><tbody>${profiles
+                         .map(
+                           (profile) => `<tr><td><code>${escapeHtml(profile.id)}</code></td><td>${escapeHtml(
+                             profile.service || "-",
+                           )}</td><td>${escapeHtml(profile.username || "-")}</td></tr>`,
+                         )
+                         .join("")}</tbody></table>`
+                     : `<p class="muted">No Buffer profiles saved yet.</p>`
+                 }
+               </div>`
             : "<p>Select a brand first.</p>"
         }
       </div>
 
       <div class="card">
-        <h2>Test Publish</h2>
+        <h2>Test Queue Post</h2>
         ${
           selectedBrandId
             ? `<form method="POST" action="/admin/integrations/buffer/test-publish?brandId=${encodeURIComponent(selectedBrandId)}">
@@ -2140,10 +2221,14 @@ router.get("/integrations/buffer", async (req, res, next) => {
                     <label>Platform</label>
                     <select name="platform">${POST_PLATFORMS.map((entry) => `<option>${entry}</option>`).join("")}</select>
                   </div>
+                  <div class="field"><label>Buffer Profile ID (optional)</label><input name="profileId" /></div>
                   <div class="field"><label>Media URL (optional)</label><input name="mediaUrl" /></div>
+                  <div class="field"><label>Link URL (optional)</label><input name="linkUrl" /></div>
+                  <div class="field"><label>Title (optional)</label><input name="title" /></div>
+                  <div class="field"><label>Scheduled For (optional, local datetime)</label><input type="datetime-local" name="scheduledFor" /></div>
                 </div>
                 <div class="field"><label>Caption</label><textarea name="caption" required></textarea></div>
-                <button type="submit">Publish Test Post</button>
+                <button type="submit">Queue/Publish</button>
               </form>`
             : "<p>Select a brand first.</p>"
         }
@@ -2160,25 +2245,11 @@ router.get("/integrations/buffer", async (req, res, next) => {
 
 router.post("/integrations/buffer/connect", async (req, res, next) => {
   try {
-    const userId = req.user?.id ?? "local-dev-user";
     const brandId = optionalText(req.query.brandId);
     if (!brandId) {
       return res.status(400).type("html").send(renderLayout("Buffer Integration", "<h1>Missing brandId query parameter.</h1>"));
     }
-
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const parsed = bufferConnectSchema.parse({
-      accessToken: String(body.accessToken ?? ""),
-      defaultChannelId: optionalText(body.defaultChannelId),
-      channelIdByPlatform: {
-        instagram: optionalText(body.instagramChannelId),
-        facebook: optionalText(body.facebookChannelId),
-        tiktok: optionalText(body.tiktokChannelId),
-      },
-    });
-
-    await connectBufferIntegration(userId, brandId, parsed);
-    return res.redirect(`/admin/integrations/buffer?brandId=${encodeURIComponent(brandId)}&status=connected`);
+    return res.redirect(`/api/integrations/buffer/start?brandId=${encodeURIComponent(brandId)}`);
   } catch (error) {
     return next(error);
   }
@@ -2192,15 +2263,86 @@ router.post("/integrations/buffer/test-publish", async (req, res, next) => {
       return res.status(400).type("html").send(renderLayout("Buffer Integration", "<h1>Missing brandId query parameter.</h1>"));
     }
 
+    const adapter = getAdapter();
+    const integration = await adapter.getIntegration(userId, brandId, "buffer");
+    if (!integration) {
+      return res.status(400).type("html").send(
+        renderLayout("Buffer Integration", "<h1>Buffer integration is not connected for this brand.</h1>"),
+      );
+    }
+
     const body = (req.body ?? {}) as Record<string, unknown>;
+    const scheduledForInput = optionalText(body.scheduledFor);
+    const scheduledFor = scheduledForInput ? parseLocalDateTimeToIso(scheduledForInput) : undefined;
     const parsed = publishRequestSchema.parse({
       platform: String(body.platform ?? ""),
       caption: String(body.caption ?? ""),
       mediaUrl: optionalText(body.mediaUrl),
+      linkUrl: optionalText(body.linkUrl),
+      title: optionalText(body.title),
+      profileId: optionalText(body.profileId),
+      scheduledFor,
+      source: "manual",
     });
 
-    await publishWithBuffer(userId, brandId, parsed);
-    return res.redirect(`/admin/integrations/buffer?brandId=${encodeURIComponent(brandId)}&status=sent`);
+    const bufferProfileId = resolveBufferProfileId(integration.config, parsed.platform, parsed.profileId);
+    if (!bufferProfileId) {
+      return res.status(400).type("html").send(
+        renderLayout(
+          "Buffer Integration",
+          "<h1>No Buffer profile matched this request. Connect Buffer and verify channels.</h1>",
+        ),
+      );
+    }
+
+    const shouldQueue =
+      typeof parsed.scheduledFor === "string" && new Date(parsed.scheduledFor).getTime() > Date.now();
+
+    const outbox = await adapter.enqueueOutbox(
+      userId,
+      brandId,
+      "post_publish",
+      {
+        platform: parsed.platform,
+        caption: parsed.caption,
+        mediaUrl: parsed.mediaUrl,
+        linkUrl: parsed.linkUrl,
+        title: parsed.title,
+        source: parsed.source,
+        bufferProfileId,
+      },
+      shouldQueue ? parsed.scheduledFor : new Date().toISOString(),
+    );
+
+    if (shouldQueue) {
+      await adapter.addPost(userId, brandId, {
+        platform: parsed.platform,
+        postedAt: parsed.scheduledFor ?? new Date().toISOString(),
+        mediaType: parsed.mediaUrl ? "photo" : "text",
+        captionUsed: parsed.caption,
+        status: "planned",
+        notes: `Queued from admin buffer test (outbox: ${outbox.id})`,
+        providerMeta: {
+          outboxId: outbox.id,
+          bufferProfileId,
+          source: parsed.source,
+        },
+      });
+      await adapter.addHistory(userId, brandId, "publish", parsed, {
+        queued: true,
+        outboxId: outbox.id,
+        scheduledFor: parsed.scheduledFor,
+      });
+      return res.redirect(`/admin/integrations/buffer?brandId=${encodeURIComponent(brandId)}&status=queued`);
+    }
+
+    await processDueOutbox({ limit: 10, types: ["post_publish"] });
+    const refreshed = await adapter.getOutboxById(userId, brandId, outbox.id);
+    if (refreshed?.status === "sent") {
+      return res.redirect(`/admin/integrations/buffer?brandId=${encodeURIComponent(brandId)}&status=sent`);
+    }
+
+    return res.redirect(`/admin/integrations/buffer?brandId=${encodeURIComponent(brandId)}&status=queued`);
   } catch (error) {
     return next(error);
   }
@@ -2551,7 +2693,7 @@ router.post("/email-digest/send", async (req, res, next) => {
       cadence: parsed.cadence,
       to: parsed.to,
     });
-    await processDueOutbox(25);
+    await processDueOutbox({ limit: 25 });
 
     return res.redirect(`/admin/email-digest?brandId=${encodeURIComponent(brandId)}&status=queued&outboxId=${encodeURIComponent(outbox.id)}`);
   } catch (error) {
@@ -2650,7 +2792,7 @@ router.post("/outbox/:id/retry", async (req, res, next) => {
       scheduledFor: new Date().toISOString(),
       lastError: null,
     });
-    await processDueOutbox(25);
+    await processDueOutbox({ limit: 25 });
 
     return res.redirect(`/admin/outbox?brandId=${encodeURIComponent(brandId)}&status=retried`);
   } catch (error) {

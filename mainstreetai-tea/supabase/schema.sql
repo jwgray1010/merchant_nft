@@ -41,8 +41,10 @@ create table if not exists public.posts (
   posted_at timestamptz not null,
   media_type text not null,
   caption_used text not null,
+  status text not null default 'posted',
   promo_name text,
   notes text,
+  provider_meta jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -116,6 +118,9 @@ create table if not exists public.outbox (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.posts add column if not exists status text not null default 'posted';
+alter table public.posts add column if not exists provider_meta jsonb;
 
 create index if not exists history_owner_brand_created_at_idx
   on public.history(owner_id, brand_ref, created_at desc);
