@@ -32,7 +32,6 @@ import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
 import type { BrandProfile } from "../schemas/brandSchema";
 import { townGraphCategorySchema, type TownGraphCategory } from "../schemas/townGraphSchema";
-import { TOWN_MICRO_ROUTE_WINDOWS, townWindowLabel } from "../town/windows";
 import type { LocationRecord } from "../schemas/locationSchema";
 import type { AutopilotSettings } from "../schemas/autopilotSettingsSchema";
 import type { AutopilotDailyOutput } from "../schemas/autopilotRunSchema";
