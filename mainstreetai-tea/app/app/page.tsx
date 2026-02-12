@@ -13,6 +13,7 @@ export default function PremiumLocalHomePage() {
     <main className="space-y-6">
       <Card>
         <div className="flex flex-wrap gap-2" style={{ marginBottom: 10 }}>
+          <NeighborhoodChip>Local Network Member</NeighborhoodChip>
           <NeighborhoodChip>Town Pulse: Active</NeighborhoodChip>
           <NeighborhoodChip>After Work</NeighborhoodChip>
           <NeighborhoodChip>School Week</NeighborhoodChip>

@@ -101,6 +101,7 @@ export const dailyOutputSchema = z.object({
   townMicroRoute: dailyTownMicroRouteSchema.optional(),
   townSeasonalBoost: dailyTownSeasonalBoostSchema.optional(),
   ownerConfidence: dailyOwnerConfidenceSchema.optional(),
+  trustLine: z.string().min(1).optional(),
   nextStep: z.string().min(1),
 });
 

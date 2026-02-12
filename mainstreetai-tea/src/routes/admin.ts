@@ -18,6 +18,7 @@ import {
 } from "../schemas/autopilotSettingsSchema";
 import { autopilotRunRequestSchema } from "../schemas/autopilotRunSchema";
 import {
+  brandLocalTrustStyleSchema,
   brandProfileSchema,
   brandSupportLevelSchema,
   type BrandProfile,
@@ -73,6 +74,9 @@ const COMMUNITY_AUDIENCE_STYLES = [
   "mixed",
 ] as const;
 const SUPPORT_LEVELS = [...brandSupportLevelSchema.options] as Array<(typeof brandSupportLevelSchema.options)[number]>;
+const LOCAL_TRUST_STYLES = [...brandLocalTrustStyleSchema.options] as Array<
+  (typeof brandLocalTrustStyleSchema.options)[number]
+>;
 
 const POST_PLATFORMS = ["facebook", "instagram", "tiktok", "other"] as const;
 const POST_MEDIA_TYPES = ["photo", "reel", "story", "text"] as const;
@@ -312,6 +316,11 @@ function renderBrandForm(
             : "Steady";
     return `<option value="${supportLevel}" ${selected}>${escapeHtml(label)}</option>`;
   }).join("");
+  const localTrustStyleOptions = LOCAL_TRUST_STYLES.map((style) => {
+    const selected = (brand?.localTrustStyle ?? "mainstreet") === style ? "selected" : "";
+    const label = style === "network" ? "Local network member" : "Powered by Main Street";
+    return `<option value="${style}" ${selected}>${escapeHtml(label)}</option>`;
+  }).join("");
   const localToneOptions = COMMUNITY_LOCAL_TONES.map((tone) => {
     const selected = communityVibe.localTone === tone ? "selected" : "";
     return `<option value="${tone}" ${selected}>${tone}</option>`;
@@ -354,6 +363,15 @@ function renderBrandForm(
           <label>Support level</label>
           <select name="supportLevel">${supportLevelOptions}</select>
         </div>
+        <div class="field">
+          <label>Local trust style</label>
+          <select name="localTrustStyle">${localTrustStyleOptions}</select>
+        </div>
+      </div>
+      <div class="grid">
+        <label><input type="checkbox" name="localTrustEnabled" ${
+          brand?.localTrustEnabled ?? true ? "checked" : ""
+        } /> Show trust badge ("Local Network Member")</label>
       </div>
 
       <div class="field">
@@ -532,6 +550,10 @@ function parseBrandForm(body: Record<string, unknown>): BrandProfile {
     location: String(body.location ?? "").trim(),
     townRef: optionalText(body.townRef),
     supportLevel: String(body.supportLevel ?? "steady")
+      .trim()
+      .toLowerCase(),
+    localTrustEnabled: checkbox(body.localTrustEnabled),
+    localTrustStyle: String(body.localTrustStyle ?? "mainstreet")
       .trim()
       .toLowerCase(),
     type: String(body.type ?? "other"),

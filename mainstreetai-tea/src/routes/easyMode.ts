@@ -552,13 +552,16 @@ function renderHeader(context: EasyContext, currentPath: string): string {
   const ambassadorBadge = context.ambassador.active
     ? `<span class="neighborhood-chip">Local Leader</span>`
     : "";
+  const trustBadge = context.selectedBrand.localTrustEnabled
+    ? `<span class="neighborhood-chip">Local Network Member</span>`
+    : "";
   const sponsorshipWaitlistNote =
     !context.communitySupport.supported &&
     context.communitySupport.sponsorshipEligible &&
     context.communitySupport.seatsRemaining === 0
       ? `<p class="muted" style="margin-top:8px;">Community sponsorship seats are currently full. Reduced-cost path is available in Billing.</p>`
       : "";
-  const badgeRow = [communitySupportBadge, ambassadorBadge]
+  const badgeRow = [communitySupportBadge, ambassadorBadge, trustBadge]
     .filter((entry) => entry !== "")
     .join("");
   const confidenceSupportLine = context.ownerConfidence.line || "Steady effort matters more than perfect days.";
@@ -1153,6 +1156,15 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         <p id="daily-sms" class="output-value">${escapeHtml(pack.optionalSms.message)}</p>
       </article>`
     : "";
+  const trustLineSection = pack.trustLine
+    ? `<article class="result-card">
+        <p class="section-title">Local Trust Line</p>
+        <p id="daily-trust-line" class="output-value">${escapeHtml(pack.trustLine)}</p>
+        <div class="divider">
+          <p class="muted">Use this in captions, signage, or SMS.</p>
+        </div>
+      </article>`
+    : "";
   const ownerConfidenceSection = pack.ownerConfidence
     ? `<article class="result-card">
         <p class="section-title">Owner confidence</p>
@@ -1201,6 +1213,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
       </div>
     </article>`,
     smsSection,
+    trustLineSection,
     localBoostSection,
     townBoostSection,
     townStorySection,
@@ -1234,6 +1247,11 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
       ${
         pack.optionalSms.enabled
           ? `<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>`
+          : ""
+      }
+      ${
+        pack.trustLine
+          ? `<button class="primary-button" data-copy-target="daily-trust-line">Copy Trust Line</button>`
           : ""
       }
       ${
@@ -1515,6 +1533,9 @@ router.get("/", async (req, res, next) => {
               const smsSection = pack.optionalSms?.enabled
                 ? '<article class="result-card"><p class="section-title">Optional SMS</p><p id="daily-sms" class="output-value">' + esc(pack.optionalSms.message || "") + '</p></article>'
                 : '';
+              const trustLineSection = pack.trustLine
+                ? '<article class="result-card"><p class="section-title">Local Trust Line</p><p id="daily-trust-line" class="output-value">' + esc(pack.trustLine || "") + '</p><div class="divider"><p class="muted">Use this in captions, signage, or SMS.</p></div></article>'
+                : '';
               const localBoostSection = pack.localBoost
                 ? '<article class="result-card"><p class="section-title">Local Boost</p><h2 class="text-lg">' + esc(pack.localBoost.line || "") + '</h2><div class="divider"><p id="daily-local-caption-addon" class="output-value">' + esc(pack.localBoost.captionAddOn || "") + '</p><p id="daily-local-staff-line" class="output-value">' + esc(pack.localBoost.staffScript || "") + '</p></div></article>'
                 : '';
@@ -1542,6 +1563,7 @@ router.get("/", async (req, res, next) => {
                 '<article class="result-card"><p class="section-title">Ready-to-post</p><h2 class="text-lg">' + esc(pack.post?.hook || "") + '</h2><p id="daily-caption" class="output-value">' + esc(pack.post?.caption || "") + '<br/>' + esc((pack.post?.onScreenText || []).join(" | ")) + '</p><div class="divider"><p class="muted">Best time: ' + esc(pack.post?.bestTime || "") + ' · ' + esc(pack.post?.platform || "") + '</p></div></article>',
                 '<article class="result-card"><p class="section-title">Store Sign</p><h2 class="text-lg">' + esc(pack.sign?.headline || "") + '</h2><p id="daily-sign" class="output-value">' + esc(pack.sign?.body || "") + (pack.sign?.finePrint ? '<br/><span class="muted">' + esc(pack.sign.finePrint) + '</span>' : '') + '</p><div class="divider"><a class="secondary-button" id="open-sign-print" href="' + esc(signUrl) + '">Print sign</a></div></article>',
                 smsSection,
+                trustLineSection,
                 localBoostSection,
                 townBoostSection,
                 townStorySection,
@@ -1559,6 +1581,7 @@ router.get("/", async (req, res, next) => {
                 (pack.localBoost ? '<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Add-on</button><button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>' : '') +
                 (pack.townBoost ? '<button class="primary-button" data-copy-target="daily-town-caption-addon">Copy Town Add-on</button><button class="secondary-button" data-copy-target="daily-town-staff-line">Copy Staff Line</button>' : '') +
                 (pack.optionalSms?.enabled ? '<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>' : '') +
+                (pack.trustLine ? '<button class="primary-button" data-copy-target="daily-trust-line">Copy Trust Line</button>' : '') +
                 (pack.townStory ? '<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Story Add-on</button><button class="secondary-button add-town-story-btn" type="button">Add to Today\\'s Post</button>' : '') +
                 (pack.townGraphBoost ? '<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Add-on</button><button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Staff Line</button>' : '') +
                 (pack.townMicroRoute ? '<button class="primary-button" data-copy-target="daily-town-micro-route-caption">Copy Route Add-on</button><button class="secondary-button" data-copy-target="daily-town-micro-route-staff-line">Copy Route Staff Line</button>' : '') +
@@ -1629,6 +1652,7 @@ router.get("/", async (req, res, next) => {
                   json.townGraphBoost?.captionAddOn,
                   json.townMicroRoute?.captionAddOn,
                   json.townSeasonalBoost?.captionAddOn,
+                  json.trustLine,
                 ]
                   .filter(Boolean)
                   .join("\\n");
@@ -1676,6 +1700,7 @@ router.get("/", async (req, res, next) => {
                 document.getElementById("daily-town-graph-caption")?.textContent || "",
                 document.getElementById("daily-town-micro-route-caption")?.textContent || "",
                 document.getElementById("daily-town-seasonal-caption")?.textContent || "",
+                document.getElementById("daily-trust-line")?.textContent || "",
                 document.getElementById("daily-sms")?.textContent || "",
               ]
                 .filter(Boolean)

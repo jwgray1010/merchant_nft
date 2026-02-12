@@ -17,6 +17,8 @@ create table if not exists public.brands (
   location text not null,
   town_ref uuid references public.towns(id) on delete set null,
   support_level text not null default 'steady' check (support_level in ('growing_fast','steady','struggling','just_starting')),
+  local_trust_enabled boolean not null default true,
+  local_trust_style text not null default 'mainstreet' check (local_trust_style in ('mainstreet','network')),
   type text not null,
   voice text not null,
   audiences jsonb not null default '[]'::jsonb,
@@ -42,11 +44,24 @@ alter table public.brands
   add column if not exists support_level text not null default 'steady';
 
 alter table public.brands
+  add column if not exists local_trust_enabled boolean not null default true;
+
+alter table public.brands
+  add column if not exists local_trust_style text not null default 'mainstreet';
+
+alter table public.brands
   drop constraint if exists brands_support_level_check;
 
 alter table public.brands
   add constraint brands_support_level_check
   check (support_level in ('growing_fast','steady','struggling','just_starting'));
+
+alter table public.brands
+  drop constraint if exists brands_local_trust_style_check;
+
+alter table public.brands
+  add constraint brands_local_trust_style_check
+  check (local_trust_style in ('mainstreet','network'));
 
 create unique index if not exists brands_owner_brand_id_unique
   on public.brands(owner_id, brand_id);

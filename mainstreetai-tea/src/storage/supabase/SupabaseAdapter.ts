@@ -86,6 +86,8 @@ type BrandRow = {
   location: string;
   town_ref: string | null;
   support_level: string | null;
+  local_trust_enabled: boolean | null;
+  local_trust_style: string | null;
   type: string;
   voice: string;
   audiences: unknown;
@@ -254,6 +256,8 @@ function toBrandProfile(row: BrandRow): BrandProfile {
     location: row.location,
     townRef: row.town_ref ?? undefined,
     supportLevel: row.support_level ?? undefined,
+    localTrustEnabled: row.local_trust_enabled ?? undefined,
+    localTrustStyle: row.local_trust_style ?? undefined,
     type: row.type,
     voice: row.voice,
     audiences: Array.isArray(row.audiences) ? row.audiences : [],
@@ -483,6 +487,8 @@ export class SupabaseAdapter implements StorageAdapter {
       location: parsed.location,
       town_ref: parsed.townRef ?? null,
       support_level: parsed.supportLevel,
+      local_trust_enabled: parsed.localTrustEnabled,
+      local_trust_style: parsed.localTrustStyle,
       type: parsed.type,
       voice: parsed.voice,
       audiences: parsed.audiences,
@@ -526,6 +532,8 @@ export class SupabaseAdapter implements StorageAdapter {
       location: merged.location,
       town_ref: merged.townRef ?? null,
       support_level: merged.supportLevel,
+      local_trust_enabled: merged.localTrustEnabled,
+      local_trust_style: merged.localTrustStyle,
       type: merged.type,
       voice: merged.voice,
       audiences: merged.audiences,

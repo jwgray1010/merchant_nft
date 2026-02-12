@@ -51,6 +51,7 @@ import {
   maybeRecordOutcomeWinMoments,
   recordOwnerProgressAction,
 } from "./ownerConfidenceService";
+import { generateLocalTrustLine, isLocalTrustEnabled } from "./localTrustService";
 
 type DailyPackRecord = {
   id: string;
@@ -568,6 +569,13 @@ export async function runDailyOneButton(input: {
     streakDays: 0,
     line: "Steady effort matters more than perfect days.",
   }));
+  const trustLine = isLocalTrustEnabled(brand)
+    ? await generateLocalTrustLine({
+        brand,
+        userId: input.userId,
+        useCase: "daily_pack",
+      }).catch(() => "Thanks for supporting local today.")
+    : undefined;
   const pack = dailyOutputSchema.parse({
     ...packBase,
     ownerConfidence: {
@@ -575,6 +583,7 @@ export async function runDailyOneButton(input: {
       streakDays: ownerConfidence.streakDays,
       line: ownerConfidence.line,
     },
+    trustLine,
   });
 
   const history = await adapter.addHistory(
@@ -768,6 +777,7 @@ export async function runDailyOneButton(input: {
           ? `<p><strong>Town Seasonal Boost:</strong> [${pack.townSeasonalBoost.seasonTags.join(", ")}] ${pack.townSeasonalBoost.line}<br/>${pack.townSeasonalBoost.captionAddOn}<br/>${pack.townSeasonalBoost.staffScript}</p>`
           : ""
       }
+      ${pack.trustLine ? `<p><strong>Local Trust Line:</strong> ${pack.trustLine}</p>` : ""}
     </body></html>`;
     const log = await adapter.addEmailLog(input.userId, input.brandId, {
       toEmail: emailTarget,

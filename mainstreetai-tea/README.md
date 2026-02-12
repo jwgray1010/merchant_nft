@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 15)
+# MainStreetAI Platform API (Phase 16)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -58,6 +58,7 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - Town ambassadors + local leader access extension
   - Invite-based local adoption loops (non-spam)
   - Town adoption milestones + partner credibility pages
+  - Local Trust Engine identity assets + trust messaging
   - Public marketing pages (`/`, `/pricing`, `/demo`)
   - Onboarding wizard (`/onboarding`)
   - Demo-mode write protection middleware
@@ -1783,3 +1784,54 @@ Ethical support rules:
   - encourage without pressure
   - recognize effort over performance
   - never compare owners or imply personal failure
+
+## Phase 16: Local Trust Engine (Powered by Main Street identity layer)
+
+Phase 16 adds a shared, customer-facing trust identity so participating businesses feel connected to something bigger than software.
+
+Brand profile additions:
+- `localTrustEnabled` (default `true`)
+- `localTrustStyle` (default `"mainstreet"`, supports `"network"`)
+- Supabase columns:
+  - `brands.local_trust_enabled boolean not null default true`
+  - `brands.local_trust_style text not null default 'mainstreet'`
+
+New trust assets endpoint:
+- `GET /api/trust/assets?brandId=...`
+  - returns:
+    - `windowStickerSVG` (ready-to-print trust sticker art)
+    - `socialBadgePNG` (social badge image string)
+    - `receiptLine` (short trust line for receipts)
+
+Daily Pack integration:
+- `POST /api/daily` can now return optional `trustLine`
+  - example: `"Thanks for supporting local today."`
+- Easy Mode exposes this line for copy/paste into:
+  - captions
+  - signage
+  - SMS
+
+UI additions:
+- Header trust chip for participating businesses:
+  - `Local Network Member`
+  - style uses local chip palette (`bg #E9F3FF`, `text #1F4E79`)
+
+Customer-facing page:
+- `app/local/page.tsx`
+  - explains:
+    - "What is the Local Network?"
+    - "Why support these businesses?"
+  - lists participating categories only (no rankings):
+    - Food & Drink
+    - Fitness
+    - Retail
+    - Services
+
+Prompt and ethics:
+- New prompt:
+  - `prompts/local_trust_voice.md`
+  - generates warm, inclusive local trust lines
+- System prompt rules extended to enforce:
+  - no superiority messaging
+  - no participant ranking
+  - no customer pressure
