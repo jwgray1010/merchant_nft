@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { createBrand, getBrand, listBrands, updateBrand } from "../data/brandStore";
 import {
+  createScheduleItem,
+  deleteScheduleItem,
+  listScheduleItems,
+  updateScheduleItem,
+} from "../data/scheduleStore";
+import {
   brandProfileSchema,
   type BrandProfile,
   type BrandRegistryItem,
@@ -9,6 +15,12 @@ import {
 import { historyRecordSchema, type HistoryRecord } from "../schemas/historySchema";
 import { metricsRequestSchema, storedMetricsSchema, type StoredMetrics } from "../schemas/metricsSchema";
 import { postRequestSchema, storedPostSchema, type StoredPost } from "../schemas/postSchema";
+import {
+  scheduleCreateRequestSchema,
+  scheduleStatusSchema,
+  scheduleUpdateRequestSchema,
+} from "../schemas/scheduleSchema";
+import { buildTodayTasks } from "../services/todayService";
 import { localJsonStore } from "../storage/localJsonStore";
 
 const router = Router();
@@ -26,6 +38,7 @@ const BUSINESS_TYPES = [
 const POST_PLATFORMS = ["facebook", "instagram", "tiktok", "other"] as const;
 const POST_MEDIA_TYPES = ["photo", "reel", "story", "text"] as const;
 const METRIC_WINDOWS = ["24h", "48h", "7d"] as const;
+const SCHEDULE_STATUSES = ["planned", "posted", "skipped"] as const;
 
 type GeneratorKind = "promo" | "social" | "events" | "week-plan" | "next-week-plan";
 
@@ -44,6 +57,14 @@ function optionalText(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed === "" ? undefined : trimmed;
+}
+
+function snippet(value: string, maxLength: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxLength - 3)}...`;
 }
 
 function toListInput(value: string[]): string {
@@ -130,6 +151,8 @@ function renderLayout(
       <div class="nav">
         <a class="button secondary small" href="/admin">Home</a>
         <a class="button secondary small" href="/admin/brands">Brands</a>
+        <a class="button secondary small" href="/admin/schedule">Schedule</a>
+        <a class="button secondary small" href="/admin/today">Today</a>
       </div>
       ${noticeHtml}
       ${content}
@@ -264,6 +287,29 @@ function formatDateTime(value: string): string {
     return value;
   }
   return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+}
+
+function formatDateTimeLocalInput(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function parseLocalDateTimeToIso(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("Invalid date-time value");
+  }
+  return parsed.toISOString();
 }
 
 function parseBrandForm(body: Record<string, unknown>): BrandProfile {
@@ -627,6 +673,8 @@ router.get("/", async (req, res, next) => {
       <div class="row" style="margin-top: 10px;">
         <a class="button secondary" href="/admin/posts?brandId=${encodeURIComponent(selectedBrandId)}">Posting Log</a>
         <a class="button secondary" href="/admin/metrics?brandId=${encodeURIComponent(selectedBrandId)}">Metrics Log</a>
+        <a class="button secondary" href="/admin/schedule?brandId=${encodeURIComponent(selectedBrandId)}">Schedule</a>
+        <a class="button secondary" href="/admin/today?brandId=${encodeURIComponent(selectedBrandId)}">Today's Checklist</a>
       </div>`
         : `<p class="muted">Create a brand to unlock generation and tracking.</p>`;
 
@@ -1159,6 +1207,295 @@ router.post("/metrics", async (req, res, next) => {
     });
 
     return res.redirect(`/admin/metrics?brandId=${encodeURIComponent(brandId)}&saved=1`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/schedule", async (req, res, next) => {
+  try {
+    const brands = await listBrands();
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+    const status = optionalText(req.query.status);
+
+    const nowPlusOneHour = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    let rows = `<tr><td colspan="8" class="muted">Select a business to view schedule items.</td></tr>`;
+
+    if (selectedBrandId) {
+      const items = await listScheduleItems(selectedBrandId);
+      rows =
+        items.length > 0
+          ? items
+              .map((item) => {
+                const statusOptions = SCHEDULE_STATUSES.map((entry) => {
+                  const selected = item.status === entry ? "selected" : "";
+                  return `<option value="${entry}" ${selected}>${entry}</option>`;
+                }).join("");
+
+                return `<tr>
+                  <td><code>${escapeHtml(item.id)}</code></td>
+                  <td>${escapeHtml(item.title)}</td>
+                  <td>${escapeHtml(item.platform)}</td>
+                  <td>${escapeHtml(formatDateTime(item.scheduledFor))}</td>
+                  <td>${escapeHtml(snippet(item.caption, 80))}</td>
+                  <td>${escapeHtml(snippet(item.assetNotes || "-", 60))}</td>
+                  <td>${escapeHtml(item.status)}</td>
+                  <td>
+                    <form method="POST" action="/admin/schedule/${encodeURIComponent(item.id)}/update?brandId=${encodeURIComponent(
+                      selectedBrandId,
+                    )}">
+                      <select name="status">${statusOptions}</select>
+                      <button type="submit" class="button small secondary">Update</button>
+                    </form>
+                    <form style="margin-top:6px;" method="POST" action="/admin/schedule/${encodeURIComponent(
+                      item.id,
+                    )}/delete?brandId=${encodeURIComponent(selectedBrandId)}">
+                      <button type="submit" class="button small secondary">Delete</button>
+                    </form>
+                  </td>
+                </tr>`;
+              })
+              .join("")
+          : `<tr><td colspan="8" class="muted">No schedule items yet.</td></tr>`;
+    }
+
+    const notice =
+      status === "created"
+        ? { type: "success" as const, text: "Schedule item created." }
+        : status === "updated"
+          ? { type: "success" as const, text: "Schedule item updated." }
+          : status === "deleted"
+            ? { type: "success" as const, text: "Schedule item deleted." }
+            : undefined;
+
+    const html = renderLayout(
+      "Schedule",
+      `
+      <div class="card">
+        <h1>Schedule</h1>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/schedule")}
+        ${
+          selectedBrandId
+            ? `<div class="row" style="margin-top:10px;">
+                <a class="button secondary small" href="/schedule.ics?brandId=${encodeURIComponent(
+                  selectedBrandId,
+                )}">Export Calendar (.ics)</a>
+                <a class="button secondary small" href="/admin/today?brandId=${encodeURIComponent(
+                  selectedBrandId,
+                )}">View Today's Checklist</a>
+              </div>`
+            : ""
+        }
+      </div>
+
+      <div class="card">
+        <h2>Add Scheduled Post</h2>
+        ${
+          selectedBrandId
+            ? `
+          <form method="POST" action="/admin/schedule?brandId=${encodeURIComponent(selectedBrandId)}">
+            <div class="grid">
+              <div class="field"><label>Title</label><input name="title" required /></div>
+              <div class="field"><label>Platform</label><select name="platform">${POST_PLATFORMS.map(
+                (platform) => `<option>${platform}</option>`,
+              ).join("")}</select></div>
+              <div class="field"><label>Scheduled For</label><input type="datetime-local" name="scheduledFor" value="${escapeHtml(
+                formatDateTimeLocalInput(nowPlusOneHour),
+              )}" required /></div>
+              <div class="field"><label>Status</label><select name="status">${SCHEDULE_STATUSES.map(
+                (entry) => `<option ${entry === "planned" ? "selected" : ""}>${entry}</option>`,
+              ).join("")}</select></div>
+            </div>
+            <div class="field"><label>Caption</label><textarea name="caption" required></textarea></div>
+            <div class="field"><label>Asset Notes</label><textarea name="assetNotes"></textarea></div>
+            <button type="submit">Save Schedule Item</button>
+          </form>
+          `
+            : `<p>Create/select a brand first.</p>`
+        }
+      </div>
+
+      <div class="card">
+        <h2>Scheduled Items</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th><th>Title</th><th>Platform</th><th>Scheduled</th><th>Caption</th><th>Asset Notes</th><th>Status</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      `,
+      notice,
+    );
+
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/schedule", async (req, res, next) => {
+  try {
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Schedule", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const brand = await getBrand(brandId);
+    if (!brand) {
+      return res.status(404).type("html").send(renderLayout("Schedule", "<h1>Brand not found.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsedPayload = scheduleCreateRequestSchema.parse({
+      title: String(body.title ?? ""),
+      platform: String(body.platform ?? ""),
+      scheduledFor: parseLocalDateTimeToIso(body.scheduledFor),
+      caption: String(body.caption ?? ""),
+      assetNotes: String(body.assetNotes ?? ""),
+      status: String(body.status ?? "planned"),
+    });
+
+    await createScheduleItem(brandId, parsedPayload);
+    return res.redirect(`/admin/schedule?brandId=${encodeURIComponent(brandId)}&status=created`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/schedule/:id/update", async (req, res, next) => {
+  try {
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Schedule", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const brand = await getBrand(brandId);
+    if (!brand) {
+      return res.status(404).type("html").send(renderLayout("Schedule", "<h1>Brand not found.</h1>"));
+    }
+
+    const scheduleId = req.params.id?.trim();
+    if (!scheduleId) {
+      return res.status(400).type("html").send(renderLayout("Schedule", "<h1>Missing schedule id.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const updatePayload: Record<string, unknown> = {};
+    if (optionalText(body.title)) {
+      updatePayload.title = String(body.title);
+    }
+    if (optionalText(body.platform)) {
+      updatePayload.platform = String(body.platform);
+    }
+    if (optionalText(body.scheduledFor)) {
+      updatePayload.scheduledFor = parseLocalDateTimeToIso(body.scheduledFor);
+    }
+    if (optionalText(body.caption)) {
+      updatePayload.caption = String(body.caption);
+    }
+    if (typeof body.assetNotes === "string") {
+      updatePayload.assetNotes = body.assetNotes;
+    }
+    if (optionalText(body.status)) {
+      updatePayload.status = scheduleStatusSchema.parse(String(body.status));
+    }
+
+    const parsedPayload = scheduleUpdateRequestSchema.parse(updatePayload);
+
+    const updated = await updateScheduleItem(brandId, scheduleId, parsedPayload);
+    if (!updated) {
+      return res.status(404).type("html").send(renderLayout("Schedule", "<h1>Schedule item not found.</h1>"));
+    }
+
+    return res.redirect(`/admin/schedule?brandId=${encodeURIComponent(brandId)}&status=updated`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/schedule/:id/delete", async (req, res, next) => {
+  try {
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("Schedule", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const brand = await getBrand(brandId);
+    if (!brand) {
+      return res.status(404).type("html").send(renderLayout("Schedule", "<h1>Brand not found.</h1>"));
+    }
+
+    const scheduleId = req.params.id?.trim();
+    if (!scheduleId) {
+      return res.status(400).type("html").send(renderLayout("Schedule", "<h1>Missing schedule id.</h1>"));
+    }
+
+    await deleteScheduleItem(brandId, scheduleId);
+    return res.redirect(`/admin/schedule?brandId=${encodeURIComponent(brandId)}&status=deleted`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/today", async (req, res, next) => {
+  try {
+    const brands = await listBrands();
+    const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
+
+    let tasksHtml = `<p class="muted">Select a business to view today's checklist.</p>`;
+    let dateLabel = "";
+    if (selectedBrandId) {
+      const payload = await buildTodayTasks(selectedBrandId);
+      dateLabel = payload.date;
+      tasksHtml =
+        payload.tasks.length > 0
+          ? `<ul style="list-style:none; padding-left:0;">${payload.tasks
+              .map(
+                (task) => `<li style="margin-bottom:10px;">
+                  <label style="display:flex;gap:10px;align-items:flex-start;">
+                    <input type="checkbox" />
+                    <span>
+                      <strong>${escapeHtml(task.type.toUpperCase())}:</strong> ${escapeHtml(task.title)}
+                      <div class="muted">${escapeHtml(task.notes)}</div>
+                    </span>
+                  </label>
+                </li>`,
+              )
+              .join("")}</ul>`
+          : `<p class="muted">No tasks generated for today.</p>`;
+    }
+
+    const html = renderLayout(
+      "Today's Checklist",
+      `
+      <div class="card">
+        <h1>Today's Checklist</h1>
+        ${renderBrandSelector(brands, selectedBrandId, "/admin/today")}
+        ${
+          selectedBrandId
+            ? `<div class="muted" style="margin-top:8px;">Date: ${escapeHtml(dateLabel)}</div>
+               <div class="row" style="margin-top:10px;">
+                 <a class="button secondary small" href="/admin/schedule?brandId=${encodeURIComponent(
+                   selectedBrandId,
+                 )}">Open Schedule</a>
+                 <a class="button secondary small" href="/schedule.ics?brandId=${encodeURIComponent(
+                   selectedBrandId,
+                 )}">Export Calendar (.ics)</a>
+               </div>`
+            : ""
+        }
+      </div>
+
+      <div class="card">
+        ${tasksHtml}
+      </div>
+      `,
+    );
+
+    return res.type("html").send(html);
   } catch (error) {
     return next(error);
   }

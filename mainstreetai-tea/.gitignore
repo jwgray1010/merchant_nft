@@ -4,8 +4,10 @@ dist/
 data/history/**/*
 data/posts/**/*
 data/metrics/**/*
+data/schedule/**/*
 data/insights/*.json
 !data/history/.gitkeep
 !data/posts/.gitkeep
 !data/metrics/.gitkeep
+!data/schedule/.gitkeep
 !data/insights/.gitkeep

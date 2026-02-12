@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 4)
+# MainStreetAI Platform API (Phase 5)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -21,10 +21,16 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
 - Admin UI:
   - `/admin` home
   - `/admin/brands` manager
+  - `/admin/schedule` scheduler
+  - `/admin/today` daily checklist
   - generator pages with copy/paste snippets
   - post + metrics logging forms
 - Printable in-store signs:
   - `/sign.pdf?brandId=<brandId>&historyId=<historyId>`
+- Scheduling + reminders:
+  - `/schedule` CRUD
+  - `/schedule.ics` calendar export
+  - `/today` automated daily task list
 
 All OpenAI calls are centralized in:
 - `src/ai/openaiClient.ts`
@@ -66,6 +72,7 @@ data/
   history/   # auto-saved generation outputs per brand
   posts/     # what was actually posted
   metrics/   # manual performance entries
+  schedule/  # planned posting reminders
   insights/  # cached insights summaries
 ```
 
@@ -208,6 +215,55 @@ curl "http://localhost:3001/insights?brandId=main-street-nutrition"
 curl -X POST "http://localhost:3001/insights/refresh?brandId=main-street-nutrition"
 ```
 
+## Scheduling + reminders
+
+### Create a schedule item
+
+```bash
+curl -X POST "http://localhost:3001/schedule?brandId=main-street-nutrition" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title":"After-school promo reel",
+    "platform":"instagram",
+    "scheduledFor":"2026-02-13T20:00:00Z",
+    "caption":"After-school pick-me-up is ready!",
+    "assetNotes":"Use bar-top b-roll + logo outro",
+    "status":"planned"
+  }'
+```
+
+### List schedule items
+
+```bash
+curl "http://localhost:3001/schedule?brandId=main-street-nutrition&from=2026-02-12&to=2026-02-20"
+```
+
+### Update a schedule item
+
+```bash
+curl -X PUT "http://localhost:3001/schedule/<scheduleId>?brandId=main-street-nutrition" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"posted"}'
+```
+
+### Delete a schedule item
+
+```bash
+curl -X DELETE "http://localhost:3001/schedule/<scheduleId>?brandId=main-street-nutrition"
+```
+
+### Export .ics calendar reminders
+
+```bash
+curl -L "http://localhost:3001/schedule.ics?brandId=main-street-nutrition&from=2026-02-12&to=2026-02-20" --output reminders.ics
+```
+
+### Get today's automated to-do list
+
+```bash
+curl "http://localhost:3001/today?brandId=main-street-nutrition"
+```
+
 ### List generation history
 
 ```bash
@@ -240,8 +296,10 @@ From admin you can:
 - copy caption/hook/SMS/sign text quickly
 - log posted content and metrics via forms
 - print sign PDFs
+- manage schedule items and export calendar reminders
+- view today's checklist
 
-## Phase 3 + 4 Workflow
+## Phase 3 + 4 + 5 Workflow
 
 1. Generate promo/social/week-plan content.
 2. Log what actually got posted using `POST /posts`.
@@ -249,6 +307,8 @@ From admin you can:
 4. Review recommendations via `GET /insights`.
 5. Generate an improved weekly plan using `POST /next-week-plan`.
 6. Use `/admin` for day-to-day owner operations without Postman/curl.
+7. Plan upcoming posts in `/admin/schedule` and export reminders via `.ics`.
+8. Check `/admin/today` each morning for a practical to-do list.
 
 ## Notes
 
