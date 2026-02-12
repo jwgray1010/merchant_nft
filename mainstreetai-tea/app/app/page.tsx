@@ -1,13 +1,21 @@
 import { Camera, Clock, MapPin, Sparkles, TrendingUp } from "lucide-react";
 import { Card } from "../../components/ui/Card";
+import { NeighborhoodChip } from "../../components/ui/Chip";
 import { PrimaryButton } from "../../components/ui/PrimaryButton";
+import { RouteCard } from "../../components/ui/RouteCard";
 import { SectionTitle } from "../../components/ui/SectionTitle";
+import { StreetDivider } from "../../components/ui/StreetDivider";
 import { COLORS } from "../../styles/localPremiumTokens";
 
 export default function PremiumLocalHomePage() {
   return (
     <main className="space-y-6">
       <Card>
+        <div className="flex flex-wrap gap-2" style={{ marginBottom: 10 }}>
+          <NeighborhoodChip>Town Pulse: Active</NeighborhoodChip>
+          <NeighborhoodChip>After Work</NeighborhoodChip>
+          <NeighborhoodChip>School Week</NeighborhoodChip>
+        </div>
         <SectionTitle>Good to see you</SectionTitle>
         <h1 className="text-xl font-semibold tracking-tight" style={{ marginTop: 8, color: COLORS.text }}>
           Ready for your daily local move?
@@ -23,6 +31,11 @@ export default function PremiumLocalHomePage() {
           Make Me Money Today
         </span>
       </PrimaryButton>
+      <p className="text-base leading-relaxed" style={{ color: COLORS.subtext }}>
+        Made for local owners. Built for real life.
+      </p>
+
+      <StreetDivider />
 
       <section className="grid grid-cols-2 gap-3">
         <Card>
@@ -62,7 +75,7 @@ export default function PremiumLocalHomePage() {
           <a className="block text-[#111827] no-underline" href="/app/insights">
             <TrendingUp size={16} strokeWidth={1.5} color={COLORS.subtext} />
             <h2 className="text-base font-semibold tracking-tight" style={{ marginTop: 10 }}>
-              Insights
+              What worked lately
             </h2>
             <p className="text-base leading-relaxed" style={{ marginTop: 6, color: COLORS.subtext }}>
               See what to repeat.
@@ -70,6 +83,9 @@ export default function PremiumLocalHomePage() {
           </a>
         </Card>
       </section>
+
+      <StreetDivider />
+      <RouteCard steps={["Coffee", "Recharge", "Errands"]} line="A simple itinerary style flow, not analytics." />
     </main>
   );
 }

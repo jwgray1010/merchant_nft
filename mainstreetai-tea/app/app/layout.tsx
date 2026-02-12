@@ -30,7 +30,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           </a>
           <a className="text-xs flex flex-col items-center gap-1 transition-all duration-150 ease-out hover:opacity-95 active:scale-[0.98]" style={{ color: COLORS.subtext }} href="/app/insights">
             <TrendingUp size={16} strokeWidth={1.5} color={COLORS.subtext} />
-            Insights
+            Lately
           </a>
         </div>
       </nav>

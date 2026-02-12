@@ -351,7 +351,7 @@ function renderBottomNav(context: EasyContext, active: "home" | "create" | "anal
   const baseEntries = [
     { key: "home", icon: "✦", href: withSelection("/app", context), label: "Home" },
     { key: "create", icon: "📷", href: withSelection("/app/create", context), label: "Create" },
-    { key: "analyze", icon: "📈", href: withSelection("/app/analyze", context), label: "Insights" },
+    { key: "analyze", icon: "📈", href: withSelection("/app/analyze", context), label: "What worked" },
     { key: "schedule", icon: "🕒", href: withSelection("/app/schedule", context), label: "Schedule" },
     { key: "settings", icon: "📍", href: withSelection("/app/settings", context), label: "Settings" },
   ] as const;
@@ -488,6 +488,10 @@ function easyLayout(input: {
         color: var(--subtext);
         margin: 0 0 8px 0;
       }
+      .street-divider {
+        border-top: 1px dashed var(--border);
+        margin: 4px 0;
+      }
       .grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .action-grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .action-card {
@@ -560,6 +564,23 @@ function easyLayout(input: {
         box-shadow: 0 1px 2px rgba(0,0,0,0.03);
       }
       .divider { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+      .route-path {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.44rem;
+        flex-wrap: wrap;
+        font-size: 0.9rem;
+        color: var(--text);
+      }
+      .route-step {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.18rem 0.52rem;
+        border-radius: 999px;
+        background: #f6f8fb;
+        border: 1px solid #edf0f4;
+      }
+      .route-dot { color: var(--subtext); }
       .button-stack { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
       .button-stack .primary-button,
       .button-stack .secondary-button {
@@ -638,6 +659,55 @@ function easyLayout(input: {
         transition: all 150ms ease-out;
       }
       .town-pulse-badge:hover { opacity: 0.95; }
+      .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+      .neighborhood-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.26rem 0.72rem;
+        border-radius: 999px;
+        background: var(--highlight);
+        color: var(--primary);
+        border: 1px solid #dbe8f7;
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+      .result-action-bar {
+        position: sticky;
+        bottom: 70px;
+        z-index: 32;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        background: rgba(247, 247, 245, 0.95);
+        border: 1px solid var(--border);
+        border-radius: 0.85rem;
+        padding: 8px;
+        backdrop-filter: blur(3px);
+        margin-top: 12px;
+      }
+      .touch-target { min-height: 44px; }
+      .skeleton-wrap { display: grid; gap: 10px; }
+      .skeleton-card {
+        border: 1px solid var(--border);
+        border-radius: 1rem;
+        padding: 14px;
+        background: var(--card);
+      }
+      .skeleton-line {
+        height: 12px;
+        border-radius: 8px;
+        margin: 8px 0;
+        background: linear-gradient(90deg, #eceff3 25%, #f5f7fa 50%, #eceff3 75%);
+        background-size: 200% 100%;
+        animation: shimmer 1.4s linear infinite;
+      }
+      .skeleton-line.short { width: 48%; }
+      .skeleton-line.med { width: 72%; }
+      .skeleton-line.long { width: 96%; }
+      @keyframes shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+      }
       .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       @media (max-width: 420px) {
         .action-grid { grid-template-columns: 1fr; }
@@ -646,6 +716,7 @@ function easyLayout(input: {
         .grid { grid-template-columns: 1fr; }
         .selector-grid { grid-template-columns: 1fr; }
         .two-col { grid-template-columns: 1fr; }
+        .result-action-bar { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -728,6 +799,38 @@ function cardLink(href: string, emoji: string, title: string, subtitle: string):
     <strong style="display:block;">${escapeHtml(title)}</strong>
     <p class="muted" style="margin-top:8px;">${escapeHtml(subtitle)}</p>
   </a>`;
+}
+
+function seasonTagLabel(tag: string): string {
+  if (tag === "holiday") return "Holiday";
+  if (tag === "school") return "School week";
+  if (tag === "football") return "Football season";
+  if (tag === "basketball") return "Basketball season";
+  if (tag === "baseball") return "Baseball season";
+  if (tag === "festival") return "Festival week";
+  if (tag === "winter") return "Winter";
+  if (tag === "spring") return "Spring";
+  if (tag === "summer") return "Summer";
+  if (tag === "fall") return "Fall";
+  return "Season";
+}
+
+function routeStepsForWindow(window: string | undefined): [string, string, string] {
+  if (window === "morning") return ["Coffee", "Quick stop", "Errands"];
+  if (window === "lunch") return ["Lunch", "Recharge", "Errands"];
+  if (window === "after_work") return ["Recharge", "Downtown", "Errands"];
+  if (window === "weekend") return ["Browse", "Main Street", "Local stops"];
+  return ["Coffee", "Recharge", "Errands"];
+}
+
+function renderRoutePath(steps: [string, string, string]): string {
+  return `<div class="route-path">
+    <span class="route-step">${escapeHtml(steps[0])}</span>
+    <span class="route-dot">•</span>
+    <span class="route-step">${escapeHtml(steps[1])}</span>
+    <span class="route-dot">•</span>
+    <span class="route-step">${escapeHtml(steps[2])}</span>
+  </div>`;
 }
 
 async function latestTomorrowPack(
@@ -820,8 +923,9 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
     : "";
   const townMicroRouteSection = pack.townMicroRoute
     ? `<article class="result-card">
-        <p class="section-title">Town Route Tip (${escapeHtml(townWindowLabel(pack.townMicroRoute.window))})</p>
+        <p class="section-title">Town Route Tip</p>
         <h2 class="text-lg">${escapeHtml(pack.townMicroRoute.line)}</h2>
+        <div style="margin-top:8px;">${renderRoutePath(routeStepsForWindow(pack.townMicroRoute.window))}</div>
         <div class="divider">
           <p id="daily-town-micro-route-caption" class="output-value">${escapeHtml(pack.townMicroRoute.captionAddOn)}</p>
           <p id="daily-town-micro-route-staff-line" class="output-value">${escapeHtml(pack.townMicroRoute.staffScript)}</p>
@@ -844,58 +948,71 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         <p id="daily-sms" class="output-value">${escapeHtml(pack.optionalSms.message)}</p>
       </article>`
     : "";
+  const nextStepCard = `<article class="result-card">
+      <p class="section-title">Next step</p>
+      <p class="output-value">Post this at <strong>${escapeHtml(pack.post.bestTime)}</strong></p>
+      <p class="output-value">Print the sign</p>
+      <p class="output-value">If it’s slow, tap Rescue</p>
+    </article>`;
+  const cards = [
+    `<article class="result-card">
+      <p class="section-title">Today’s Special</p>
+      <h2 class="text-lg">${escapeHtml(pack.todaySpecial.promoName)}</h2>
+      <p id="daily-special" class="output-value">${escapeHtml(pack.todaySpecial.offer)}<br/>${escapeHtml(
+        pack.todaySpecial.timeWindow,
+      )}</p>
+      <div class="divider">
+        <p class="muted">${escapeHtml(pack.todaySpecial.whyThisWorks)}</p>
+      </div>
+    </article>`,
+    `<article class="result-card">
+      <p class="section-title">Ready-to-post</p>
+      <h2 class="text-lg">${escapeHtml(pack.post.hook)}</h2>
+      <p id="daily-caption" class="output-value">${escapeHtml(pack.post.caption)}<br/>${escapeHtml(
+        pack.post.onScreenText.join(" | "),
+      )}</p>
+      <div class="divider">
+        <p class="muted">Best time: ${escapeHtml(pack.post.bestTime)} · ${escapeHtml(pack.post.platform)}</p>
+      </div>
+    </article>`,
+    `<article class="result-card">
+      <p class="section-title">Store Sign</p>
+      <h2 class="text-lg">${escapeHtml(pack.sign.headline)}</h2>
+      <p id="daily-sign" class="output-value">${escapeHtml(pack.sign.body)}${
+        pack.sign.finePrint ? `<br/><span class="muted">${escapeHtml(pack.sign.finePrint)}</span>` : ""
+      }</p>
+      <div class="divider">
+        <a class="secondary-button" href="${escapeHtml(signUrl)}" id="open-sign-print">Print sign</a>
+      </div>
+    </article>`,
+    smsSection,
+    localBoostSection,
+    townBoostSection,
+    townStorySection,
+    townGraphSection,
+    townMicroRouteSection,
+    townSeasonalSection,
+    nextStepCard,
+  ].filter(Boolean);
+  const stackedCards = cards
+    .map((card, index) => (index === 0 ? card : `<div class="street-divider"></div>${card}`))
+    .join("");
   return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
-    <h3 class="text-xl">Your daily money move</h3>
+    <h3 class="text-xl">Your daily plan</h3>
     <div class="result-stack">
-      <article class="result-card">
-        <p class="section-title">Today’s Special</p>
-        <h2 class="text-lg">${escapeHtml(pack.todaySpecial.promoName)}</h2>
-        <p id="daily-special" class="output-value">${escapeHtml(pack.todaySpecial.offer)}<br/>${escapeHtml(pack.todaySpecial.timeWindow)}</p>
-        <div class="divider">
-          <p class="muted">${escapeHtml(pack.todaySpecial.whyThisWorks)}</p>
-        </div>
-      </article>
-      <article class="result-card">
-        <p class="section-title">Ready-to-Post Caption</p>
-        <h2 class="text-lg">${escapeHtml(pack.post.hook)}</h2>
-        <p id="daily-caption" class="output-value">${escapeHtml(pack.post.caption)}<br/>${escapeHtml(
-          pack.post.onScreenText.join(" | "),
-        )}</p>
-        <div class="divider">
-          <p class="muted">Best time: ${escapeHtml(pack.post.bestTime)} · ${escapeHtml(pack.post.platform)}</p>
-        </div>
-      </article>
-      <article class="result-card">
-        <p class="section-title">In-Store Sign</p>
-        <h2 class="text-lg">${escapeHtml(pack.sign.headline)}</h2>
-        <p id="daily-sign" class="output-value">${escapeHtml(pack.sign.body)}${
-          pack.sign.finePrint ? `<br/><span class="muted">${escapeHtml(pack.sign.finePrint)}</span>` : ""
-        }</p>
-        <div class="divider">
-          <a class="secondary-button" href="${escapeHtml(signUrl)}" id="open-sign-print">Print sign</a>
-        </div>
-      </article>
-      ${smsSection}
-      ${localBoostSection}
-      ${townBoostSection}
-      ${townStorySection}
-      ${townGraphSection}
-      ${townMicroRouteSection}
-      ${townSeasonalSection}
+      ${stackedCards}
     </div>
     <div class="button-stack">
-      <button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>
-      <button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>
       ${
         pack.localBoost
-          ? `<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Caption Add-on</button>
+          ? `<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Add-on</button>
              <button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>`
           : ""
       }
       ${
         pack.townBoost
-          ? `<button class="primary-button" data-copy-target="daily-town-caption-addon">Copy Town Caption Add-on</button>
-             <button class="secondary-button" data-copy-target="daily-town-staff-line">Copy Town Staff Line</button>`
+          ? `<button class="primary-button" data-copy-target="daily-town-caption-addon">Copy Town Add-on</button>
+             <button class="secondary-button" data-copy-target="daily-town-staff-line">Copy Staff Line</button>`
           : ""
       }
       ${
@@ -905,14 +1022,14 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
       }
       ${
         pack.townStory
-          ? `<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Caption</button>
+          ? `<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Story Add-on</button>
              <button class="secondary-button add-town-story-btn" type="button">Add to Today’s Post</button>`
           : ""
       }
       ${
         pack.townGraphBoost
-          ? `<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Caption</button>
-             <button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Next Stop Staff Line</button>`
+          ? `<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Add-on</button>
+             <button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Staff Line</button>`
           : ""
       }
       ${
@@ -924,11 +1041,15 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
       ${
         pack.townSeasonalBoost
           ? `<button class="primary-button" data-copy-target="daily-town-seasonal-caption">Copy Seasonal Add-on</button>
-             <button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Seasonal Staff Line</button>`
+             <button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Staff Line</button>`
           : ""
       }
-      <button class="secondary-button" id="share-daily" type="button">Share…</button>
+      <button class="secondary-button" id="share-daily" type="button">Share</button>
       <a class="secondary-button" id="print-daily-sign" href="${escapeHtml(signUrl)}">Printable Sign</a>
+    </div>
+    <div class="result-action-bar">
+      <button class="primary-button touch-target" data-copy-target="daily-caption">Copy Caption</button>
+      <button class="secondary-button touch-target" data-copy-target="daily-sign">Copy Sign</button>
     </div>
   </section>`;
 }
@@ -986,7 +1107,7 @@ router.get("/", async (req, res, next) => {
       })),
     ];
     const routeWindowSelect = `<details style="margin-top:10px;">
-      <summary class="muted">Advanced: route window (optional)</summary>
+      <summary class="muted">Optional route cues</summary>
       <label class="field-label">Switch route window
         <select id="daily-window">
           ${routeWindowOptions
@@ -1012,28 +1133,39 @@ router.get("/", async (req, res, next) => {
         </select>
       </label>
     </details>`;
+    const activeWindow = routeWindowOverride ?? latest?.output?.townMicroRoute?.window;
+    const activeSeason = seasonOverride ?? latest?.output?.townSeasonalBoost?.seasonTags?.[0];
     const townPulseIndicator = townPulse
-      ? `<a class="town-pulse-badge" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">Town Pulse Active</a>`
-      : `<a class="town-pulse-badge" href="${escapeHtml(withSelection("/app/town/pulse", context))}" style="margin-bottom:8px;">Town Pulse Warming Up</a>`;
+      ? `<a class="town-pulse-badge" href="${escapeHtml(withSelection("/app/town/pulse", context))}">Town Pulse: Active</a>`
+      : `<a class="town-pulse-badge" href="${escapeHtml(withSelection("/app/town/pulse", context))}">Town Pulse: Warming up</a>`;
+    const chipWindow = activeWindow
+      ? `<span class="neighborhood-chip">Window: ${escapeHtml(townWindowLabel(activeWindow))}</span>`
+      : "";
+    const chipSeason = activeSeason
+      ? `<span class="neighborhood-chip">Season: ${escapeHtml(seasonTagLabel(activeSeason))}</span>`
+      : "";
+    const homeChipRow = `<div class="chip-row">${townPulseIndicator}${chipWindow}${chipSeason}</div>`;
 
     const staffView =
       context.role === "member"
-        ? `${townPulseIndicator}<section class="rounded-2xl p-6 shadow-sm bg-white">
+        ? `${homeChipRow}<section class="rounded-2xl p-6 shadow-sm bg-white">
             <p class="section-title">Today</p>
             <h2 class="text-xl">Your daily pack is ready</h2>
             <p class="muted">Copy and post. No extra setup needed.</p>
+            <p class="muted" style="margin-top:8px;">Made for local owners. Built for real life.</p>
           </section>
           ${
             latest
               ? renderDailyPackSection(latest.output, signUrl)
               : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack yet. Ask an owner to tap “Make Me Money Today”.</p></section>`
           }
+          <div class="street-divider"></div>
           <section class="rounded-2xl p-6 shadow-sm bg-white">
             <p class="section-title">Quick actions</p>
             <div class="action-grid">
               ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Right-now timing check")}
               ${cardLink(withSelection("/app/media", context), "📷", "Media", "Improve a photo post")}
-              ${cardLink(withSelection("/app/insights", context), "📈", "Insights", "See what to repeat")}
+              ${cardLink(withSelection("/app/insights", context), "📈", "What worked lately", "See what to repeat")}
               ${cardLink(withSelection("/app/town", context), "📍", "Town", "View local network flow")}
             </div>
           </section>`
@@ -1041,7 +1173,7 @@ router.get("/", async (req, res, next) => {
 
     const ownerView =
       context.role !== "member"
-        ? `${townPulseIndicator}<section class="rounded-2xl p-6 shadow-sm bg-white">
+        ? `${homeChipRow}<section class="rounded-2xl p-6 shadow-sm bg-white">
             <p class="section-title">Daily focus</p>
             <h2 class="text-xl">One clear move for today</h2>
             <p class="muted">No dashboard clutter. Just what to do next.</p>
@@ -1050,19 +1182,22 @@ router.get("/", async (req, res, next) => {
               <textarea id="daily-notes" placeholder="Only if needed: weather, staffing, special event, etc."></textarea>
             </details>
             ${routeWindowSelect}
-            <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">Make Me Money Today</button>
+            <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">✅ Make Me Money Today</button>
             <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">Fix a Slow Day</button>
+            <p class="muted" style="margin-top:10px;">Made for local owners. Built for real life.</p>
             <p id="daily-status" class="muted" style="margin-top:8px;"></p>
           </section>
+          <div class="street-divider"></div>
           <section class="rounded-2xl p-6 shadow-sm bg-white">
             <p class="section-title">Secondary actions</p>
             <div class="action-grid">
               ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Check this moment")}
               ${cardLink(withSelection("/app/media", context), "📷", "Media", "Polish your visual post")}
               ${cardLink(withSelection("/app/town", context), "📍", "Town", "See local network flow")}
-              ${cardLink(withSelection("/app/insights", context), "📈", "Insights", "Repeat what works")}
+              ${cardLink(withSelection("/app/insights", context), "📈", "What worked lately", "Repeat what works")}
             </div>
           </section>
+          <div class="street-divider"></div>
           <section id="rescue-output"></section>
           <section id="daily-pack-wrapper">
             ${
@@ -1103,6 +1238,23 @@ router.get("/", async (req, res, next) => {
               if (value === "lunch") return "Lunch";
               return "Evening";
             }
+            function routeSteps(windowValue) {
+              if (windowValue === "morning") return ["Coffee", "Quick stop", "Errands"];
+              if (windowValue === "lunch") return ["Lunch", "Recharge", "Errands"];
+              if (windowValue === "after_work") return ["Recharge", "Downtown", "Errands"];
+              if (windowValue === "weekend") return ["Browse", "Main Street", "Local stops"];
+              return ["Coffee", "Recharge", "Errands"];
+            }
+            function routePath(steps) {
+              return '<div class="route-path"><span class="route-step">' + esc(steps[0] || "") + '</span><span class="route-dot">•</span><span class="route-step">' + esc(steps[1] || "") + '</span><span class="route-dot">•</span><span class="route-step">' + esc(steps[2] || "") + "</span></div>";
+            }
+            function renderDailySkeleton() {
+              return '<section class="rounded-2xl p-6 shadow-sm bg-white"><div class="skeleton-wrap">' +
+                '<div class="skeleton-card"><div class="skeleton-line short"></div><div class="skeleton-line med"></div><div class="skeleton-line long"></div></div>' +
+                '<div class="skeleton-card"><div class="skeleton-line short"></div><div class="skeleton-line med"></div><div class="skeleton-line long"></div></div>' +
+                '<div class="skeleton-card"><div class="skeleton-line short"></div><div class="skeleton-line med"></div><div class="skeleton-line long"></div></div>' +
+                "</div></section>";
+            }
             function renderDailyPack(pack) {
               const smsSection = pack.optionalSms?.enabled
                 ? '<article class="result-card"><p class="section-title">Optional SMS</p><p id="daily-sms" class="output-value">' + esc(pack.optionalSms.message || "") + '</p></article>'
@@ -1120,45 +1272,53 @@ router.get("/", async (req, res, next) => {
                 ? '<article class="result-card"><p class="section-title">Town Graph Boost</p><h2 class="text-lg">' + esc(pack.townGraphBoost.nextStopIdea || "") + '</h2><div class="divider"><p id="daily-town-graph-caption" class="output-value">' + esc(pack.townGraphBoost.captionAddOn || "") + '</p><p id="daily-town-graph-staff-line" class="output-value">' + esc(pack.townGraphBoost.staffLine || "") + '</p></div></article>'
                 : '';
               const townMicroRouteSection = pack.townMicroRoute
-                ? '<article class="result-card"><p class="section-title">Town Route Tip (' + esc(windowLabel(pack.townMicroRoute.window || "evening")) + ')</p><h2 class="text-lg">' + esc(pack.townMicroRoute.line || "") + '</h2><div class="divider"><p id="daily-town-micro-route-caption" class="output-value">' + esc(pack.townMicroRoute.captionAddOn || "") + '</p><p id="daily-town-micro-route-staff-line" class="output-value">' + esc(pack.townMicroRoute.staffScript || "") + '</p></div></article>'
+                ? '<article class="result-card"><p class="section-title">Town Route Tip</p><h2 class="text-lg">' + esc(pack.townMicroRoute.line || "") + '</h2><div style="margin-top:8px;">' + routePath(routeSteps(pack.townMicroRoute.window || "evening")) + '</div><div class="divider"><p id="daily-town-micro-route-caption" class="output-value">' + esc(pack.townMicroRoute.captionAddOn || "") + '</p><p id="daily-town-micro-route-staff-line" class="output-value">' + esc(pack.townMicroRoute.staffScript || "") + '</p></div></article>'
                 : '';
               const townSeasonalSection = pack.townSeasonalBoost
                 ? '<article class="result-card"><p class="section-title">Town Seasonal Boost (' + esc((pack.townSeasonalBoost.seasonTags || []).join(", ")) + ')</p><h2 class="text-lg">' + esc(pack.townSeasonalBoost.line || "") + '</h2><div class="divider"><p id="daily-town-seasonal-caption" class="output-value">' + esc(pack.townSeasonalBoost.captionAddOn || "") + '</p><p id="daily-town-seasonal-staff-line" class="output-value">' + esc(pack.townSeasonalBoost.staffScript || "") + '</p></div></article>'
                 : '';
+              const nextStepSection = '<article class="result-card"><p class="section-title">Next step</p><p class="output-value">Post this at <strong>' + esc(pack.post?.bestTime || "") + '</strong></p><p class="output-value">Print the sign</p><p class="output-value">If it\\'s slow, tap Rescue</p></article>';
+              const cards = [
+                '<article class="result-card"><p class="section-title">Today\\'s Special</p><h2 class="text-lg">' + esc(pack.todaySpecial?.promoName || "") + '</h2><p id="daily-special" class="output-value">' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><div class="divider"><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></div></article>',
+                '<article class="result-card"><p class="section-title">Ready-to-post</p><h2 class="text-lg">' + esc(pack.post?.hook || "") + '</h2><p id="daily-caption" class="output-value">' + esc(pack.post?.caption || "") + '<br/>' + esc((pack.post?.onScreenText || []).join(" | ")) + '</p><div class="divider"><p class="muted">Best time: ' + esc(pack.post?.bestTime || "") + ' · ' + esc(pack.post?.platform || "") + '</p></div></article>',
+                '<article class="result-card"><p class="section-title">Store Sign</p><h2 class="text-lg">' + esc(pack.sign?.headline || "") + '</h2><p id="daily-sign" class="output-value">' + esc(pack.sign?.body || "") + (pack.sign?.finePrint ? '<br/><span class="muted">' + esc(pack.sign.finePrint) + '</span>' : '') + '</p><div class="divider"><a class="secondary-button" id="open-sign-print" href="' + esc(signUrl) + '">Print sign</a></div></article>',
+                smsSection,
+                localBoostSection,
+                townBoostSection,
+                townStorySection,
+                townGraphSection,
+                townMicroRouteSection,
+                townSeasonalSection,
+                nextStepSection,
+              ].filter(Boolean);
+              const stackedCards = cards.map((card, index) => (index === 0 ? card : '<div class="street-divider"></div>' + card)).join("");
               return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
-                '<h3 class="text-xl">Your daily money move</h3>' +
-                '<div class="result-stack">' +
-                '<article class="result-card"><p class="section-title">Today\\'s Special</p><h2 class="text-lg">' + esc(pack.todaySpecial?.promoName || "") + '</h2><p id="daily-special" class="output-value">' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><div class="divider"><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></div></article>' +
-                '<article class="result-card"><p class="section-title">Ready-to-Post Caption</p><h2 class="text-lg">' + esc(pack.post?.hook || "") + '</h2><p id="daily-caption" class="output-value">' + esc(pack.post?.caption || "") + '<br/>' + esc((pack.post?.onScreenText || []).join(" | ")) + '</p><div class="divider"><p class="muted">Best time: ' + esc(pack.post?.bestTime || "") + ' · ' + esc(pack.post?.platform || "") + '</p></div></article>' +
-                '<article class="result-card"><p class="section-title">In-Store Sign</p><h2 class="text-lg">' + esc(pack.sign?.headline || "") + '</h2><p id="daily-sign" class="output-value">' + esc(pack.sign?.body || "") + (pack.sign?.finePrint ? '<br/><span class="muted">' + esc(pack.sign.finePrint) + '</span>' : '') + '</p><div class="divider"><a class="secondary-button" id="open-sign-print" href="' + esc(signUrl) + '">Print sign</a></div></article>' +
-                smsSection +
-                localBoostSection +
-                townBoostSection +
-                townStorySection +
-                townGraphSection +
-                townMicroRouteSection +
-                townSeasonalSection +
-                '</div>' +
+                '<h3 class="text-xl">Your daily plan</h3>' +
+                '<div class="result-stack">' + stackedCards + '</div>' +
                 '<div class="button-stack">' +
-                '<button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>' +
-                '<button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>' +
-                (pack.localBoost ? '<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Caption Add-on</button><button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>' : '') +
-                (pack.townBoost ? '<button class="primary-button" data-copy-target="daily-town-caption-addon">Copy Town Caption Add-on</button><button class="secondary-button" data-copy-target="daily-town-staff-line">Copy Town Staff Line</button>' : '') +
+                (pack.localBoost ? '<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Add-on</button><button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>' : '') +
+                (pack.townBoost ? '<button class="primary-button" data-copy-target="daily-town-caption-addon">Copy Town Add-on</button><button class="secondary-button" data-copy-target="daily-town-staff-line">Copy Staff Line</button>' : '') +
                 (pack.optionalSms?.enabled ? '<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>' : '') +
-                (pack.townStory ? '<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Caption</button><button class="secondary-button add-town-story-btn" type="button">Add to Today\\'s Post</button>' : '') +
-                (pack.townGraphBoost ? '<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Caption</button><button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Next Stop Staff Line</button>' : '') +
+                (pack.townStory ? '<button class="primary-button" data-copy-target="daily-town-story-caption">Copy Story Add-on</button><button class="secondary-button add-town-story-btn" type="button">Add to Today\\'s Post</button>' : '') +
+                (pack.townGraphBoost ? '<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Add-on</button><button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Staff Line</button>' : '') +
                 (pack.townMicroRoute ? '<button class="primary-button" data-copy-target="daily-town-micro-route-caption">Copy Route Add-on</button><button class="secondary-button" data-copy-target="daily-town-micro-route-staff-line">Copy Route Staff Line</button>' : '') +
-                (pack.townSeasonalBoost ? '<button class="primary-button" data-copy-target="daily-town-seasonal-caption">Copy Seasonal Add-on</button><button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Seasonal Staff Line</button>' : '') +
-                '<button class="secondary-button" id="share-daily" type="button">Share…</button>' +
+                (pack.townSeasonalBoost ? '<button class="primary-button" data-copy-target="daily-town-seasonal-caption">Copy Seasonal Add-on</button><button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Staff Line</button>' : '') +
+                '<button class="secondary-button" id="share-daily" type="button">Share</button>' +
                 '<a class="secondary-button" id="print-daily-sign" href="' + esc(signUrl) + '">Printable Sign</a>' +
+                '</div>' +
+                '<div class="result-action-bar">' +
+                '<button class="primary-button touch-target" data-copy-target="daily-caption">Copy Caption</button>' +
+                '<button class="secondary-button touch-target" data-copy-target="daily-sign">Copy Sign</button>' +
                 '</div></section>';
             }
             async function runDailyPack() {
               const status = document.getElementById("daily-status");
-              if (status) status.textContent = "Building your daily pack...";
+              if (status) status.textContent = "Making today\\'s plan...";
               const notes = document.getElementById("daily-notes")?.value || "";
               const selectedWindow = document.getElementById("daily-window")?.value || "";
               const selectedSeason = document.getElementById("daily-season")?.value || "";
+              const wrapper = document.getElementById("daily-pack-wrapper");
+              if (wrapper) wrapper.innerHTML = renderDailySkeleton();
               const endpointUrl = new URL(dailyEndpoint, window.location.origin);
               if (selectedWindow) {
                 endpointUrl.searchParams.set("window", selectedWindow);
@@ -1177,12 +1337,11 @@ router.get("/", async (req, res, next) => {
               });
               const json = await response.json().catch(() => ({}));
               if (!response.ok) {
-                if (status) status.textContent = json.error || "Could not create daily pack.";
+                if (status) status.textContent = json.error || "Could not make today\\'s plan.";
                 return;
               }
-              const wrapper = document.getElementById("daily-pack-wrapper");
               if (wrapper) wrapper.innerHTML = renderDailyPack(json);
-              if (status) status.textContent = "Done. Copy and post.";
+              if (status) status.textContent = "Ready-to-post.";
               window.__setupCopyButtons?.();
               const shareButton = document.getElementById("share-daily");
               shareButton?.addEventListener("click", async () => {
@@ -1208,7 +1367,7 @@ router.get("/", async (req, res, next) => {
             }
             async function runRescuePack() {
               const status = document.getElementById("daily-status");
-              if (status) status.textContent = "Building rescue plan...";
+              if (status) status.textContent = "Building a quick rescue...";
               const notes = document.getElementById("daily-notes")?.value || "";
               const response = await fetch(rescueEndpoint, {
                 method: "POST",
@@ -1217,7 +1376,7 @@ router.get("/", async (req, res, next) => {
               });
               const json = await response.json().catch(() => ({}));
               if (!response.ok) {
-                if (status) status.textContent = json.error || "Could not create rescue plan.";
+                if (status) status.textContent = json.error || "Could not build a rescue plan.";
                 return;
               }
               const target = document.getElementById("rescue-output");
@@ -1308,12 +1467,12 @@ router.get("/create", async (req, res, next) => {
       return;
     }
     const body = `<div class="rounded-2xl p-6 shadow-sm bg-white">
-        <h2 class="text-xl">Create</h2>
-        <p class="muted">Pick one thing to make now.</p>
+        <h2 class="text-xl">Get a quick win</h2>
+        <p class="muted">Pick one thing to make today.</p>
       </div>
       <div class="grid">
-        ${cardLink(withSelection("/app/promo", context), "🟢", "Make Today’s Special", "Promo + sign + caption + SMS")}
-        ${cardLink(withSelection("/app/social", context), "🎥", "Create Social Post", "Hooks, caption, reel text")}
+        ${cardLink(withSelection("/app/promo", context), "🟢", "Make today’s plan", "Special + sign + ready-to-post copy")}
+        ${cardLink(withSelection("/app/social", context), "🎥", "Ready-to-post", "Hooks, caption, and reel text")}
         ${cardLink(withSelection("/app/post-now", context), "⚡", "Should I Post Right Now?", "Real-time timing coach")}
       </div>`;
     return res
@@ -1339,18 +1498,18 @@ router.get("/analyze", async (req, res, next) => {
       return;
     }
     const body = `<div class="rounded-2xl p-6 shadow-sm bg-white">
-        <h2 class="text-xl">Analyze</h2>
-        <p class="muted">Improve today’s post quality and timing.</p>
+        <h2 class="text-xl">What worked lately</h2>
+        <p class="muted">Simple checks to improve today’s post.</p>
       </div>
       <div class="grid">
         ${cardLink(withSelection("/app/media", context), "📸", "Make This Photo Better", "Get caption + on-screen text")}
-        ${cardLink(withSelection("/app/insights", context), "📊", "Performance Insights", "Learn what to repeat next")}
+        ${cardLink(withSelection("/app/insights", context), "📊", "What worked lately", "Learn what to repeat next")}
       </div>`;
     return res
       .type("html")
       .send(
         easyLayout({
-          title: "Analyze",
+          title: "What worked lately",
           context,
           active: "analyze",
           currentPath: "/app/analyze",
@@ -1795,6 +1954,12 @@ router.get("/media", async (req, res, next) => {
         <button class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="submit">Make This Post Better</button>
       </form>
     </section>
+    <section id="media-loading" class="rounded-2xl p-6 shadow-sm bg-white" style="display:none;">
+      <div class="skeleton-wrap">
+        <div class="skeleton-card"><div class="skeleton-line short"></div><div class="skeleton-line med"></div><div class="skeleton-line long"></div></div>
+        <div class="skeleton-card"><div class="skeleton-line short"></div><div class="skeleton-line med"></div><div class="skeleton-line long"></div></div>
+      </div>
+    </section>
     <section id="media-output" class="rounded-2xl p-6 shadow-sm bg-white" style="display:none;">
       <div class="output-card"><p class="output-label">On-screen text</p><p id="media-onscreen" class="output-value"></p><button class="copy-button" data-copy-target="media-onscreen">Copy</button></div>
       <div class="output-card"><p class="output-label">Caption rewrite</p><p id="media-caption" class="output-value"></p><button class="copy-button" data-copy-target="media-caption">Copy</button></div>
@@ -1836,6 +2001,7 @@ router.get("/media", async (req, res, next) => {
 
       const form = document.getElementById("media-form");
       const output = document.getElementById("media-output");
+      const loading = document.getElementById("media-loading");
       form?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const imageUrl = (document.getElementById("media-url")?.value || "").trim();
@@ -1843,6 +2009,8 @@ router.get("/media", async (req, res, next) => {
           alert("Please upload or paste an image URL first.");
           return;
         }
+        if (loading) loading.style.display = "block";
+        if (output) output.style.display = "none";
         const payload = {
           imageUrl,
           platform: document.getElementById("media-platform")?.value || "instagram",
@@ -1856,9 +2024,11 @@ router.get("/media", async (req, res, next) => {
         });
         const json = await response.json().catch(() => ({}));
         if (!response.ok) {
+          if (loading) loading.style.display = "none";
           alert(json.error || "Could not analyze image.");
           return;
         }
+        if (loading) loading.style.display = "none";
         document.getElementById("media-onscreen").textContent = (json.analysis?.onScreenTextOptions || []).join(" | ");
         document.getElementById("media-caption").textContent = json.analysis?.captionRewrite || "";
         const tips = []
@@ -1958,9 +2128,9 @@ router.get("/insights", async (req, res, next) => {
     }
     const endpoint = withSelection("/api/insights", context);
     const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
-      <h2 class="text-xl">Insights</h2>
+      <h2 class="text-xl">What worked lately</h2>
       <p class="muted">Simple summary of what worked.</p>
-      <button id="load-insights" class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="button">Load Insights</button>
+      <button id="load-insights" class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="button">See what worked lately</button>
       <p id="insights-status" class="muted" style="margin-top:8px;"></p>
     </section>
     <section id="insights-output" class="rounded-2xl p-6 shadow-sm bg-white" style="display:none;">
@@ -1973,11 +2143,11 @@ router.get("/insights", async (req, res, next) => {
       const status = document.getElementById("insights-status");
       const output = document.getElementById("insights-output");
       button?.addEventListener("click", async () => {
-        status.textContent = "Loading insights...";
+        status.textContent = "Loading what worked lately...";
         const response = await fetch(${JSON.stringify(endpoint)});
         const json = await response.json().catch(() => ({}));
         if (!response.ok) {
-          status.textContent = json.error || "Could not load insights.";
+          status.textContent = json.error || "Could not load this summary.";
           return;
         }
         status.textContent = "Updated.";
@@ -1992,7 +2162,7 @@ router.get("/insights", async (req, res, next) => {
       .type("html")
       .send(
         easyLayout({
-          title: "Insights",
+          title: "What worked lately",
           context,
           active: "analyze",
           currentPath: "/app/insights",
