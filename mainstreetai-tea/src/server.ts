@@ -49,6 +49,7 @@ import smsRouter from "./routes/sms";
 import socialRouter from "./routes/social";
 import teamRouter from "./routes/team";
 import tenantRouter from "./routes/tenant";
+import townRouter from "./routes/town";
 import timingRouter from "./routes/timing";
 import todayRouter from "./routes/today";
 import voiceRouter from "./routes/voice";
@@ -97,6 +98,7 @@ app.use("/sign.pdf", verifyAuth, resolveBrandAccessFromQuery(), signRouter);
 app.use("/daily", verifyAuth, resolveBrandAccessFromQuery(), dailyRouter);
 app.use("/rescue", verifyAuth, resolveBrandAccessFromQuery(), rescueRouter);
 app.use("/local-collab", verifyAuth, resolveBrandAccessFromQuery(), localCollabRouter);
+app.use("/town", verifyAuth, townRouter);
 app.use(
   "/promo",
   verifyAuth,
@@ -155,6 +157,7 @@ app.use("/api/post-now", verifyAuth, resolveBrandAccessFromQuery(), postNowRoute
 app.use("/api/daily", verifyAuth, resolveBrandAccessFromQuery(), dailyRouter);
 app.use("/api/rescue", verifyAuth, resolveBrandAccessFromQuery(), rescueRouter);
 app.use("/api/local-collab", verifyAuth, resolveBrandAccessFromQuery(), localCollabRouter);
+app.use("/api/town", verifyAuth, townRouter);
 app.use("/api/tenant", verifyAuth, tenantRouter);
 app.use("/api/jobs/outbox", jobsOutboxRouter);
 app.use("/api/jobs/digests", jobsDigestsRouter);

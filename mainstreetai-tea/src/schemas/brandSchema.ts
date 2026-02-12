@@ -55,6 +55,7 @@ export const brandProfileSchema = z.object({
   brandId: brandIdSchema,
   businessName: z.string().min(1),
   location: z.string().min(1),
+  townRef: z.string().min(1).optional(),
   type: businessTypeSchema,
   voice: z.string().min(1),
   audiences: z.array(z.string()).default([]),

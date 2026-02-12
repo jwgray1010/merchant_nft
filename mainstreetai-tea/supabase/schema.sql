@@ -1,12 +1,21 @@
 -- MainStreetAI Supabase schema (Phase 7)
 create extension if not exists pgcrypto;
 
+create table if not exists public.towns (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  region text,
+  timezone text not null default 'America/Chicago',
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.brands (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
   brand_id text not null,
   business_name text not null,
   location text not null,
+  town_ref uuid references public.towns(id) on delete set null,
   type text not null,
   voice text not null,
   audiences jsonb not null default '[]'::jsonb,
@@ -25,8 +34,27 @@ alter table public.brands
   add column if not exists community_vibe_profile jsonb not null
   default '{"localTone":"neighborly","collaborationLevel":"medium","localIdentityTags":[],"audienceStyle":"mixed","avoidCorporateTone":true}'::jsonb;
 
+alter table public.brands
+  add column if not exists town_ref uuid references public.towns(id) on delete set null;
+
 create unique index if not exists brands_owner_brand_id_unique
   on public.brands(owner_id, brand_id);
+
+create table if not exists public.town_memberships (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  participation_level text not null default 'standard' check (participation_level in ('standard','leader','hidden')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.town_rotations (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  last_featured timestamptz not null default now()
+);
 
 create table if not exists public.history (
   id uuid primary key default gen_random_uuid(),
@@ -333,6 +361,21 @@ alter table public.brand_voice_profile add column if not exists do_not_use text[
 create index if not exists history_owner_brand_created_at_idx
   on public.history(owner_id, brand_ref, created_at desc);
 
+create unique index if not exists towns_name_region_unique
+  on public.towns (lower(name), coalesce(lower(region), ''));
+
+create unique index if not exists town_memberships_brand_ref_unique
+  on public.town_memberships(brand_ref);
+
+create index if not exists town_memberships_town_ref_idx
+  on public.town_memberships(town_ref, participation_level, created_at);
+
+create unique index if not exists town_rotations_town_brand_unique
+  on public.town_rotations(town_ref, brand_ref);
+
+create index if not exists town_rotations_town_last_featured_idx
+  on public.town_rotations(town_ref, last_featured);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -512,6 +555,9 @@ $$;
 
 -- RLS: owner can only access own rows.
 alter table public.brands enable row level security;
+alter table public.towns enable row level security;
+alter table public.town_memberships enable row level security;
+alter table public.town_rotations enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -568,6 +614,53 @@ with check (owner_id = auth.uid());
 drop policy if exists brands_owner_delete on public.brands;
 create policy brands_owner_delete on public.brands
 for delete using (owner_id = auth.uid());
+
+drop policy if exists towns_member_select on public.towns;
+create policy towns_member_select on public.towns
+for select
+using (
+  exists (
+    select 1
+    from public.town_memberships tm
+    join public.brands b on b.id = tm.brand_ref
+    where tm.town_ref = id
+      and (
+        b.owner_id = auth.uid()
+        or public.has_team_role(b.id, array['owner','admin','member']::text[])
+      )
+  )
+);
+
+drop policy if exists towns_authenticated_insert on public.towns;
+create policy towns_authenticated_insert on public.towns
+for insert
+with check (auth.uid() is not null);
+
+drop policy if exists town_memberships_owner_all on public.town_memberships;
+create policy town_memberships_owner_all on public.town_memberships
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists town_rotations_member_select on public.town_rotations;
+create policy town_rotations_member_select on public.town_rotations
+for select
+using (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin','member']::text[])
+);
+
+drop policy if exists town_rotations_owner_modify on public.town_rotations;
+create policy town_rotations_owner_modify on public.town_rotations
+for all
+using (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+)
+with check (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+);
 
 drop policy if exists history_owner_all on public.history;
 create policy history_owner_all on public.history

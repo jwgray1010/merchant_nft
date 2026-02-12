@@ -25,6 +25,7 @@ import { getTimezoneParts, parsePostTimeToHourMinute, timezoneOrDefault, zonedDa
 import { getUpcomingLocalEvents } from "./localEventAwareness";
 import { getLocationById } from "./locationStore";
 import { getOrRefreshInsightsCache } from "./autopilotService";
+import { buildTownBoostForDaily } from "./townModeService";
 import { getBrandVoiceProfile } from "./voiceStore";
 import { getOrRecomputeTimingModel } from "./timingModelService";
 
@@ -383,6 +384,12 @@ export async function runDailyOneButton(input: {
     },
     outputSchema: localBoostOutputSchema,
   }).catch(() => null);
+  const townBoostSuggestion = await buildTownBoostForDaily({
+    userId: input.userId,
+    brandId: input.brandId,
+    brand,
+    goal: chosenGoal,
+  }).catch(() => null);
 
   const twilioIntegration = await adapter.getIntegration(input.userId, input.brandId, "twilio");
   const pack = dailyOutputSchema.parse({
@@ -402,6 +409,7 @@ export async function runDailyOneButton(input: {
           staffScript: localBoostSuggestion.staffLine,
         }
       : undefined,
+    townBoost: townBoostSuggestion?.townBoost,
   });
 
   const history = await adapter.addHistory(
@@ -541,6 +549,11 @@ export async function runDailyOneButton(input: {
       ${
         pack.localBoost
           ? `<p><strong>Local Boost:</strong> ${pack.localBoost.line}<br/>${pack.localBoost.captionAddOn}<br/>${pack.localBoost.staffScript}</p>`
+          : ""
+      }
+      ${
+        pack.townBoost
+          ? `<p><strong>Town Boost:</strong> ${pack.townBoost.line}<br/>${pack.townBoost.captionAddOn}<br/>${pack.townBoost.staffScript}</p>`
           : ""
       }
     </body></html>`;

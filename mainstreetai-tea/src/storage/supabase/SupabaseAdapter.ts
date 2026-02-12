@@ -84,6 +84,7 @@ type BrandRow = {
   brand_id: string;
   business_name: string;
   location: string;
+  town_ref: string | null;
   type: string;
   voice: string;
   audiences: unknown;
@@ -250,6 +251,7 @@ function toBrandProfile(row: BrandRow): BrandProfile {
     brandId: row.brand_id,
     businessName: row.business_name,
     location: row.location,
+    townRef: row.town_ref ?? undefined,
     type: row.type,
     voice: row.voice,
     audiences: Array.isArray(row.audiences) ? row.audiences : [],
@@ -477,6 +479,7 @@ export class SupabaseAdapter implements StorageAdapter {
       brand_id: parsed.brandId,
       business_name: parsed.businessName,
       location: parsed.location,
+      town_ref: parsed.townRef ?? null,
       type: parsed.type,
       voice: parsed.voice,
       audiences: parsed.audiences,
@@ -518,6 +521,7 @@ export class SupabaseAdapter implements StorageAdapter {
     const updatePayload = {
       business_name: merged.businessName,
       location: merged.location,
+      town_ref: merged.townRef ?? null,
       type: merged.type,
       voice: merged.voice,
       audiences: merged.audiences,

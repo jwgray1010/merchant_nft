@@ -20,6 +20,12 @@ export const dailyLocalBoostSchema = z.object({
   staffScript: z.string().min(1),
 });
 
+export const dailyTownBoostSchema = z.object({
+  line: z.string().min(1),
+  captionAddOn: z.string().min(1),
+  staffScript: z.string().min(1),
+});
+
 export const dailyOutputSchema = z.object({
   todaySpecial: z.object({
     promoName: z.string().min(1),
@@ -44,6 +50,7 @@ export const dailyOutputSchema = z.object({
     message: z.string().min(1),
   }),
   localBoost: dailyLocalBoostSchema.optional(),
+  townBoost: dailyTownBoostSchema.optional(),
   nextStep: z.string().min(1),
 });
 
@@ -59,4 +66,5 @@ export type DailyPlatform = z.infer<typeof dailyPlatformSchema>;
 export type DailyRequest = z.infer<typeof dailyRequestSchema>;
 export type DailyOutput = z.infer<typeof dailyOutputSchema>;
 export type LocalBoostOutput = z.infer<typeof localBoostOutputSchema>;
+export type DailyTownBoost = z.infer<typeof dailyTownBoostSchema>;
 export type DailyCheckinRequest = z.infer<typeof dailyCheckinRequestSchema>;

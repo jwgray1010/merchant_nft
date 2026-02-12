@@ -325,6 +325,10 @@ function renderBrandForm(
           <input name="location" required value="${escapeHtml(brand?.location ?? "")}" />
         </div>
         <div class="field">
+          <label>Town Ref (optional)</label>
+          <input name="townRef" value="${escapeHtml(brand?.townRef ?? "")}" />
+        </div>
+        <div class="field">
           <label>Type</label>
           <select name="type">${typeOptions}</select>
         </div>
@@ -504,6 +508,7 @@ function parseBrandForm(body: Record<string, unknown>): BrandProfile {
       .toLowerCase(),
     businessName: String(body.businessName ?? "").trim(),
     location: String(body.location ?? "").trim(),
+    townRef: optionalText(body.townRef),
     type: String(body.type ?? "other"),
     voice: String(body.voice ?? "").trim(),
     audiences: parseStringList(body.audiences),
@@ -1146,6 +1151,7 @@ router.post("/brands", async (req, res, next) => {
       brandId: String(rawBody.brandId ?? ""),
       businessName: String(rawBody.businessName ?? ""),
       location: String(rawBody.location ?? ""),
+      townRef: optionalText(rawBody.townRef),
       type: BUSINESS_TYPES.includes(String(rawBody.type ?? "") as (typeof BUSINESS_TYPES)[number])
         ? (String(rawBody.type) as BrandProfile["type"])
         : "other",

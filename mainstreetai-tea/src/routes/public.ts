@@ -2,6 +2,7 @@ import { Router, type Request } from "express";
 import { buildBrandFromTemplate } from "../data/templateStore";
 import { autopilotSettingsUpsertSchema } from "../schemas/autopilotSettingsSchema";
 import { brandProfileSchema } from "../schemas/brandSchema";
+import { ensureTownMembershipForBrand, suggestTownFromLocation } from "../services/townModeService";
 import { getAdapter } from "../storage/getAdapter";
 import { extractAuthToken, resolveAuthUser } from "../supabase/verifyAuth";
 
@@ -204,6 +205,7 @@ router.get("/onboarding", (_req, res) => {
         <div class="grid">
           <div><label>Business Name</label><input name="businessName" required /></div>
           <div><label>Location</label><input name="location" placeholder="Independence, KS" required /></div>
+          <div><label>Town</label><input name="townName" placeholder="Independence KS" required /></div>
         </div>
 
         <h2>Step 2: What do you sell?</h2>
@@ -278,6 +280,7 @@ router.post("/onboarding/complete", async (req, res, next) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const businessName = String(body.businessName ?? "").trim();
     const location = String(body.location ?? "").trim();
+    const townName = String(body.townName ?? "").trim();
     const businessType = String(body.businessType ?? body.template ?? "service").trim().toLowerCase();
     const templateMap: Record<string, "loaded-tea" | "cafe" | "service" | "retail" | "restaurant" | "gym"> = {
       "loaded-tea": "loaded-tea",
@@ -331,6 +334,7 @@ router.post("/onboarding/complete", async (req, res, next) => {
             ? "mixed"
             : "everyone";
     const localIdentityTags = [location, "Local Owned"].filter(Boolean);
+    const normalizedTownName = townName || suggestTownFromLocation(location);
 
     const brand = brandProfileSchema.parse({
       ...baseBrand,
@@ -350,6 +354,15 @@ router.post("/onboarding/complete", async (req, res, next) => {
     const created = await adapter.createBrand(user.id, brand);
     if (!created) {
       await adapter.updateBrand(user.id, brand.brandId, brand);
+    }
+    if (normalizedTownName) {
+      await ensureTownMembershipForBrand({
+        userId: user.id,
+        brandId: brand.brandId,
+        townName: normalizedTownName,
+        timezone: "America/Chicago",
+        participationLevel: "standard",
+      });
     }
 
     if (body.enableAutopilot === "on" || body.enableAutopilot === "true") {

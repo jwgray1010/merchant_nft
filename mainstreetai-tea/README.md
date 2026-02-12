@@ -1309,3 +1309,40 @@ Output is intentionally simple:
 Printable daily sign:
 - `GET /app/sign/today?brandId=...`
 - `GET /app/sign/today?brandId=...&pdf=1`
+
+## Phase TOWN MODE: Shared Local Network
+
+Town Mode adds an invisible local-support layer across businesses in the same town.
+
+What’s new:
+- `towns`, `town_memberships`, and `town_rotations` in `supabase/schema.sql`
+- `brands.town_ref` linkage
+- onboarding asks for town and auto-creates town membership
+- `prompts/town_mode.md`
+- daily pack now supports optional `townBoost`:
+  - `line`
+  - `captionAddOn`
+  - `staffScript`
+
+New APIs:
+- `GET /api/town/map?townId=...`  
+  Returns participating business list (`name` + `type` only) and category summary.
+- `GET /api/town/membership?brandId=...`
+- `POST /api/town/membership?brandId=...`  
+  Body:
+  ```json
+  {
+    "enabled": true,
+    "participationLevel": "standard",
+    "townName": "Independence KS"
+  }
+  ```
+
+Easy Mode additions:
+- `/app/town` local network view
+- Settings → Local Network toggle + participation level (`standard|leader|hidden`)
+
+Safety:
+- Town Mode never exposes private metrics.
+- No auto-tagging or direct endorsements are generated.
+- Suggestions stay subtle and organic.

@@ -12,6 +12,12 @@ import {
   submitDailyCheckin,
 } from "../services/dailyOneButtonService";
 import { listLocations } from "../services/locationStore";
+import {
+  getTownMapForUser,
+  getTownMembershipForBrand,
+  suggestTownFromLocation,
+  updateTownMembershipForBrand,
+} from "../services/townModeService";
 import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
 import type { BrandProfile } from "../schemas/brandSchema";
@@ -576,6 +582,14 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         <p id="daily-local-staff-line" class="output-value">${escapeHtml(pack.localBoost.staffScript)}</p>
       </details>`
     : "";
+  const townBoostSection = pack.townBoost
+    ? `<details class="output-card">
+        <summary><strong>Town Boost</strong></summary>
+        <p class="output-value" style="margin-top:8px;"><strong>${escapeHtml(pack.townBoost.line)}</strong></p>
+        <p id="daily-town-caption-addon" class="output-value">${escapeHtml(pack.townBoost.captionAddOn)}</p>
+        <p id="daily-town-staff-line" class="output-value">${escapeHtml(pack.townBoost.staffScript)}</p>
+      </details>`
+    : "";
   return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
     <h3>Your daily money move</h3>
     <details class="output-card" open>
@@ -612,6 +626,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         : ""
     }
     ${localBoostSection}
+    ${townBoostSection}
     <div class="grid" style="grid-template-columns:1fr; margin-top:8px;">
       <button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>
       <button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>
@@ -619,6 +634,12 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         pack.localBoost
           ? `<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Caption Add-on</button>
              <button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>`
+          : ""
+      }
+      ${
+        pack.townBoost
+          ? `<button class="primary-button" data-copy-target="daily-town-caption-addon">Copy Town Caption Add-on</button>
+             <button class="secondary-button" data-copy-target="daily-town-staff-line">Copy Town Staff Line</button>`
           : ""
       }
       ${
@@ -746,6 +767,9 @@ router.get("/", async (req, res, next) => {
               const localBoostSection = pack.localBoost
                 ? '<details class="output-card"><summary><strong>Local Boost</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.localBoost.line || "") + '</strong></p><p id="daily-local-caption-addon" class="output-value">' + esc(pack.localBoost.captionAddOn || "") + '</p><p id="daily-local-staff-line" class="output-value">' + esc(pack.localBoost.staffScript || "") + '</p></details>'
                 : '';
+              const townBoostSection = pack.townBoost
+                ? '<details class="output-card"><summary><strong>Town Boost</strong></summary><p class="output-value" style="margin-top:8px;"><strong>' + esc(pack.townBoost.line || "") + '</strong></p><p id="daily-town-caption-addon" class="output-value">' + esc(pack.townBoost.captionAddOn || "") + '</p><p id="daily-town-staff-line" class="output-value">' + esc(pack.townBoost.staffScript || "") + '</p></details>'
+                : '';
               return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
                 '<h3>Your daily money move</h3>' +
                 '<details class="output-card" open><summary><strong>Today\\'s Special</strong></summary><p id="daily-special" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.todaySpecial?.promoName || "") + '</strong><br/>' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></details>' +
@@ -753,10 +777,12 @@ router.get("/", async (req, res, next) => {
                 '<details class="output-card" open><summary><strong>In-store sign</strong></summary><p id="daily-sign" class="output-value" style="margin-top:8px;"><strong>' + esc(pack.sign?.headline || "") + '</strong><br/>' + esc(pack.sign?.body || "") + (pack.sign?.finePrint ? '<br/><span class="muted">' + esc(pack.sign.finePrint) + '</span>' : '') + '</p><a class="secondary-button" style="margin-top:6px;" href="' + esc(signUrl) + '">Print sign</a></details>' +
                 smsSection +
                 localBoostSection +
+                townBoostSection +
                 '<div class="grid" style="grid-template-columns:1fr; margin-top:8px;">' +
                 '<button class="primary-button" data-copy-target="daily-caption">Copy Caption</button>' +
                 '<button class="primary-button" data-copy-target="daily-sign">Copy Sign</button>' +
                 (pack.localBoost ? '<button class="primary-button" data-copy-target="daily-local-caption-addon">Copy Local Caption Add-on</button><button class="secondary-button" data-copy-target="daily-local-staff-line">Copy Staff Line</button>' : '') +
+                (pack.townBoost ? '<button class="primary-button" data-copy-target="daily-town-caption-addon">Copy Town Caption Add-on</button><button class="secondary-button" data-copy-target="daily-town-staff-line">Copy Town Staff Line</button>' : '') +
                 (pack.optionalSms?.enabled ? '<button class="primary-button" data-copy-target="daily-sms">Copy SMS</button>' : '') +
                 '<button class="secondary-button" id="share-daily" type="button">Share…</button>' +
                 '<a class="secondary-button" href="' + esc(signUrl) + '">Printable Sign</a>' +
@@ -787,6 +813,7 @@ router.get("/", async (req, res, next) => {
                   json.post?.caption,
                   (json.post?.onScreenText || []).join(" | "),
                   json.localBoost?.captionAddOn,
+                  json.townBoost?.captionAddOn,
                 ]
                   .filter(Boolean)
                   .join("\\n");
@@ -829,6 +856,7 @@ router.get("/", async (req, res, next) => {
                 document.getElementById("daily-caption")?.textContent || "",
                 document.getElementById("daily-sign")?.textContent || "",
                 document.getElementById("daily-local-caption-addon")?.textContent || "",
+                document.getElementById("daily-town-caption-addon")?.textContent || "",
                 document.getElementById("daily-sms")?.textContent || "",
               ]
                 .filter(Boolean)
@@ -1813,6 +1841,19 @@ router.get("/settings", async (req, res, next) => {
         );
     }
     const autopilotOn = Boolean(context.autopilotSettings?.enabled);
+    const townContext =
+      context.ownerUserId && context.selectedBrandId
+        ? await getTownMembershipForBrand({
+            userId: context.ownerUserId,
+            brandId: context.selectedBrandId,
+          }).catch(() => null)
+        : null;
+    const townEnabled = townContext ? townContext.membership.participationLevel !== "hidden" : false;
+    const participationLevel = townContext?.membership.participationLevel ?? "standard";
+    const defaultTownName =
+      townContext?.town.name ??
+      suggestTownFromLocation(context.selectedBrand?.location ?? "") ??
+      "";
     const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
       <h2 class="text-xl">Settings</h2>
       <p class="muted">Keep this simple. Advanced tools are in Advanced Settings.</p>
@@ -1824,11 +1865,35 @@ router.get("/settings", async (req, res, next) => {
       </form>
     </section>
     <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Local Network</h3>
+      <p class="muted">Join Town Mode for subtle local cross-support ideas.</p>
+      <form method="POST" action="${escapeHtml(withSelection("/app/settings/local-network", context))}" style="display:grid;gap:10px;">
+        <label><input type="checkbox" name="enabled" ${townEnabled ? "checked" : ""} /> Participate in Local Town Mode</label>
+        <label class="field-label">Town
+          <input name="townName" value="${escapeHtml(defaultTownName)}" placeholder="Independence KS" />
+        </label>
+        <label class="field-label">Participation level
+          <select name="participationLevel">
+            <option value="standard" ${participationLevel === "standard" ? "selected" : ""}>standard</option>
+            <option value="leader" ${participationLevel === "leader" ? "selected" : ""}>leader</option>
+            <option value="hidden" ${participationLevel === "hidden" ? "selected" : ""}>hidden</option>
+          </select>
+        </label>
+        <button class="secondary-button" type="submit">Save Local Network</button>
+      </form>
+      ${
+        townContext
+          ? `<a class="secondary-button" href="${escapeHtml(withSelection("/app/town", context))}" style="margin-top:10px;">View Local Network</a>`
+          : ""
+      }
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
       <div class="grid">
         ${cardLink(withSelection("/admin/locations", context), "📍", "My Locations", "Manage store locations")}
         ${cardLink(withSelection("/admin/team", context), "👥", "My Team", "Invite and manage team")}
         ${cardLink(withSelection("/admin/billing", context), "💳", "Billing", "Plan and subscription")}
         ${cardLink(withSelection("/admin/integrations", context), "🔌", "Integrations", "Buffer, SMS, Google, email")}
+        ${cardLink(withSelection("/app/town", context), "🏙️", "Local Network", "See your town participation map")}
       </div>
       <a class="secondary-button" href="${escapeHtml(withSelection("/app/settings/advanced", context))}" style="margin-top:10px;">Open Advanced Settings</a>
     </section>`;
@@ -1876,6 +1941,42 @@ router.post("/settings/automatic-help", async (req, res, next) => {
   }
 });
 
+router.post("/settings/local-network", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context || !context.ownerUserId || !context.selectedBrandId) {
+      return;
+    }
+    if (context.role === "member") {
+      return res.redirect(withNotice(withSelection("/app", context), "Only owners/admins can change settings."));
+    }
+    const enabledRaw = String(req.body?.enabled ?? "").toLowerCase();
+    const enabled = enabledRaw === "on" || enabledRaw === "true" || enabledRaw === "1";
+    const participationLevel = String(req.body?.participationLevel ?? "standard").trim().toLowerCase();
+    const townName = optionalText(req.body?.townName) ?? suggestTownFromLocation(context.selectedBrand?.location ?? "");
+    await updateTownMembershipForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+      fallbackTownName: suggestTownFromLocation(context.selectedBrand?.location ?? ""),
+      settings: {
+        enabled,
+        participationLevel:
+          participationLevel === "leader" || participationLevel === "hidden" || participationLevel === "standard"
+            ? participationLevel
+            : "standard",
+        townName,
+      },
+    });
+    return res.redirect(withNotice(withSelection("/app/settings", context), "Local network settings saved."));
+  } catch (error) {
+    const context = await resolveContext(req, res);
+    if (context) {
+      return res.redirect(withNotice(withSelection("/app/settings", context), "Could not save local network settings."));
+    }
+    return next(error);
+  }
+});
+
 router.get("/settings/advanced", async (req, res, next) => {
   try {
     const context = await resolveContext(req, res);
@@ -1902,6 +2003,100 @@ router.get("/settings/advanced", async (req, res, next) => {
           context,
           active: "settings",
           currentPath: "/app/settings/advanced",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/town", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    if (!context.ownerUserId || !context.selectedBrandId) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Local Network",
+            context,
+            active: "settings",
+            currentPath: "/app/town",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Pick a business first.</p></section>`,
+          }),
+        );
+    }
+    const membership = await getTownMembershipForBrand({
+      userId: context.ownerUserId,
+      brandId: context.selectedBrandId,
+    });
+    if (!membership) {
+      return res
+        .type("html")
+        .send(
+          easyLayout({
+            title: "Local Network",
+            context,
+            active: "settings",
+            currentPath: "/app/town",
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white">
+              <h2 class="text-xl">Local Network</h2>
+              <p class="muted">You are not in a town network yet.</p>
+              <a class="secondary-button" href="${escapeHtml(withSelection("/app/settings", context))}">Open Settings</a>
+            </section>`,
+          }),
+        );
+    }
+    const map = await getTownMapForUser({
+      actorUserId: context.actorUserId,
+      townId: membership.town.id,
+    });
+    const categoryLabels: Record<string, string> = {
+      "loaded-tea": "Coffee",
+      cafe: "Coffee",
+      "fitness-hybrid": "Fitness",
+      gym: "Fitness",
+      retail: "Retail",
+      restaurant: "Food",
+      service: "Services",
+      other: "Services",
+    };
+    const categories = (map?.categories ?? [])
+      .map((entry) => categoryLabels[entry] ?? entry)
+      .filter((entry, index, all) => all.indexOf(entry) === index)
+      .join(" • ");
+    const businessRows =
+      map && map.businesses.length > 0
+        ? map.businesses
+            .map(
+              (entry) =>
+                `<li><strong>${escapeHtml(entry.name)}</strong> <span class="muted">(${escapeHtml(
+                  categoryLabels[entry.type] ?? entry.type,
+                )})</span></li>`,
+            )
+            .join("")
+        : `<li class="muted">No participating businesses yet.</li>`;
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">We’re part of the ${escapeHtml(membership.town.name)} Local Network</h2>
+      <p class="muted">Town Mode runs quietly in the background. No extra coordination required.</p>
+      <p><strong>${escapeHtml(categories || "Local businesses")}</strong></p>
+    </section>
+    <section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h3>Participating businesses</h3>
+      <ul>${businessRows}</ul>
+    </section>`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Local Network",
+          context,
+          active: "settings",
+          currentPath: "/app/town",
           body,
         }),
       );
