@@ -41,8 +41,8 @@ router.get("/", async (req, res, next) => {
       return res.status(400).json({ error: "Unable to resolve brand reference" });
     }
     const supabase = getSupabaseAdminClient();
-    const { data, error } = await supabase
-      .from("team_members")
+    const table = (name: string): any => supabase.from(name as never);
+    const { data, error } = await table("team_members")
       .select("id, owner_id, user_id, role, created_at")
       .eq("owner_id", brandAccess.ownerId)
       .eq("brand_ref", brandAccess.brandRef ?? "");
@@ -120,6 +120,7 @@ router.post("/invite", async (req, res, next) => {
       return res.status(400).json({ error: "Unable to resolve brand reference" });
     }
     const supabase = getSupabaseAdminClient();
+    const table = (name: string): any => supabase.from(name as never);
     const invite = await supabase.auth.admin.inviteUserByEmail(parsedBody.data.email, {
       redirectTo: `${appBaseUrl()}/admin/welcome`,
     });
@@ -129,8 +130,7 @@ router.post("/invite", async (req, res, next) => {
       });
     }
 
-    const { data, error } = await supabase
-      .from("team_members")
+    const { data, error } = await table("team_members")
       .upsert(
         {
           owner_id: brandAccess.ownerId,
@@ -147,15 +147,16 @@ router.post("/invite", async (req, res, next) => {
     if (error) {
       throw error;
     }
+    const row = data as Record<string, unknown>;
 
     return res.status(201).json({
-      id: data.id,
-      ownerId: data.owner_id,
+      id: String(row.id ?? ""),
+      ownerId: String(row.owner_id ?? ""),
       brandId: brandAccess.brandId,
-      userId: data.user_id,
-      role: data.role,
+      userId: String(row.user_id ?? ""),
+      role: String(row.role ?? "member"),
       email: parsedBody.data.email,
-      createdAt: data.created_at,
+      createdAt: String(row.created_at ?? new Date().toISOString()),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
@@ -185,8 +186,8 @@ router.delete("/:id", async (req, res, next) => {
       return res.status(400).json({ error: "Unable to resolve brand reference" });
     }
     const supabase = getSupabaseAdminClient();
-    const { data, error } = await supabase
-      .from("team_members")
+    const table = (name: string): any => supabase.from(name as never);
+    const { data, error } = await table("team_members")
       .delete()
       .eq("id", memberId)
       .eq("owner_id", brandAccess.ownerId)

@@ -101,8 +101,8 @@ async function upsertLocalSubscription(
 
 async function resolveBrandRef(ownerId: string, brandId: string): Promise<{ id: string; brandId: string } | null> {
   const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("brands")
+  const table = (name: string): any => supabase.from(name as never);
+  const { data, error } = await table("brands")
     .select("id, brand_id")
     .eq("owner_id", ownerId)
     .eq("brand_id", brandId)
@@ -110,12 +110,13 @@ async function resolveBrandRef(ownerId: string, brandId: string): Promise<{ id: 
   if (error) {
     throw error;
   }
-  if (!data || typeof data.id !== "string") {
+  const row = data as Record<string, unknown> | null;
+  if (!row || typeof row.id !== "string") {
     return null;
   }
   return {
-    id: data.id,
-    brandId: typeof data.brand_id === "string" ? data.brand_id : brandId,
+    id: row.id,
+    brandId: typeof row.brand_id === "string" ? row.brand_id : brandId,
   };
 }
 
@@ -161,8 +162,8 @@ export async function getSubscriptionForBrand(
   }
 
   const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("subscriptions")
+  const table = (name: string): any => supabase.from(name as never);
+  const { data, error } = await table("subscriptions")
     .select("*")
     .eq("owner_id", ownerId)
     .eq("brand_ref", brandRef.id)
@@ -202,8 +203,8 @@ export async function upsertSubscriptionForBrand(
     current_period_end: parsed.currentPeriodEnd ?? null,
     updated_at: new Date().toISOString(),
   };
-  const { data, error } = await supabase
-    .from("subscriptions")
+  const table = (name: string): any => supabase.from(name as never);
+  const { data, error } = await table("subscriptions")
     .upsert(payload, { onConflict: "owner_id,brand_ref" })
     .select("*")
     .single();
@@ -221,8 +222,8 @@ export async function updateSubscriptionByStripeId(input: {
     return null;
   }
   const supabase = getSupabaseAdminClient();
-  const { data: existing, error: existingError } = await supabase
-    .from("subscriptions")
+  const table = (name: string): any => supabase.from(name as never);
+  const { data: existing, error: existingError } = await table("subscriptions")
     .select("*, brands!inner(brand_id)")
     .eq("stripe_subscription_id", input.stripeSubscriptionId)
     .maybeSingle();
@@ -243,8 +244,7 @@ export async function updateSubscriptionByStripeId(input: {
   if (parsed.status !== undefined) payload.status = parsed.status;
   if (parsed.currentPeriodEnd !== undefined) payload.current_period_end = parsed.currentPeriodEnd;
 
-  const { data, error } = await supabase
-    .from("subscriptions")
+  const { data, error } = await table("subscriptions")
     .update(payload)
     .eq("id", (existing as { id: string }).id)
     .select("*, brands!inner(brand_id)")
@@ -268,8 +268,8 @@ export async function getSubscriptionByStripeId(
     return null;
   }
   const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("subscriptions")
+  const table = (name: string): any => supabase.from(name as never);
+  const { data, error } = await table("subscriptions")
     .select("*, brands!inner(brand_id)")
     .eq("stripe_subscription_id", stripeSubscriptionId)
     .maybeSingle();

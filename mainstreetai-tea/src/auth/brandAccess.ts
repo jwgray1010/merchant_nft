@@ -31,8 +31,8 @@ export async function resolveBrandAccess(
   }
 
   const supabase = getSupabaseAdminClient();
-  const ownerBrand = await supabase
-    .from("brands")
+  const table = (name: string): any => supabase.from(name as never);
+  const ownerBrand = await table("brands")
     .select("id, owner_id, brand_id")
     .eq("owner_id", actorUserId)
     .eq("brand_id", brandId)
@@ -40,17 +40,17 @@ export async function resolveBrandAccess(
   if (ownerBrand.error) {
     throw ownerBrand.error;
   }
-  if (ownerBrand.data && typeof ownerBrand.data.id === "string") {
+  const ownerRow = ownerBrand.data as Record<string, unknown> | null;
+  if (ownerRow && typeof ownerRow.id === "string") {
     return {
-      ownerId: String(ownerBrand.data.owner_id),
-      brandRef: ownerBrand.data.id,
-      brandId: String(ownerBrand.data.brand_id),
+      ownerId: String(ownerRow.owner_id ?? ""),
+      brandRef: ownerRow.id,
+      brandId: typeof ownerRow.brand_id === "string" ? ownerRow.brand_id : brandId,
       role: "owner",
     };
   }
 
-  const memberRow = await supabase
-    .from("team_members")
+  const memberRow = await table("team_members")
     .select("brand_ref, role, owner_id, brands!inner(id, owner_id, brand_id)")
     .eq("user_id", actorUserId)
     .eq("brands.brand_id", brandId)

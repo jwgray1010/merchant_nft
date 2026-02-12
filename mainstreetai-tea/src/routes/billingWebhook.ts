@@ -41,6 +41,14 @@ function stripeStatusToLocal(status: string | undefined):
   return "inactive";
 }
 
+function subscriptionCurrentPeriodEnd(subscription: Stripe.Subscription): string | undefined {
+  const periodEnd = subscription.items.data[0]?.current_period_end;
+  if (typeof periodEnd === "number") {
+    return new Date(periodEnd * 1000).toISOString();
+  }
+  return undefined;
+}
+
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session): Promise<void> {
   const ownerId = String(session.metadata?.owner_id ?? "").trim();
   const brandId = String(session.metadata?.brand_id ?? "").trim();
@@ -58,13 +66,12 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session):
 
   if (stripeSubscriptionId) {
     const stripe = getStripeClient();
-    const subscription = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+    const subscriptionResponse = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+    const subscription = subscriptionResponse as unknown as Stripe.Subscription;
     const firstPriceId = subscription.items.data[0]?.price?.id;
     plan = priceIdToPlan(firstPriceId);
     status = stripeStatusToLocal(subscription.status);
-    if (typeof subscription.current_period_end === "number") {
-      currentPeriodEnd = new Date(subscription.current_period_end * 1000).toISOString();
-    }
+    currentPeriodEnd = subscriptionCurrentPeriodEnd(subscription);
   }
 
   await upsertSubscriptionForBrand(ownerId, brandId, {
@@ -85,10 +92,7 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
     stripeSubscriptionId,
     plan: priceIdToPlan(firstPriceId),
     status: stripeStatusToLocal(subscription.status),
-    currentPeriodEnd:
-      typeof subscription.current_period_end === "number"
-        ? new Date(subscription.current_period_end * 1000).toISOString()
-        : undefined,
+    currentPeriodEnd: subscriptionCurrentPeriodEnd(subscription),
   } as const;
 
   const existing = await updateSubscriptionByStripeId({

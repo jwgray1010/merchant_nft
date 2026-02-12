@@ -1,4 +1,5 @@
 import { Router } from "express";
+import Stripe from "stripe";
 import { z } from "zod";
 import { actorUserIdFromRequest, resolveBrandAccess } from "../auth/brandAccess";
 import { FEATURES } from "../config/featureFlags";
@@ -19,6 +20,14 @@ const cancelRequestSchema = z.object({
 
 function appBaseUrl(): string {
   return (process.env.APP_BASE_URL ?? "http://localhost:3001").trim().replace(/\/+$/, "");
+}
+
+function subscriptionCurrentPeriodEnd(subscription: Stripe.Subscription): string | undefined {
+  const firstItemPeriodEnd = subscription.items.data[0]?.current_period_end;
+  if (typeof firstItemPeriodEnd === "number") {
+    return new Date(firstItemPeriodEnd * 1000).toISOString();
+  }
+  return undefined;
 }
 
 router.get("/status", async (req, res, next) => {
@@ -170,24 +179,19 @@ router.post("/cancel-subscription", async (req, res, next) => {
     }
 
     const stripe = getStripeClient();
-    const updated = await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
+    const updatedResponse = await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
       cancel_at_period_end: true,
     });
+    const updated = updatedResponse as unknown as Stripe.Subscription;
     await upsertSubscriptionForBrand(access.ownerId, access.brandId, {
       status: updated.status === "active" ? "active" : "canceled",
-      currentPeriodEnd:
-        typeof updated.current_period_end === "number"
-          ? new Date(updated.current_period_end * 1000).toISOString()
-          : undefined,
+      currentPeriodEnd: subscriptionCurrentPeriodEnd(updated),
     });
 
     return res.json({
       ok: true,
       cancelAtPeriodEnd: updated.cancel_at_period_end,
-      currentPeriodEnd:
-        typeof updated.current_period_end === "number"
-          ? new Date(updated.current_period_end * 1000).toISOString()
-          : null,
+      currentPeriodEnd: subscriptionCurrentPeriodEnd(updated) ?? null,
     });
   } catch (error) {
     return next(error);
