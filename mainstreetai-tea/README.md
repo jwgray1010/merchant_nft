@@ -96,6 +96,7 @@ CRON_SECRET=replace_with_random_cron_secret
 TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
 TWILIO_FROM_NUMBER=
+SMS_CRON_BATCH_SIZE=50
 
 BUFFER_CLIENT_ID=
 BUFFER_CLIENT_SECRET=
@@ -551,6 +552,13 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - `GET /api/integrations/buffer/callback`
 - `POST /api/publish?brandId=...`
 - `POST /api/jobs/outbox` (cron; requires `x-cron-secret`)
+- `GET /api/sms/contacts?brandId=...`
+- `POST /api/sms/contacts?brandId=...`
+- `PUT /api/sms/contacts/:contactId?brandId=...`
+- `DELETE /api/sms/contacts/:contactId?brandId=...`
+- `POST /api/sms/send?brandId=...`
+- `POST /api/sms/campaign?brandId=...`
+- `GET /api/sms/log?brandId=...`
 - `POST /integrations/buffer/connect?brandId=...`
 - `POST /integrations/gbp/connect?brandId=...`
 - `GET /integrations/gbp/callback`
@@ -571,6 +579,7 @@ On queue/sent, records are written to outbox and persisted into posts/history fo
 - Twilio:
   - enable `ENABLE_TWILIO_INTEGRATION=true`
   - set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
+  - optional batch size for campaigns: `SMS_CRON_BATCH_SIZE` (default 50)
 - Google Business Profile:
   - enable `ENABLE_GBP_INTEGRATION=true`
   - set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
@@ -596,18 +605,60 @@ Vercel Cron example target:
 
 ### SMS examples (Twilio)
 
-```bash
-curl -X POST "http://localhost:3001/sms/send?brandId=main-street-nutrition" \
-  -H "$AUTH_HEADER" \
-  -H "Content-Type: application/json" \
-  -d '{"to":"+15555550123","message":"Teachers get a free flavor add-on today!"}'
-```
+Create or upsert a contact:
 
 ```bash
-curl -X POST "http://localhost:3001/sms/campaign?brandId=main-street-nutrition" \
+curl -X POST "http://localhost:3001/api/sms/contacts?brandId=main-street-nutrition" \
   -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
-  -d '{"listName":"teachers","recipients":["+15555550123","+15555550124"],"message":"After-school combo starts at 3pm!"}'
+  -d '{
+    "phone":"+15555550123",
+    "name":"Ms. Smith",
+    "tags":["teachers","vip"],
+    "optedIn":true,
+    "consentSource":"in_store"
+  }'
+```
+
+List contacts:
+
+```bash
+curl "http://localhost:3001/api/sms/contacts?brandId=main-street-nutrition&limit=100" \
+  -H "$AUTH_HEADER"
+```
+
+Send one-off SMS (queued):
+
+```bash
+curl -X POST "http://localhost:3001/api/sms/send?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"to":"+15555550123","message":"Teachers get a free flavor add-on today!","purpose":"promo"}'
+```
+
+Campaign by list tag:
+
+```bash
+curl -X POST "http://localhost:3001/api/sms/campaign?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"listTag":"teachers","message":"After-school combo starts at 3pm!"}'
+```
+
+Campaign dry run:
+
+```bash
+curl -X POST "http://localhost:3001/api/sms/campaign?brandId=main-street-nutrition" \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"listTag":"teachers","message":"After-school combo starts at 3pm!","dryRun":true}'
+```
+
+View SMS logs:
+
+```bash
+curl "http://localhost:3001/api/sms/log?brandId=main-street-nutrition&limit=100" \
+  -H "$AUTH_HEADER"
 ```
 
 ### Google Business examples
@@ -667,7 +718,8 @@ From admin you can:
 - manage recurring and one-off local events
 - onboard new brands quickly from templates
 - connect Buffer/Twilio/GBP/Email integrations
-- send SMS campaigns and GBP posts
+- manage opt-in SMS contacts, send one-offs, and run campaigns
+- send GBP posts
 - preview and queue email digests
 - monitor and retry outbox jobs
 

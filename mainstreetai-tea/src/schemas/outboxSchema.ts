@@ -4,6 +4,7 @@ import { brandIdSchema } from "./brandSchema";
 export const outboxTypeSchema = z.enum([
   "post_publish",
   "sms_send",
+  "sms_campaign",
   "gbp_post",
   "email_send",
 ]);
@@ -35,6 +36,7 @@ export const outboxUpdateSchema = z.object({
   attempts: z.number().int().nonnegative().optional(),
   lastError: z.string().nullable().optional(),
   scheduledFor: z.string().datetime({ offset: true }).nullable().optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type OutboxType = z.infer<typeof outboxTypeSchema>;

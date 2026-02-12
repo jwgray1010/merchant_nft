@@ -74,6 +74,7 @@ app.use("/api/integrations", verifyAuth, integrationsRouter);
 app.use("/api/publish", verifyAuth, publishRouter);
 app.use("/api/posts", verifyAuth, postsRouter);
 app.use("/api/history", verifyAuth, historyRouter);
+app.use("/api/sms", verifyAuth, smsRouter);
 app.use("/api/jobs/outbox", jobsOutboxRouter);
 
 app.use((_req: Request, res: Response) => {

@@ -25,7 +25,6 @@ async function handler(reqSecret: string | undefined) {
 
   const result = await processDueOutbox({
     limit: 10,
-    types: ["post_publish"],
   });
 
   return {

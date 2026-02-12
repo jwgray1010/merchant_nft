@@ -25,6 +25,22 @@ import {
 } from "../../schemas/outboxSchema";
 import { postRequestSchema, storedPostSchema, type PostRequest, type StoredPost } from "../../schemas/postSchema";
 import {
+  smsContactSchema,
+  smsContactUpdateSchema,
+  smsContactUpsertSchema,
+  type SmsContact,
+  type SmsContactUpdate,
+  type SmsContactUpsert,
+} from "../../schemas/smsContactSchema";
+import {
+  smsMessageCreateSchema,
+  smsMessageSchema,
+  smsMessageUpdateSchema,
+  type SmsMessage,
+  type SmsMessageCreate,
+  type SmsMessageUpdate,
+} from "../../schemas/smsSendSchema";
+import {
   scheduleCreateRequestSchema,
   scheduleItemSchema,
   scheduleUpdateRequestSchema,
@@ -32,6 +48,7 @@ import {
   type ScheduleItem,
   type ScheduleUpdateRequest,
 } from "../../schemas/scheduleSchema";
+import { normalizeUSPhone } from "../../utils/phone";
 import type { HistoryEndpoint, StorageAdapter } from "../StorageAdapter";
 
 function safePathSegment(value: string): string {
@@ -100,6 +117,22 @@ export class LocalAdapter implements StorageAdapter {
 
   private outboxPath(userId: string, outboxId: string): string {
     return path.join(this.outboxDir(userId), `${outboxId}.json`);
+  }
+
+  private smsContactsDir(userId: string, brandId: string): string {
+    return path.join(this.userDir(userId), "sms_contacts", brandId);
+  }
+
+  private smsContactPath(userId: string, brandId: string, contactId: string): string {
+    return path.join(this.smsContactsDir(userId, brandId), `${contactId}.json`);
+  }
+
+  private smsMessagesDir(userId: string, brandId: string): string {
+    return path.join(this.userDir(userId), "sms_messages", brandId);
+  }
+
+  private smsMessagePath(userId: string, brandId: string, messageId: string): string {
+    return path.join(this.smsMessagesDir(userId, brandId), `${messageId}.json`);
   }
 
   private async ensureDir(dirPath: string): Promise<void> {
@@ -229,6 +262,8 @@ export class LocalAdapter implements StorageAdapter {
       rm(this.scheduleDir(userId, brandId), { recursive: true, force: true }),
       rm(this.localEventsPath(userId, brandId), { force: true }),
       rm(this.integrationsDir(userId, brandId), { recursive: true, force: true }),
+      rm(this.smsContactsDir(userId, brandId), { recursive: true, force: true }),
+      rm(this.smsMessagesDir(userId, brandId), { recursive: true, force: true }),
     ]);
 
     const outboxRecords = await this.listOutbox(userId, brandId, 1000);
@@ -788,5 +823,173 @@ export class LocalAdapter implements StorageAdapter {
       return null;
     }
     return parsed.data;
+  }
+
+  async listSmsContacts(userId: string, brandId: string, limit: number): Promise<SmsContact[]> {
+    const dir = this.smsContactsDir(userId, brandId);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const contacts = await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map(async (entry) => {
+          const raw = await readFile(path.join(dir, entry), "utf8");
+          return smsContactSchema.parse(JSON.parse(raw));
+        }),
+    );
+
+    return contacts
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, Math.max(0, limit));
+  }
+
+  async upsertSmsContact(userId: string, brandId: string, input: SmsContactUpsert): Promise<SmsContact> {
+    const parsed = smsContactUpsertSchema.parse(input);
+    const phone = normalizeUSPhone(parsed.phone);
+    const nowIso = new Date().toISOString();
+
+    const existing = (await this.listSmsContacts(userId, brandId, 5000)).find(
+      (entry) => entry.phone === phone,
+    );
+    const record = smsContactSchema.parse({
+      id: existing?.id ?? randomUUID(),
+      ownerId: userId,
+      brandId,
+      phone,
+      name: parsed.name?.trim() || undefined,
+      tags: parsed.tags,
+      optedIn: parsed.optedIn,
+      consentSource: parsed.consentSource?.trim() || undefined,
+      createdAt: existing?.createdAt ?? nowIso,
+    });
+
+    await this.ensureDir(this.smsContactsDir(userId, brandId));
+    await this.atomicWriteJson(this.smsContactPath(userId, brandId, record.id), record);
+    return record;
+  }
+
+  async updateSmsContact(
+    userId: string,
+    brandId: string,
+    contactId: string,
+    updates: SmsContactUpdate,
+  ): Promise<SmsContact | null> {
+    const parsedUpdates = smsContactUpdateSchema.parse(updates);
+    const filePath = this.smsContactPath(userId, brandId, contactId);
+    const existing = await this.readJson<unknown>(filePath);
+    if (!existing) {
+      return null;
+    }
+    const current = smsContactSchema.parse(existing);
+    const next = smsContactSchema.parse({
+      ...current,
+      ...parsedUpdates,
+      phone:
+        parsedUpdates.phone !== undefined
+          ? normalizeUSPhone(parsedUpdates.phone)
+          : current.phone,
+      name:
+        parsedUpdates.name !== undefined ? parsedUpdates.name.trim() || undefined : current.name,
+      consentSource:
+        parsedUpdates.consentSource !== undefined
+          ? parsedUpdates.consentSource.trim() || undefined
+          : current.consentSource,
+    });
+
+    await this.atomicWriteJson(filePath, next);
+    return next;
+  }
+
+  async deleteSmsContact(userId: string, brandId: string, contactId: string): Promise<boolean> {
+    try {
+      await rm(this.smsContactPath(userId, brandId, contactId));
+      return true;
+    } catch (error) {
+      if (isNotFound(error)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async addSmsMessage(userId: string, brandId: string, input: SmsMessageCreate): Promise<SmsMessage> {
+    const parsed = smsMessageCreateSchema.parse(input);
+    const nowIso = new Date().toISOString();
+    const record = smsMessageSchema.parse({
+      id: randomUUID(),
+      ownerId: userId,
+      brandId,
+      toPhone: normalizeUSPhone(parsed.toPhone),
+      body: parsed.body,
+      status: parsed.status,
+      providerMessageId: parsed.providerMessageId,
+      error: parsed.error,
+      purpose: parsed.purpose,
+      createdAt: nowIso,
+      sentAt: parsed.sentAt,
+    });
+
+    await this.ensureDir(this.smsMessagesDir(userId, brandId));
+    await this.atomicWriteJson(this.smsMessagePath(userId, brandId, record.id), record);
+    return record;
+  }
+
+  async listSmsMessages(userId: string, brandId: string, limit: number): Promise<SmsMessage[]> {
+    const dir = this.smsMessagesDir(userId, brandId);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const items = await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map(async (entry) => {
+          const raw = await readFile(path.join(dir, entry), "utf8");
+          return smsMessageSchema.parse(JSON.parse(raw));
+        }),
+    );
+
+    return items
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, Math.max(0, limit));
+  }
+
+  async updateSmsMessage(
+    userId: string,
+    brandId: string,
+    messageId: string,
+    updates: SmsMessageUpdate,
+  ): Promise<SmsMessage | null> {
+    const parsedUpdates = smsMessageUpdateSchema.parse(updates);
+    const filePath = this.smsMessagePath(userId, brandId, messageId);
+    const existing = await this.readJson<unknown>(filePath);
+    if (!existing) {
+      return null;
+    }
+    const current = smsMessageSchema.parse(existing);
+    const next = smsMessageSchema.parse({
+      ...current,
+      ...parsedUpdates,
+      error:
+        parsedUpdates.error === null
+          ? undefined
+          : parsedUpdates.error ?? current.error,
+    });
+    await this.atomicWriteJson(filePath, next);
+    return next;
   }
 }

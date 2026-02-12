@@ -109,7 +109,7 @@ create table if not exists public.outbox (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
   brand_ref uuid not null references public.brands(id) on delete cascade,
-  type text not null check (type in ('post_publish','sms_send','gbp_post','email_send')),
+  type text not null check (type in ('post_publish','sms_send','sms_campaign','gbp_post','email_send')),
   payload jsonb not null default '{}'::jsonb,
   status text not null check (status in ('queued','sent','failed')),
   attempts int not null default 0,
@@ -117,6 +117,32 @@ create table if not exists public.outbox (
   scheduled_for timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists public.sms_contacts (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  phone text not null,
+  name text,
+  tags jsonb not null default '[]'::jsonb,
+  opted_in boolean not null default true,
+  consent_source text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.sms_messages (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  to_phone text not null,
+  body text not null,
+  status text not null default 'queued' check (status in ('queued','sent','failed')),
+  provider_message_id text,
+  error text,
+  purpose text,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz
 );
 
 alter table public.posts add column if not exists status text not null default 'posted';
@@ -139,6 +165,12 @@ create unique index if not exists integrations_owner_brand_provider_unique
 
 create index if not exists outbox_owner_brand_scheduled_idx
   on public.outbox(owner_id, brand_ref, scheduled_for, status, created_at);
+
+create unique index if not exists sms_contacts_owner_brand_phone_unique
+  on public.sms_contacts(owner_id, brand_ref, phone);
+
+create index if not exists sms_messages_owner_brand_created_idx
+  on public.sms_messages(owner_id, brand_ref, created_at desc);
 
 -- Keep updated_at fresh on brands updates.
 create or replace function public.set_updated_at()
@@ -175,6 +207,8 @@ alter table public.schedule enable row level security;
 alter table public.local_events enable row level security;
 alter table public.integrations enable row level security;
 alter table public.outbox enable row level security;
+alter table public.sms_contacts enable row level security;
+alter table public.sms_messages enable row level security;
 
 drop policy if exists brands_owner_select on public.brands;
 create policy brands_owner_select on public.brands
@@ -233,3 +267,19 @@ create policy outbox_owner_all on public.outbox
 for all
 using (owner_id = auth.uid())
 with check (owner_id = auth.uid());
+
+drop policy if exists sms_contacts_owner_all on public.sms_contacts;
+create policy sms_contacts_owner_all on public.sms_contacts
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+drop policy if exists sms_messages_owner_all on public.sms_messages;
+create policy sms_messages_owner_all on public.sms_messages
+for all
+using (owner_id = auth.uid())
+with check (owner_id = auth.uid());
+
+alter table public.outbox drop constraint if exists outbox_type_check;
+alter table public.outbox add constraint outbox_type_check
+check (type in ('post_publish','sms_send','sms_campaign','gbp_post','email_send'));

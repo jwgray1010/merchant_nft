@@ -26,11 +26,14 @@ import {
   scheduleStatusSchema,
   scheduleUpdateRequestSchema,
 } from "../schemas/scheduleSchema";
-import { smsCampaignSchema, smsSendSchema } from "../schemas/smsSchema";
+import { smsCampaignRequestSchema } from "../schemas/smsCampaignSchema";
+import { smsContactUpsertSchema } from "../schemas/smsContactSchema";
+import { smsSendRequestSchema } from "../schemas/smsSendSchema";
 import { buildDigestPreview } from "../services/digestService";
 import { buildTodayTasks } from "../services/todayService";
 import { getStorageMode, getAdapter } from "../storage/getAdapter";
 import { extractAuthToken, resolveAuthUser } from "../supabase/verifyAuth";
+import { normalizeUSPhone } from "../utils/phone";
 
 const router = Router();
 
@@ -2423,11 +2426,64 @@ router.get("/sms", async (req, res, next) => {
     const selectedBrandId = selectedBrandIdFromQuery(brands, req.query.brandId);
     const status = optionalText(req.query.status);
 
+    let contactsRows = `<tr><td colspan="6" class="muted">Select a business to manage contacts.</td></tr>`;
+    let logRows = `<tr><td colspan="7" class="muted">Select a business to view SMS logs.</td></tr>`;
+    if (selectedBrandId) {
+      const [contacts, messages] = await Promise.all([
+        adapter.listSmsContacts(userId, selectedBrandId, 200),
+        adapter.listSmsMessages(userId, selectedBrandId, 100),
+      ]);
+
+      contactsRows =
+        contacts.length > 0
+          ? contacts
+              .map(
+                (contact) => `<tr>
+                  <td><code>${escapeHtml(contact.id)}</code></td>
+                  <td>${escapeHtml(contact.name ?? "-")}</td>
+                  <td>${escapeHtml(contact.phone)}</td>
+                  <td>${escapeHtml(contact.tags.join(", ") || "-")}</td>
+                  <td>${contact.optedIn ? "yes" : "no"}</td>
+                  <td>
+                    <form method="POST" action="/admin/sms/contacts/${encodeURIComponent(contact.id)}/toggle?brandId=${encodeURIComponent(selectedBrandId)}">
+                      <input type="hidden" name="optedIn" value="${contact.optedIn ? "false" : "true"}" />
+                      <button class="button small secondary" type="submit">${contact.optedIn ? "Opt Out" : "Opt In"}</button>
+                    </form>
+                  </td>
+                </tr>`,
+              )
+              .join("")
+          : `<tr><td colspan="6" class="muted">No contacts yet.</td></tr>`;
+
+      logRows =
+        messages.length > 0
+          ? messages
+              .map(
+                (message) => `<tr>
+                  <td><code>${escapeHtml(message.id)}</code></td>
+                  <td>${escapeHtml(message.toPhone)}</td>
+                  <td>${escapeHtml(message.status)}</td>
+                  <td>${escapeHtml(message.purpose ?? "-")}</td>
+                  <td>${escapeHtml(snippet(message.body, 100))}</td>
+                  <td>${escapeHtml(message.error ?? "-")}</td>
+                  <td>${escapeHtml(formatDateTime(message.sentAt ?? message.createdAt))}</td>
+                </tr>`,
+              )
+              .join("")
+          : `<tr><td colspan="7" class="muted">No SMS logs yet.</td></tr>`;
+    }
+
     const notice =
       status === "sent"
         ? { type: "success" as const, text: "SMS sent." }
         : status === "queued"
           ? { type: "success" as const, text: "SMS campaign queued." }
+          : status === "contact-saved"
+            ? { type: "success" as const, text: "SMS contact saved." }
+            : status === "contact-updated"
+              ? { type: "success" as const, text: "SMS contact updated." }
+              : status === "dry-run"
+                ? { type: "success" as const, text: "Dry run complete. No messages queued." }
           : undefined;
 
     const html = renderLayout(
@@ -2436,8 +2492,34 @@ router.get("/sms", async (req, res, next) => {
       <div class="card">
         <h1>SMS</h1>
         <p class="muted">Flag: ${isTwilioEnabled() ? "enabled" : "disabled"}</p>
-        <p class="muted"><strong>Important:</strong> Only message explicit opt-in recipients. Do not spam.</p>
+        <p class="muted"><strong>Warning:</strong> SMS should only be sent to opted-in recipients. Follow local laws and carrier rules.</p>
         ${renderBrandSelector(brands, selectedBrandId, "/admin/sms")}
+      </div>
+
+      <div class="card">
+        <h2>Add / Upsert Contact</h2>
+        ${
+          selectedBrandId
+            ? `<form method="POST" action="/admin/sms/contacts?brandId=${encodeURIComponent(selectedBrandId)}">
+                <div class="grid">
+                  <div class="field"><label>Name (optional)</label><input name="name" /></div>
+                  <div class="field"><label>Phone</label><input name="phone" placeholder="(555) 555-0123" required /></div>
+                  <div class="field"><label>Tags (comma separated)</label><input name="tags" placeholder="vip, teachers" /></div>
+                  <div class="field"><label>Consent Source</label><input name="consentSource" placeholder="in_store" /></div>
+                </div>
+                <label><input type="checkbox" name="optedIn" checked /> Opted in</label>
+                <div style="margin-top:10px;"><button type="submit">Save Contact</button></div>
+              </form>`
+            : "<p>Select a brand first.</p>"
+        }
+      </div>
+
+      <div class="card">
+        <h2>Contacts</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Tags</th><th>Opted In</th><th>Action</th></tr></thead>
+          <tbody>${contactsRows}</tbody>
+        </table>
       </div>
 
       <div class="card">
@@ -2447,33 +2529,93 @@ router.get("/sms", async (req, res, next) => {
             ? `<form method="POST" action="/admin/sms/send?brandId=${encodeURIComponent(selectedBrandId)}">
                 <div class="grid">
                   <div class="field"><label>To (E.164)</label><input name="to" placeholder="+15555550123" required /></div>
+                  <div class="field"><label>Purpose</label><select name="purpose">${["promo", "reminder", "service", "other"].map((entry) => `<option>${entry}</option>`).join("")}</select></div>
                 </div>
                 <div class="field"><label>Message</label><textarea name="message" required></textarea></div>
-                <button type="submit">Send SMS</button>
+                <label><input type="checkbox" name="sendNow" checked /> Attempt immediate send</label>
+                <div style="margin-top:10px;"><button type="submit">Queue SMS</button></div>
               </form>`
             : "<p>Select a brand first.</p>"
         }
       </div>
 
       <div class="card">
-        <h2>Campaign Queue</h2>
+        <h2>Campaign</h2>
         ${
           selectedBrandId
             ? `<form method="POST" action="/admin/sms/campaign?brandId=${encodeURIComponent(selectedBrandId)}">
                 <div class="grid">
-                  <div class="field"><label>List Name</label><select name="listName">${["teachers", "vip", "gym", "general"].map((entry) => `<option>${entry}</option>`).join("")}</select></div>
+                  <div class="field"><label>List Tag</label><select name="listTag">${["teachers", "vip", "gym", "general"].map((entry) => `<option>${entry}</option>`).join("")}</select></div>
                 </div>
-                <div class="field"><label>Recipients (one per line, E.164)</label><textarea name="recipients" required></textarea></div>
                 <div class="field"><label>Message</label><textarea name="message" required></textarea></div>
-                <button type="submit">Queue Campaign</button>
+                <label><input type="checkbox" name="dryRun" /> Dry run only (preview count)</label><br />
+                <label><input type="checkbox" name="sendNow" checked /> Attempt immediate send chunk</label>
+                <div style="margin-top:10px;"><button type="submit">Queue Campaign</button></div>
               </form>`
             : "<p>Select a brand first.</p>"
         }
+      </div>
+
+      <div class="card">
+        <h2>SMS Logs</h2>
+        <table>
+          <thead><tr><th>ID</th><th>To</th><th>Status</th><th>Purpose</th><th>Body</th><th>Error</th><th>Time</th></tr></thead>
+          <tbody>${logRows}</tbody>
+        </table>
       </div>
       `,
       notice,
     );
     return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/sms/contacts", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("SMS", "<h1>Missing brandId query parameter.</h1>"));
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const tags = String(body.tags ?? "")
+      .split(/[,\n]/g)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== "");
+    const parsed = smsContactUpsertSchema.parse({
+      phone: normalizeUSPhone(String(body.phone ?? "")),
+      name: optionalText(body.name),
+      tags,
+      optedIn: checkbox(body.optedIn),
+      consentSource: optionalText(body.consentSource),
+    });
+
+    await getAdapter().upsertSmsContact(userId, brandId, parsed);
+    return res.redirect(`/admin/sms?brandId=${encodeURIComponent(brandId)}&status=contact-saved`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/sms/contacts/:contactId/toggle", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brandId = optionalText(req.query.brandId);
+    if (!brandId) {
+      return res.status(400).type("html").send(renderLayout("SMS", "<h1>Missing brandId query parameter.</h1>"));
+    }
+    const contactId = req.params.contactId?.trim();
+    if (!contactId) {
+      return res.status(400).type("html").send(renderLayout("SMS", "<h1>Missing contact id.</h1>"));
+    }
+
+    await getAdapter().updateSmsContact(userId, brandId, contactId, {
+      optedIn: checkbox((req.body as Record<string, unknown> | undefined)?.optedIn),
+    });
+    return res.redirect(`/admin/sms?brandId=${encodeURIComponent(brandId)}&status=contact-updated`);
   } catch (error) {
     return next(error);
   }
@@ -2487,14 +2629,48 @@ router.post("/sms/send", async (req, res, next) => {
       return res.status(400).type("html").send(renderLayout("SMS", "<h1>Missing brandId query parameter.</h1>"));
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const parsed = smsSendSchema.parse({
-      to: String(body.to ?? ""),
+    const parsed = smsSendRequestSchema.parse({
+      to: normalizeUSPhone(String(body.to ?? "")),
       message: String(body.message ?? ""),
+      purpose: String(body.purpose ?? "promo"),
+      sendNow: checkbox(body.sendNow),
     });
+    const adapter = getAdapter();
 
-    const provider = await getTwilioProvider(userId, brandId);
-    const result = await provider.sendSms(parsed);
-    await getAdapter().addHistory(userId, brandId, "sms-send", parsed, result);
+    await getTwilioProvider(userId, brandId);
+    const existingContacts = await adapter.listSmsContacts(userId, brandId, 5000);
+    const existingContact = existingContacts.find((entry) => entry.phone === parsed.to);
+    if (existingContact && !existingContact.optedIn) {
+      return res.status(400).type("html").send(
+        renderLayout(
+          "SMS",
+          "<h1>Recipient is opted out. Toggle opt-in on the contact before sending.</h1>",
+        ),
+      );
+    }
+
+    const message = await adapter.addSmsMessage(userId, brandId, {
+      toPhone: parsed.to,
+      body: parsed.message,
+      status: "queued",
+      purpose: parsed.purpose,
+    });
+    await adapter.enqueueOutbox(
+      userId,
+      brandId,
+      "sms_send",
+      {
+        to: parsed.to,
+        body: parsed.message,
+        purpose: parsed.purpose,
+        smsMessageId: message.id,
+      },
+      new Date().toISOString(),
+    );
+
+    if (parsed.sendNow) {
+      await processDueOutbox({ limit: 25, types: ["sms_send"] });
+    }
 
     return res.redirect(`/admin/sms?brandId=${encodeURIComponent(brandId)}&status=sent`);
   } catch (error) {
@@ -2510,27 +2686,60 @@ router.post("/sms/campaign", async (req, res, next) => {
       return res.status(400).type("html").send(renderLayout("SMS", "<h1>Missing brandId query parameter.</h1>"));
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const recipients = String(body.recipients ?? "")
-      .split(/\s+/g)
-      .map((entry) => entry.trim())
-      .filter((entry) => entry !== "");
-    const parsed = smsCampaignSchema.parse({
-      listName: String(body.listName ?? ""),
-      recipients,
+    const parsed = smsCampaignRequestSchema.parse({
+      listTag: String(body.listTag ?? ""),
       message: String(body.message ?? ""),
+      dryRun: checkbox(body.dryRun),
+      sendNow: checkbox(body.sendNow),
     });
 
     await getTwilioProvider(userId, brandId);
-    await Promise.all(
-      parsed.recipients.map((to) =>
-        getAdapter().enqueueOutbox(userId, brandId, "sms_send", {
-          to,
-          message: parsed.message,
-          listName: parsed.listName,
-          optInRequired: true,
+    const adapter = getAdapter();
+    const contacts = await adapter.listSmsContacts(userId, brandId, 5000);
+    const listTag = parsed.listTag.trim().toLowerCase();
+    const selected = contacts.filter((contact) => {
+      if (!contact.optedIn) {
+        return false;
+      }
+      if (listTag === "general") {
+        return true;
+      }
+      return contact.tags.some((tag) => tag.trim().toLowerCase() === listTag);
+    });
+
+    if (parsed.dryRun) {
+      return res.redirect(`/admin/sms?brandId=${encodeURIComponent(brandId)}&status=dry-run`);
+    }
+
+    const smsMessages = await Promise.all(
+      selected.map((contact) =>
+        adapter.addSmsMessage(userId, brandId, {
+          toPhone: contact.phone,
+          body: parsed.message,
+          status: "queued",
+          purpose: "promo",
         }),
       ),
     );
+
+    await adapter.enqueueOutbox(
+      userId,
+      brandId,
+      "sms_campaign",
+      {
+        listTag: parsed.listTag,
+        body: parsed.message,
+        recipients: smsMessages.map((entry) => ({
+          to: entry.toPhone,
+          smsMessageId: entry.id,
+        })),
+      },
+      new Date().toISOString(),
+    );
+
+    if (parsed.sendNow) {
+      await processDueOutbox({ limit: 25, types: ["sms_campaign"] });
+    }
 
     return res.redirect(`/admin/sms?brandId=${encodeURIComponent(brandId)}&status=queued`);
   } catch (error) {

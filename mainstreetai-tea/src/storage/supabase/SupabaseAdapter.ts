@@ -16,6 +16,22 @@ import {
 } from "../../schemas/outboxSchema";
 import { postRequestSchema, storedPostSchema, type PostRequest, type StoredPost } from "../../schemas/postSchema";
 import {
+  smsContactSchema,
+  smsContactUpdateSchema,
+  smsContactUpsertSchema,
+  type SmsContact,
+  type SmsContactUpdate,
+  type SmsContactUpsert,
+} from "../../schemas/smsContactSchema";
+import {
+  smsMessageCreateSchema,
+  smsMessageSchema,
+  smsMessageUpdateSchema,
+  type SmsMessage,
+  type SmsMessageCreate,
+  type SmsMessageUpdate,
+} from "../../schemas/smsSendSchema";
+import {
   scheduleCreateRequestSchema,
   scheduleItemSchema,
   scheduleUpdateRequestSchema,
@@ -25,6 +41,7 @@ import {
 } from "../../schemas/scheduleSchema";
 import { getSupabaseAdminClient } from "../../supabase/supabaseAdmin";
 import { brandProfileSchema, type BrandProfile } from "../../schemas/brandSchema";
+import { normalizeUSPhone } from "../../utils/phone";
 import type { HistoryEndpoint, StorageAdapter } from "../StorageAdapter";
 
 type BrandRow = {
@@ -80,6 +97,32 @@ type OutboxRow = {
   scheduled_for: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type SmsContactRow = {
+  id: string;
+  owner_id: string;
+  brand_ref: string;
+  phone: string;
+  name: string | null;
+  tags: unknown;
+  opted_in: boolean;
+  consent_source: string | null;
+  created_at: string;
+};
+
+type SmsMessageRow = {
+  id: string;
+  owner_id: string;
+  brand_ref: string;
+  to_phone: string;
+  body: string;
+  status: string;
+  provider_message_id: string | null;
+  error: string | null;
+  purpose: string | null;
+  created_at: string;
+  sent_at: string | null;
 };
 
 function isUniqueViolation(error: unknown): boolean {
@@ -162,6 +205,36 @@ function toOutboxRecord(brandId: string, row: OutboxRow): OutboxRecord {
     scheduledFor: row.scheduled_for ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  });
+}
+
+function toSmsContact(brandId: string, row: SmsContactRow): SmsContact {
+  return smsContactSchema.parse({
+    id: row.id,
+    ownerId: row.owner_id,
+    brandId,
+    phone: row.phone,
+    name: row.name ?? undefined,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    optedIn: row.opted_in,
+    consentSource: row.consent_source ?? undefined,
+    createdAt: row.created_at,
+  });
+}
+
+function toSmsMessage(brandId: string, row: SmsMessageRow): SmsMessage {
+  return smsMessageSchema.parse({
+    id: row.id,
+    ownerId: row.owner_id,
+    brandId,
+    toPhone: row.to_phone,
+    body: row.body,
+    status: row.status,
+    providerMessageId: row.provider_message_id ?? undefined,
+    error: row.error ?? undefined,
+    purpose: row.purpose ?? undefined,
+    createdAt: row.created_at,
+    sentAt: row.sent_at ?? undefined,
   });
 }
 
@@ -934,6 +1007,7 @@ export class SupabaseAdapter implements StorageAdapter {
     if (parsedUpdates.attempts !== undefined) payload.attempts = parsedUpdates.attempts;
     if (parsedUpdates.lastError !== undefined) payload.last_error = parsedUpdates.lastError;
     if (parsedUpdates.scheduledFor !== undefined) payload.scheduled_for = parsedUpdates.scheduledFor;
+    if (parsedUpdates.payload !== undefined) payload.payload = parsedUpdates.payload;
 
     const { data, error } = await this.table("outbox")
       .update(payload)
@@ -985,5 +1059,189 @@ export class SupabaseAdapter implements StorageAdapter {
       return null;
     }
     return toOutboxRecord(brandId, data as OutboxRow);
+  }
+
+  async listSmsContacts(userId: string, brandId: string, limit: number): Promise<SmsContact[]> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("sms_contacts")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .order("created_at", { ascending: false })
+      .limit(Math.max(0, limit));
+    if (error) {
+      throw error;
+    }
+    return ((data ?? []) as SmsContactRow[]).map((row) => toSmsContact(brandId, row));
+  }
+
+  async upsertSmsContact(userId: string, brandId: string, input: SmsContactUpsert): Promise<SmsContact> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = smsContactUpsertSchema.parse(input);
+    const normalizedPhone = normalizeUSPhone(parsed.phone);
+
+    const { data: existing, error: existingError } = await this.table("sms_contacts")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("phone", normalizedPhone)
+      .maybeSingle();
+    if (existingError) {
+      throw existingError;
+    }
+
+    if (existing) {
+      const { data, error } = await this.table("sms_contacts")
+        .update({
+          name: parsed.name?.trim() || null,
+          tags: parsed.tags,
+          opted_in: parsed.optedIn,
+          consent_source: parsed.consentSource?.trim() || null,
+        })
+        .eq("id", (existing as { id: string }).id)
+        .select("*")
+        .single();
+      if (error) {
+        throw error;
+      }
+      return toSmsContact(brandId, data as SmsContactRow);
+    }
+
+    const { data, error } = await this.table("sms_contacts")
+      .insert({
+        owner_id: userId,
+        brand_ref: brandRow.id,
+        phone: normalizedPhone,
+        name: parsed.name?.trim() || null,
+        tags: parsed.tags,
+        opted_in: parsed.optedIn,
+        consent_source: parsed.consentSource?.trim() || null,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    return toSmsContact(brandId, data as SmsContactRow);
+  }
+
+  async updateSmsContact(
+    userId: string,
+    brandId: string,
+    contactId: string,
+    updates: SmsContactUpdate,
+  ): Promise<SmsContact | null> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = smsContactUpdateSchema.parse(updates);
+    const payload: Record<string, unknown> = {};
+    if (parsed.phone !== undefined) payload.phone = normalizeUSPhone(parsed.phone);
+    if (parsed.name !== undefined) payload.name = parsed.name.trim() || null;
+    if (parsed.tags !== undefined) payload.tags = parsed.tags;
+    if (parsed.optedIn !== undefined) payload.opted_in = parsed.optedIn;
+    if (parsed.consentSource !== undefined) payload.consent_source = parsed.consentSource.trim() || null;
+
+    const { data, error } = await this.table("sms_contacts")
+      .update(payload)
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("id", contactId)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toSmsContact(brandId, data as SmsContactRow);
+  }
+
+  async deleteSmsContact(userId: string, brandId: string, contactId: string): Promise<boolean> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("sms_contacts")
+      .delete()
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("id", contactId)
+      .select("id")
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    return Boolean(data);
+  }
+
+  async addSmsMessage(userId: string, brandId: string, input: SmsMessageCreate): Promise<SmsMessage> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = smsMessageCreateSchema.parse(input);
+
+    const { data, error } = await this.table("sms_messages")
+      .insert({
+        owner_id: userId,
+        brand_ref: brandRow.id,
+        to_phone: normalizeUSPhone(parsed.toPhone),
+        body: parsed.body,
+        status: parsed.status,
+        provider_message_id: parsed.providerMessageId ?? null,
+        error: parsed.error ?? null,
+        purpose: parsed.purpose ?? null,
+        sent_at: parsed.sentAt ?? null,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    return toSmsMessage(brandId, data as SmsMessageRow);
+  }
+
+  async listSmsMessages(userId: string, brandId: string, limit: number): Promise<SmsMessage[]> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const { data, error } = await this.table("sms_messages")
+      .select("*")
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .order("created_at", { ascending: false })
+      .limit(Math.max(0, limit));
+    if (error) {
+      throw error;
+    }
+    return ((data ?? []) as SmsMessageRow[]).map((row) => toSmsMessage(brandId, row));
+  }
+
+  async updateSmsMessage(
+    userId: string,
+    brandId: string,
+    messageId: string,
+    updates: SmsMessageUpdate,
+  ): Promise<SmsMessage | null> {
+    const brandRow = await this.requireBrandRow(userId, brandId);
+    const parsed = smsMessageUpdateSchema.parse(updates);
+    const payload: Record<string, unknown> = {};
+    if (parsed.status !== undefined) payload.status = parsed.status;
+    if (parsed.providerMessageId !== undefined) {
+      payload.provider_message_id = parsed.providerMessageId;
+    }
+    if (parsed.error !== undefined) {
+      payload.error = parsed.error;
+    }
+    if (parsed.sentAt !== undefined) {
+      payload.sent_at = parsed.sentAt;
+    }
+
+    const { data, error } = await this.table("sms_messages")
+      .update(payload)
+      .eq("owner_id", userId)
+      .eq("brand_ref", brandRow.id)
+      .eq("id", messageId)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toSmsMessage(brandId, data as SmsMessageRow);
   }
 }

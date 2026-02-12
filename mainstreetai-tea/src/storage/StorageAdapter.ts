@@ -14,6 +14,16 @@ import type {
 } from "../schemas/outboxSchema";
 import type { PostRequest, StoredPost } from "../schemas/postSchema";
 import type {
+  SmsContact,
+  SmsContactUpdate,
+  SmsContactUpsert,
+} from "../schemas/smsContactSchema";
+import type {
+  SmsMessage,
+  SmsMessageCreate,
+  SmsMessageUpdate,
+} from "../schemas/smsSendSchema";
+import type {
   ScheduleCreateRequest,
   ScheduleItem,
   ScheduleUpdateRequest,
@@ -110,4 +120,23 @@ export interface StorageAdapter {
   listDueOutbox(nowIso: string, limit: number): Promise<OutboxRecord[]>;
   updateOutbox(id: string, updates: OutboxUpdate): Promise<OutboxRecord | null>;
   getOutboxById(userId: string, brandId: string, id: string): Promise<OutboxRecord | null>;
+
+  listSmsContacts(userId: string, brandId: string, limit: number): Promise<SmsContact[]>;
+  upsertSmsContact(userId: string, brandId: string, input: SmsContactUpsert): Promise<SmsContact>;
+  updateSmsContact(
+    userId: string,
+    brandId: string,
+    contactId: string,
+    updates: SmsContactUpdate,
+  ): Promise<SmsContact | null>;
+  deleteSmsContact(userId: string, brandId: string, contactId: string): Promise<boolean>;
+
+  addSmsMessage(userId: string, brandId: string, input: SmsMessageCreate): Promise<SmsMessage>;
+  listSmsMessages(userId: string, brandId: string, limit: number): Promise<SmsMessage[]>;
+  updateSmsMessage(
+    userId: string,
+    brandId: string,
+    messageId: string,
+    updates: SmsMessageUpdate,
+  ): Promise<SmsMessage | null>;
 }
