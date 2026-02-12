@@ -2,13 +2,14 @@ import { Router } from "express";
 import { getBrand } from "../data/brandStore";
 import { runPrompt } from "../ai/runPrompt";
 import { brandIdSchema } from "../schemas/brandSchema";
-import { weekPlanRequestSchema } from "../schemas/weekPlanRequestSchema";
+import { nextWeekPlanRequestSchema } from "../schemas/nextWeekPlanRequestSchema";
 import { weekPlanOutputSchema } from "../schemas/weekPlanOutputSchema";
+import { generateInsights } from "../services/insightsService";
 
 const router = Router();
 
 router.post("/", async (req, res, next) => {
-  const parsed = weekPlanRequestSchema.safeParse(req.body);
+  const parsed = nextWeekPlanRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
       error: "Invalid request body",
@@ -20,7 +21,7 @@ router.post("/", async (req, res, next) => {
   if (typeof rawBrandId !== "string" || rawBrandId.trim() === "") {
     return res.status(400).json({
       error:
-        "Missing brandId query parameter. Example: /week-plan?brandId=main-street-nutrition",
+        "Missing brandId query parameter. Example: /next-week-plan?brandId=main-street-nutrition",
     });
   }
 
@@ -38,10 +39,18 @@ router.post("/", async (req, res, next) => {
       return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
     }
 
+    const learning = await generateInsights(brand);
+
     const result = await runPrompt({
-      promptFile: "week_plan.md",
+      promptFile: "next_week_plan.md",
       brandProfile: brand,
-      input: parsed.data,
+      input: {
+        ...parsed.data,
+        brand,
+        insights: learning.insights,
+        previousWeekPlans: learning.previousWeekPlans,
+        recentTopPosts: learning.recentTopPosts,
+      },
       outputSchema: weekPlanOutputSchema,
     });
 

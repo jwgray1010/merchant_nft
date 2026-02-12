@@ -1,7 +1,7 @@
 You are building MainStreetAI as a multi-business platform for local small businesses.
 
 Priorities:
-1) Ship a working API with brand profiles and 5 endpoints: /brands, /promo, /social, /events, /week-plan
+1) Ship a working API with brand profiles, generation endpoints, and learning endpoints (/posts, /metrics, /insights, /next-week-plan)
 2) Keep it simple: Express + OpenAI SDK + local JSON storage + minimal validation
 3) Output must sound small-town friendly, not corporate.
 4) Avoid big refactors; prefer small, testable changes.

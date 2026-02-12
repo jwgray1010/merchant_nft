@@ -1,8 +1,13 @@
 import "dotenv/config";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
+import { createGenerationHistoryMiddleware } from "./middleware/generationHistory";
 import brandRouter from "./routes/brand";
 import eventsRouter from "./routes/events";
+import insightsRouter from "./routes/insights";
+import metricsRouter from "./routes/metrics";
+import nextWeekPlanRouter from "./routes/nextWeekPlan";
+import postsRouter from "./routes/posts";
 import promoRouter from "./routes/promo";
 import socialRouter from "./routes/social";
 import weekPlanRouter from "./routes/weekPlan";
@@ -18,10 +23,18 @@ app.get("/health", (_req: Request, res: Response) => {
 });
 
 app.use("/brands", brandRouter);
-app.use("/promo", promoRouter);
-app.use("/social", socialRouter);
-app.use("/events", eventsRouter);
-app.use("/week-plan", weekPlanRouter);
+app.use("/posts", postsRouter);
+app.use("/metrics", metricsRouter);
+app.use("/insights", insightsRouter);
+app.use("/promo", createGenerationHistoryMiddleware("promo"), promoRouter);
+app.use("/social", createGenerationHistoryMiddleware("social"), socialRouter);
+app.use("/events", createGenerationHistoryMiddleware("events"), eventsRouter);
+app.use("/week-plan", createGenerationHistoryMiddleware("week-plan"), weekPlanRouter);
+app.use(
+  "/next-week-plan",
+  createGenerationHistoryMiddleware("next-week-plan"),
+  nextWeekPlanRouter,
+);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Not found" });
