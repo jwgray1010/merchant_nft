@@ -228,6 +228,20 @@ create table if not exists public.town_success_signals (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.town_board_posts (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  source text not null,
+  title text not null,
+  description text not null default '',
+  event_date timestamptz not null,
+  needs jsonb not null default '[]'::jsonb,
+  contact_info text not null,
+  signup_url text,
+  status text not null default 'pending' check (status in ('pending','approved','rejected')),
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.community_events (
   id uuid primary key default gen_random_uuid(),
   town_ref uuid not null references public.towns(id) on delete cascade,
@@ -694,6 +708,12 @@ create index if not exists town_success_signals_town_created_idx
 create index if not exists town_success_signals_town_signal_idx
   on public.town_success_signals(town_ref, signal, created_at desc);
 
+create index if not exists town_board_posts_town_status_date_idx
+  on public.town_board_posts(town_ref, status, event_date asc, created_at desc);
+
+create index if not exists town_board_posts_status_created_idx
+  on public.town_board_posts(status, created_at desc);
+
 create index if not exists community_events_town_date_idx
   on public.community_events(town_ref, event_date asc, created_at desc);
 
@@ -963,6 +983,7 @@ alter table public.sponsored_memberships enable row level security;
 alter table public.town_ambassadors enable row level security;
 alter table public.town_invites enable row level security;
 alter table public.town_success_signals enable row level security;
+alter table public.town_board_posts enable row level security;
 alter table public.community_events enable row level security;
 alter table public.event_interest enable row level security;
 alter table public.owner_progress enable row level security;
@@ -1282,6 +1303,23 @@ with check (public.is_town_member(town_ref));
 
 drop policy if exists town_success_signals_member_modify on public.town_success_signals;
 create policy town_success_signals_member_modify on public.town_success_signals
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists town_board_posts_member_select on public.town_board_posts;
+create policy town_board_posts_member_select on public.town_board_posts
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_board_posts_public_insert on public.town_board_posts;
+create policy town_board_posts_public_insert on public.town_board_posts
+for insert
+to anon, authenticated
+with check (status = 'pending');
+
+drop policy if exists town_board_posts_member_modify on public.town_board_posts;
+create policy town_board_posts_member_modify on public.town_board_posts
 for all
 using (public.is_town_member(town_ref))
 with check (public.is_town_member(town_ref));

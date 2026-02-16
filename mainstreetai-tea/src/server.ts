@@ -10,6 +10,7 @@ import { verifyAuth } from "./supabase/verifyAuth";
 import adminRouter from "./routes/admin";
 import adminIntelligenceRouter from "./routes/adminIntelligence";
 import adminSaasRouter from "./routes/adminSaas";
+import adminTownBoardRouter from "./routes/adminTownBoard";
 import alertsRouter from "./routes/alerts";
 import autopilotRouter from "./routes/autopilot";
 import autopublicityRouter from "./routes/autopublicity";
@@ -61,6 +62,7 @@ import trustRouter from "./routes/trust";
 import townRouter from "./routes/town";
 import timingRouter from "./routes/timing";
 import todayRouter from "./routes/today";
+import townBoardRouter from "./routes/townBoard";
 import voiceRouter from "./routes/voice";
 import weekPlanRouter from "./routes/weekPlan";
 
@@ -81,6 +83,7 @@ app.get("/health", (_req: Request, res: Response) => {
 app.use("/admin", adminRouter);
 app.use("/admin", adminSaasRouter);
 app.use("/admin", adminIntelligenceRouter);
+app.use("/admin", adminTownBoardRouter);
 app.use("/brands", verifyAuth, brandRouter);
 app.use("/history", verifyAuth, resolveBrandAccessFromQuery(), historyRouter);
 app.use("/local-events", verifyAuth, resolveBrandAccessFromQuery(), localEventsRouter);
@@ -184,6 +187,7 @@ app.use("/api/jobs/town-graph", jobsTownGraphRouter);
 app.use("/api/jobs/town-micro-routes", jobsTownMicroRoutesRouter);
 app.use("/api/jobs/town-seasons", jobsTownSeasonsRouter);
 app.use("/app", easyModeRouter);
+app.use("/", townBoardRouter);
 app.use("/", publicRouter);
 
 app.use((_req: Request, res: Response) => {

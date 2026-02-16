@@ -1253,7 +1253,7 @@ function renderDailyPackSection(
   const communityOpportunitySection = pack.communityOpportunity
     ? `<article class="result-card" id="daily-community-opportunity">
         <p class="section-title">Community Opportunity</p>
-        <h2 class="text-lg">🟢 ${escapeHtml(pack.communityOpportunity.title)}</h2>
+        <h2 class="text-lg">🪧 ${escapeHtml(pack.communityOpportunity.title)}</h2>
         <p class="output-value" id="daily-community-line">${escapeHtml(pack.communityOpportunity.line)}</p>
         <p class="muted">${escapeHtml(
           new Date(pack.communityOpportunity.eventDate).toLocaleString(),
@@ -1274,7 +1274,7 @@ function renderDailyPackSection(
             data-event-id="${escapeHtml(pack.communityOpportunity.eventId)}"
             data-interest-type="${escapeHtml(pack.communityOpportunity.suggestedInterestType)}"
             data-endpoint="${escapeHtml(eventInterestEndpoint)}"
-          >I'm Interested</button>
+          >I Can Help</button>
           <button class="secondary-button community-later-btn" type="button">Maybe Later</button>
           ${
             pack.communityOpportunity.suggestedMessage
@@ -1641,14 +1641,14 @@ router.get("/", async (req, res, next) => {
               const communityOpportunitySection = pack.communityOpportunity
                 ? '<article class="result-card" id="daily-community-opportunity">' +
                     '<p class="section-title">Community Opportunity</p>' +
-                    '<h2 class="text-lg">🟢 ' + esc(pack.communityOpportunity.title || "") + '</h2>' +
+                    '<h2 class="text-lg">🪧 ' + esc(pack.communityOpportunity.title || "") + '</h2>' +
                     '<p id="daily-community-line" class="output-value">' + esc(pack.communityOpportunity.line || "") + '</p>' +
                     '<p class="muted">' + esc(new Date(pack.communityOpportunity.eventDate || "").toLocaleString()) + ' · ' + esc(pack.communityOpportunity.source || "") + '</p>' +
                     (pack.communityOpportunity.suggestedMessage
                       ? '<div class="divider"><p id="daily-community-message" class="output-value">' + esc(pack.communityOpportunity.suggestedMessage || "") + '</p></div>'
                       : '') +
                     '<div class="button-stack" style="margin-top:10px;">' +
-                      '<button class="primary-button community-interest-btn" type="button" data-event-id="' + esc(pack.communityOpportunity.eventId || "") + '" data-interest-type="' + esc(pack.communityOpportunity.suggestedInterestType || "assist") + '" data-endpoint="' + esc(eventInterestEndpoint) + '">I\\'m Interested</button>' +
+                      '<button class="primary-button community-interest-btn" type="button" data-event-id="' + esc(pack.communityOpportunity.eventId || "") + '" data-interest-type="' + esc(pack.communityOpportunity.suggestedInterestType || "assist") + '" data-endpoint="' + esc(eventInterestEndpoint) + '">I Can Help</button>' +
                       '<button class="secondary-button community-later-btn" type="button">Maybe Later</button>' +
                       (pack.communityOpportunity.suggestedMessage ? '<button class="secondary-button" data-copy-target="daily-community-message" type="button">Send Message</button>' : '') +
                       (pack.communityOpportunity.signupUrl ? '<a class="secondary-button" href="' + esc(pack.communityOpportunity.signupUrl) + '" target="_blank" rel="noopener">Open Signup</a>' : '') +
@@ -1734,7 +1734,7 @@ router.get("/", async (req, res, next) => {
                 if (status) status.textContent = json.error || "Could not save interest.";
                 return;
               }
-              if (status) status.textContent = "Great - we're interested. Message is ready.";
+              if (status) status.textContent = "Great - we can help. Message is ready.";
               if (json.message && document.getElementById("daily-community-message")) {
                 document.getElementById("daily-community-message").textContent = json.message;
               }

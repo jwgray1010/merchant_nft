@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 21)
+# MainStreetAI Platform API (Phase 22)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -62,6 +62,7 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - AutoPublicity Engine simple mode (upload once, post everywhere)
   - Camera Mode (snap -> AI captions -> post everywhere)
   - Community Events Bridge (chamber/school/youth opportunities in daily flow)
+  - Town Board + Kitchen Table Mode (zero-step town submissions by QR/link)
   - Public marketing pages (`/`, `/pricing`, `/demo`)
   - Onboarding wizard (`/onboarding`)
   - Demo-mode write protection middleware
@@ -2047,7 +2048,7 @@ Owner experience:
   - event title/date/source
   - needed help tags
   - optional signup link
-  - one-tap actions: `I'm Interested`, `Maybe Later`, `Send Message`
+  - one-tap actions: `I Can Help`, `Maybe Later`, `Send Message`
 - New protected routes:
   - `GET /api/events/opportunities`
   - `POST /api/events/interest`
@@ -2063,3 +2064,56 @@ AI and tone updates:
 Presence integration:
 - Community events can shape subtle town presence lines in easy mode (for example: "We've got a busy weekend with youth events - let's show up together.").
 - Messaging remains low-pressure, community-first, and non-competitive.
+
+## Phase 22: Town Board + Kitchen Table Mode (zero-step community submission)
+
+Phase 22 adds a frictionless town bulletin board entrypoint for schools, youth groups, chambers, nonprofits, and organizers.
+
+Public entry and submission:
+- New route:
+  - `GET /townboard/:townSlug`
+  - mobile-first "Kitchen Table" form with large tap targets
+  - no account required
+- Form fields:
+  - Event Name
+  - Date
+  - Help needed (`drinks|catering|sponsorship|volunteers`)
+  - Short description
+  - Contact info
+  - Optional signup link
+- New poster route:
+  - `GET /townboard/:townSlug/poster`
+  - printable QR poster for offices/front desks/community boards
+
+New data model:
+- `town_board_posts`
+  - `id`
+  - `town_ref`
+  - `source`
+  - `title`
+  - `description`
+  - `event_date`
+  - `needs`
+  - `contact_info`
+  - `signup_url`
+  - `status` (`pending|approved|rejected`)
+  - `created_at`
+
+AI clean pass:
+- New prompt:
+  - `prompts/townboard_clean.md`
+  - rewrites raw submissions into calm, we-mode local language
+  - removes promotional/corporate tone before moderation flow
+
+Moderation flow:
+- New admin route:
+  - `GET /admin/townboard`
+  - review pending posts, edit wording, approve/reject
+- Approval publishes a matching event into the existing community opportunity stream.
+
+Owner-facing behavior (no new owner surface):
+- Approved town board items flow into existing:
+  - `Today's Plan`
+  - presence line logic
+  - `Community Opportunity` card
+- Owners continue to use one-tap response flow (`I Can Help` + generated message).

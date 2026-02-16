@@ -243,6 +243,7 @@ function renderLayout(
         <a class="button secondary small" href="/admin/alerts">Alerts</a>
         <a class="button secondary small" href="/admin/tomorrow">Tomorrow</a>
         <a class="button secondary small" href="/admin/local-events">Local Events</a>
+        <a class="button secondary small" href="/admin/townboard">Town Board</a>
         <a class="button secondary small" href="/admin/today">Today</a>
         <a class="button secondary small" href="/admin/logout">Logout</a>
       </div>
