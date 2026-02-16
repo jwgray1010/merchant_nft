@@ -162,6 +162,7 @@ function syntheticBrandProfileForTown(town: TownRecord): BrandProfile {
     supportLevel: "steady",
     localTrustEnabled: true,
     localTrustStyle: "mainstreet",
+    serviceTags: [],
     type: "other",
     voice: "Warm, community-first, and neighborly.",
     audiences: ["locals", "neighbors", "families"],
