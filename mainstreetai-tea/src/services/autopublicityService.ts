@@ -14,7 +14,8 @@ import {
 } from "../schemas/autopublicitySchema";
 import { getAdapter, getStorageMode } from "../storage/getAdapter";
 import { getSupabaseAdminClient } from "../supabase/supabaseAdmin";
-import { getLocationById, type LocationRecord } from "./locationStore";
+import type { LocationRecord } from "../schemas/locationSchema";
+import { getLocationById } from "./locationStore";
 import { processDueOutbox } from "../jobs/outboxProcessor";
 import { generateLocalTrustLine, isLocalTrustEnabled } from "./localTrustService";
 
