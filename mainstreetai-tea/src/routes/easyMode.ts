@@ -38,14 +38,13 @@ import {
 import { recomputeTownMicroRoutesForTown } from "../services/townMicroRoutesService";
 import { deleteTownSeason, listTownSeasons, resolveTownSeasonStateForTown, upsertTownSeason } from "../services/townSeasonService";
 import { townSeasonKeySchema, type TownSeasonKey } from "../schemas/townSeasonSchema";
-import { parseSeasonOverride } from "../town/seasonDetector";
-import { parseTownWindowOverride, townWindowLabel } from "../town/windows";
 import { getTownPulseModelForBrand } from "../services/townPulseService";
 import { getLatestTownStoryForBrand } from "../services/townStoriesService";
 import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
 import { getOwnerConfidenceForBrand, listOwnerWinMoments } from "../services/ownerConfidenceService";
 import { getFirstWinStatusForBrand } from "../services/firstWinService";
+import { buildPresenceSignals } from "../presence/presenceSystem";
 import type { BrandProfile } from "../schemas/brandSchema";
 import { townGraphCategorySchema, type TownGraphCategory } from "../schemas/townGraphSchema";
 import type { LocationRecord } from "../schemas/locationSchema";
@@ -97,6 +96,11 @@ type EasyContext = {
     line: string;
     last7DaysActive: boolean[];
     shownUpDaysThisWeek: number;
+  };
+  presence: {
+    greeting: string;
+    badge: string;
+    participationLine: string;
   };
   firstWin: {
     needsFirstWin: boolean;
@@ -308,6 +312,9 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         last7DaysActive: [false, false, false, false, false, false, false],
         shownUpDaysThisWeek: 0,
       },
+      presence: buildPresenceSignals({
+        confidenceLevel: "steady",
+      }),
       firstWin: {
         needsFirstWin: false,
         hasCompleted: false,
@@ -346,6 +353,9 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         last7DaysActive: [false, false, false, false, false, false, false],
         shownUpDaysThisWeek: 0,
       },
+      presence: buildPresenceSignals({
+        confidenceLevel: "steady",
+      }),
       firstWin: {
         needsFirstWin: false,
         hasCompleted: false,
@@ -392,6 +402,9 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         last7DaysActive: [false, false, false, false, false, false, false],
         shownUpDaysThisWeek: 0,
       },
+      presence: buildPresenceSignals({
+        confidenceLevel: "steady",
+      }),
       firstWin: {
         needsFirstWin: false,
         hasCompleted: false,
@@ -520,6 +533,9 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       last7DaysActive: confidence.last7DaysActive,
       shownUpDaysThisWeek: confidence.shownUpDaysThisWeek,
     },
+    presence: buildPresenceSignals({
+      confidenceLevel: confidence.confidenceLevel,
+    }),
     firstWin: {
       needsFirstWin: firstWinStatus.needsFirstWin,
       hasCompleted: firstWinStatus.hasCompleted,
@@ -590,13 +606,14 @@ function renderHeader(context: EasyContext, currentPath: string): string {
   const trustBadge = context.selectedBrand.localTrustEnabled
     ? `<span class="neighborhood-chip">Local Network Member</span>`
     : "";
+  const presenceBadge = `<span class="presence-chip">${escapeHtml(context.presence.badge)}</span>`;
   const sponsorshipWaitlistNote =
     !context.communitySupport.supported &&
     context.communitySupport.sponsorshipEligible &&
     context.communitySupport.seatsRemaining === 0
       ? `<p class="muted" style="margin-top:8px;">Community sponsorship seats are currently full. Reduced-cost path is available in Billing.</p>`
       : "";
-  const badgeRow = [communitySupportBadge, ambassadorBadge, trustBadge]
+  const badgeRow = [presenceBadge, communitySupportBadge, ambassadorBadge, trustBadge]
     .filter((entry) => entry !== "")
     .join("");
   const confidenceSupportLine = context.ownerConfidence.line || "Steady effort matters more than perfect days.";
@@ -607,7 +624,9 @@ function renderHeader(context: EasyContext, currentPath: string): string {
     <p class="section-title">MainStreetAI Easy Mode</p>
     <h1 class="text-xl">${escapeHtml(greeting)}, ${escapeHtml(context.selectedBrand.businessName)}</h1>
     <p class="muted">${escapeHtml(context.selectedBrand.location)}</p>
+    <p class="presence-note">${escapeHtml(context.presence.greeting)}</p>
     <p class="muted" style="margin-top:6px;">${escapeHtml(confidenceSupportLine)}</p>
+    <p class="muted" style="margin-top:4px;">${escapeHtml(context.presence.participationLine)}</p>
     ${winMomentLine}
     ${badgeRow ? `<div class="chip-row" style="margin-top:8px;">${badgeRow}</div>` : ""}
     ${sponsorshipWaitlistNote}
@@ -631,10 +650,11 @@ function renderCoachBubble(context: EasyContext): string {
   return `<button id="coach-open" class="coach-fab" type="button">💬</button>
   <div id="coach-modal" class="coach-modal hidden">
     <div class="coach-card rounded-2xl p-6 shadow-sm bg-white">
-      <h3>Need an idea today?</h3>
-      <p class="muted">Pick one quick action:</p>
-      <a class="primary-button" href="${escapeHtml(withSelection("/app/post-now", context))}">⚡ Post Now?</a>
-      <button class="primary-button" id="coach-run-daily" type="button">✅ Make Me Money Today</button>
+      <h3>Check in with our town</h3>
+      <p class="muted">Keep it simple with three actions:</p>
+      <button class="primary-button" id="coach-run-daily" type="button">Today's Plan</button>
+      <a class="primary-button" href="${escapeHtml(withSelection("/app/camera", context))}">Snap &amp; Share</a>
+      <a class="secondary-button" href="${escapeHtml(withSelection("/app", context))}#how-it-went">How Did It Go?</a>
       <a class="secondary-button" href="#" id="coach-close">Close</a>
     </div>
   </div>`;
@@ -890,6 +910,23 @@ function easyLayout(input: {
         font-size: 0.84rem;
         font-weight: 500;
       }
+      .presence-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.26rem 0.72rem;
+        border-radius: 999px;
+        background: #e9f7ef;
+        color: #166534;
+        border: 1px solid #d0eadb;
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+      .presence-note {
+        margin: 6px 0 0 0;
+        color: #4b5563;
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
       .streak-dots {
         display: inline-flex;
         align-items: center;
@@ -1035,20 +1072,6 @@ function cardLink(href: string, emoji: string, title: string, subtitle: string):
     <strong style="display:block;">${escapeHtml(title)}</strong>
     <p class="muted" style="margin-top:8px;">${escapeHtml(subtitle)}</p>
   </a>`;
-}
-
-function seasonTagLabel(tag: string): string {
-  if (tag === "holiday") return "Holiday";
-  if (tag === "school") return "School week";
-  if (tag === "football") return "Football season";
-  if (tag === "basketball") return "Basketball season";
-  if (tag === "baseball") return "Baseball season";
-  if (tag === "festival") return "Festival week";
-  if (tag === "winter") return "Winter";
-  if (tag === "spring") return "Spring";
-  if (tag === "summer") return "Summer";
-  if (tag === "fall") return "Fall";
-  return "Season";
 }
 
 function confidenceLabel(level: "low" | "steady" | "rising"): string {
@@ -1334,7 +1357,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string, autopublicit
              <button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Staff Line</button>`
           : ""
       }
-      <a class="primary-button" href="${escapeHtml(autopublicityUrl)}">Upload Photo &amp; Post Now</a>
+      <a class="primary-button" href="${escapeHtml(autopublicityUrl)}">Snap &amp; Share</a>
       <button class="secondary-button" id="share-daily" type="button">Share</button>
       <a class="secondary-button" id="print-daily-sign" href="${escapeHtml(signUrl)}">Printable Sign</a>
     </div>
@@ -1387,65 +1410,14 @@ router.get("/", async (req, res, next) => {
     const signUrl = withSelection("/app/sign/today", context);
     const autopublicityUrl = withSelection("/app/autopublicity", context);
     const cameraModeUrl = withSelection("/app/camera", context);
-    const routeWindowOverride = parseTownWindowOverride(optionalText(req.query.window));
-    const seasonOverride = parseSeasonOverride(optionalText(req.query.season));
-    const routeWindowOptions = [
-      { value: "", label: "Auto (current)" },
-      { value: "morning", label: "Morning" },
-      { value: "lunch", label: "Lunch" },
-      { value: "after_work", label: "After Work" },
-      { value: "evening", label: "Evening" },
-      { value: "weekend", label: "Weekend" },
-    ];
-    const seasonOptions = [
-      { value: "", label: "Auto (detected)" },
-      ...townSeasonKeySchema.options.map((seasonKey) => ({
-        value: seasonKey,
-        label: seasonKey.charAt(0).toUpperCase() + seasonKey.slice(1),
-      })),
-    ];
-    const routeWindowSelect = `<details style="margin-top:10px;">
-      <summary class="muted">Optional route cues</summary>
-      <label class="field-label">Switch route window
-        <select id="daily-window">
-          ${routeWindowOptions
-            .map(
-              (option) =>
-                `<option value="${escapeHtml(option.value)}" ${
-                  (routeWindowOverride ?? "") === option.value ? "selected" : ""
-                }>${escapeHtml(option.label)}</option>`,
-            )
-            .join("")}
-        </select>
-      </label>
-      <label class="field-label">Season override
-        <select id="daily-season">
-          ${seasonOptions
-            .map(
-              (option) =>
-                `<option value="${escapeHtml(option.value)}" ${
-                  (seasonOverride ?? "") === option.value ? "selected" : ""
-                }>${escapeHtml(option.label)}</option>`,
-            )
-            .join("")}
-        </select>
-      </label>
-    </details>`;
-    const activeWindow = routeWindowOverride ?? latest?.output?.townMicroRoute?.window;
-    const activeSeason = seasonOverride ?? latest?.output?.townSeasonalBoost?.seasonTags?.[0];
-    const townPulseIndicator = townPulse
-      ? `<a class="town-pulse-badge" href="${escapeHtml(withSelection("/app/town/pulse", context))}">Town Pulse: Active</a>`
-      : `<a class="town-pulse-badge" href="${escapeHtml(withSelection("/app/town/pulse", context))}">Town Pulse: Warming up</a>`;
-    const chipWindow = activeWindow
-      ? `<span class="neighborhood-chip">Window: ${escapeHtml(townWindowLabel(activeWindow))}</span>`
-      : "";
-    const chipSeason = activeSeason
-      ? `<span class="neighborhood-chip">Season: ${escapeHtml(seasonTagLabel(activeSeason))}</span>`
-      : "";
-    const chipMilestone = context.townMilestone
-      ? `<span class="neighborhood-chip">Town businesses: ${escapeHtml(String(context.townMilestone.activeCount))}</span>`
-      : "";
-    const homeChipRow = `<div class="chip-row">${townPulseIndicator}${chipWindow}${chipSeason}${chipMilestone}</div>`;
+    const pulsePresenceLine = townPulse?.model.eventEnergy === "high"
+      ? "We're building steady momentum downtown today."
+      : townPulse?.model.eventEnergy === "medium"
+        ? "Downtown has a calm rhythm right now."
+        : context.presence.participationLine;
+    const homeChipRow = `<div class="chip-row"><span class="presence-chip">${escapeHtml(context.presence.badge)}</span></div>
+      <p class="presence-note">${escapeHtml(context.presence.greeting)}</p>
+      <p class="muted" style="margin-top:4px;">${escapeHtml(pulsePresenceLine)}</p>`;
     const confidenceChip = `<a class="momentum-link" href="${escapeHtml(withSelection("/app/progress", context))}">
       <span class="neighborhood-chip">Momentum: ${escapeHtml(confidenceLabel(context.ownerConfidence.level))}</span>
       ${renderStreakDots(context.ownerConfidence.last7DaysActive)}
@@ -1458,19 +1430,19 @@ router.get("/", async (req, res, next) => {
       ? `<p class="muted" style="margin-top:6px;">${escapeHtml(context.townMilestone.momentumLine)}</p>`
       : "";
     const startFirstWin = context.firstWin.needsFirstWin;
-    const dailyHeading = startFirstWin ? "Let's get your first win today." : "One clear move for today";
+    const dailyHeading = startFirstWin ? "Let's get your first win today." : "Check in with our town";
     const dailySubheading = startFirstWin
       ? "Fast, simple, and built around what already works in your business."
-      : "No dashboard clutter. Just what to do next.";
-    const runDailyLabel = startFirstWin ? "Start First Win" : "✅ Make Me Money Today";
+      : "Three simple moves keep us steady together.";
+    const runDailyLabel = "Today's Plan";
     const firstWinNote = startFirstWin
       ? `<p class="muted" style="margin-top:8px;">We'll guide this as a quick 3-step flow: run it, copy assets, then check in.</p>`
       : "";
-    const rescuePriority = context.selectedBrand.supportLevel === "struggling";
-    const rescueButtonLabel = rescuePriority ? "Fix a Slow Day (Priority)" : "Fix a Slow Day";
-    const rescuePriorityNote = rescuePriority
-      ? `<p class="muted" style="margin-top:8px;">Rescue-first suggestions are prioritized right now.</p>`
-      : "";
+    const quickActionButtons = `<div class="button-stack" style="margin-top:10px;">
+      <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">${escapeHtml(runDailyLabel)}</button>
+      <a class="primary-button hero-button w-full font-semibold" href="${escapeHtml(cameraModeUrl)}">Snap &amp; Share</a>
+      <a class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" href="#how-it-went">How Did It Go?</a>
+    </div>`;
 
     const staffView =
       context.role === "member"
@@ -1483,7 +1455,7 @@ router.get("/", async (req, res, next) => {
             ${launchFlowMessage}
             ${momentumMessage}
             <p class="muted" style="margin-top:8px;">Made for local owners. Built for real life.</p>
-            <a class="primary-button hero-button w-full font-semibold" href="${escapeHtml(cameraModeUrl)}" style="margin-top:10px;">📷 Snap &amp; Post</a>
+            ${quickActionButtons}
           </section>
           ${
             latest
@@ -1491,18 +1463,7 @@ router.get("/", async (req, res, next) => {
               : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack yet. Ask an owner to tap "${escapeHtml(
                   runDailyLabel,
                 )}".</p></section>`
-          }
-          <div class="street-divider"></div>
-          <section class="rounded-2xl p-6 shadow-sm bg-white">
-            <p class="section-title">Quick actions</p>
-            <div class="action-grid">
-              ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Right-now timing check")}
-              ${cardLink(withSelection("/app/autopublicity", context), "📣", "Post Everywhere", "Upload once, publish everywhere")}
-              ${cardLink(withSelection("/app/media", context), "📷", "Media", "Improve a photo post")}
-              ${cardLink(withSelection("/app/insights", context), "📈", "What worked lately", "See what to repeat")}
-              ${cardLink(withSelection("/app/town", context), "📍", "Town", "View local network flow")}
-            </div>
-          </section>`
+          }`
         : null;
 
     const ownerView =
@@ -1520,29 +1481,11 @@ router.get("/", async (req, res, next) => {
               <summary class="muted">Optional note for today</summary>
               <textarea id="daily-notes" placeholder="Only if needed: weather, staffing, special event, etc."></textarea>
             </details>
-            ${routeWindowSelect}
-            <a class="primary-button hero-button w-full font-semibold" href="${escapeHtml(cameraModeUrl)}">📷 Snap &amp; Post</a>
-            <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">${escapeHtml(runDailyLabel)}</button>
-            <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">${escapeHtml(
-              rescueButtonLabel,
-            )}</button>
-            ${rescuePriorityNote}
+            ${quickActionButtons}
             <p class="muted" style="margin-top:10px;">Made for local owners. Built for real life.</p>
             <p id="daily-status" class="muted" style="margin-top:8px;"></p>
           </section>
           <div class="street-divider"></div>
-          <section class="rounded-2xl p-6 shadow-sm bg-white">
-            <p class="section-title">Secondary actions</p>
-            <div class="action-grid">
-              ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Check this moment")}
-              ${cardLink(withSelection("/app/autopublicity", context), "📣", "Post Everywhere", "Upload once, publish everywhere")}
-              ${cardLink(withSelection("/app/media", context), "📷", "Media", "Polish your visual post")}
-              ${cardLink(withSelection("/app/town", context), "📍", "Town", "See local network flow")}
-              ${cardLink(withSelection("/app/insights", context), "📈", "What worked lately", "Repeat what works")}
-            </div>
-          </section>
-          <div class="street-divider"></div>
-          <section id="rescue-output"></section>
           <section id="daily-pack-wrapper">
             ${
               latest
@@ -1554,9 +1497,9 @@ router.get("/", async (req, res, next) => {
           </section>
           ${
             checkin.pending
-              ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
-                  <h3>How did it go?</h3>
-                  <p class="muted">One tap helps MainStreetAI learn your real patterns.</p>
+              ? `<section id="how-it-went" class="rounded-2xl p-6 shadow-sm bg-white">
+                  <h3>How Did It Go?</h3>
+                  <p class="muted">One quick tap helps us learn your local rhythm.</p>
                   <div class="two-col">
                     <button class="secondary-button checkin-btn" data-outcome="slow" type="button">Slow</button>
                     <button class="secondary-button checkin-btn" data-outcome="okay" type="button">Okay</button>
@@ -1567,11 +1510,13 @@ router.get("/", async (req, res, next) => {
                   </label>
                   <p id="checkin-status" class="muted"></p>
                 </section>`
-              : ""
+              : `<section id="how-it-went" class="rounded-2xl p-6 shadow-sm bg-white">
+                  <h3>How Did It Go?</h3>
+                  <p class="muted">After today's plan runs, your quick check-in will appear here.</p>
+                </section>`
           }
           <script>
             const dailyEndpoint = ${JSON.stringify(withSelection("/api/daily", context))};
-            const rescueEndpoint = ${JSON.stringify(withSelection("/api/rescue", context))};
             const checkinEndpoint = ${JSON.stringify(withSelection("/api/daily/checkin", context))};
             const signUrl = ${JSON.stringify(signUrl)};
             const autopublicityUrl = ${JSON.stringify(autopublicityUrl)};
@@ -1670,7 +1615,7 @@ router.get("/", async (req, res, next) => {
                 (pack.townGraphBoost ? '<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Add-on</button><button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Staff Line</button>' : '') +
                 (pack.townMicroRoute ? '<button class="primary-button" data-copy-target="daily-town-micro-route-caption">Copy Route Add-on</button><button class="secondary-button" data-copy-target="daily-town-micro-route-staff-line">Copy Route Staff Line</button>' : '') +
                 (pack.townSeasonalBoost ? '<button class="primary-button" data-copy-target="daily-town-seasonal-caption">Copy Seasonal Add-on</button><button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Staff Line</button>' : '') +
-                '<a class="primary-button" href="' + esc(autopublicityUrl) + '">Upload Photo &amp; Post Now</a>' +
+                '<a class="primary-button" href="' + esc(autopublicityUrl) + '">Snap &amp; Share</a>' +
                 '<button class="secondary-button" id="share-daily" type="button">Share</button>' +
                 '<a class="secondary-button" id="print-daily-sign" href="' + esc(signUrl) + '">Printable Sign</a>' +
                 '</div>' +
@@ -1697,22 +1642,9 @@ router.get("/", async (req, res, next) => {
               const status = document.getElementById("daily-status");
               if (status) status.textContent = firstWinMode ? "Starting your first win..." : "Making today\\'s plan...";
               const notes = document.getElementById("daily-notes")?.value || "";
-              const selectedWindow = document.getElementById("daily-window")?.value || "";
-              const selectedSeason = document.getElementById("daily-season")?.value || "";
               const wrapper = document.getElementById("daily-pack-wrapper");
               if (wrapper) wrapper.innerHTML = renderDailySkeleton();
-              const endpointUrl = new URL(dailyEndpoint, window.location.origin);
-              if (selectedWindow) {
-                endpointUrl.searchParams.set("window", selectedWindow);
-              } else {
-                endpointUrl.searchParams.delete("window");
-              }
-              if (selectedSeason) {
-                endpointUrl.searchParams.set("season", selectedSeason);
-              } else {
-                endpointUrl.searchParams.delete("season");
-              }
-              const response = await fetch(endpointUrl.pathname + endpointUrl.search, {
+              const response = await fetch(dailyEndpoint, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ notes: notes || undefined })
@@ -1748,33 +1680,7 @@ router.get("/", async (req, res, next) => {
                 }
               });
             }
-            async function runRescuePack() {
-              const status = document.getElementById("daily-status");
-              if (status) status.textContent = "Building a quick rescue...";
-              const notes = document.getElementById("daily-notes")?.value || "";
-              const response = await fetch(rescueEndpoint, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ whatHappened: notes || undefined })
-              });
-              const json = await response.json().catch(() => ({}));
-              if (!response.ok) {
-                if (status) status.textContent = planStatusMessage(json, "Could not build a rescue plan.");
-                return;
-              }
-              const target = document.getElementById("rescue-output");
-              if (target) {
-                target.innerHTML = '<section class="rounded-2xl p-6 shadow-sm bg-white"><h3>Slow Day Rescue</h3>' +
-                  '<div class="output-card"><p class="output-label">Offer</p><p class="output-value"><strong>' + esc(json.rescuePlan?.offer || "") + '</strong><br/>' + esc(json.rescuePlan?.timeWindow || "") + '</p></div>' +
-                  '<div class="output-card"><p class="output-label">Post</p><p id="rescue-caption" class="output-value"><strong>' + esc(json.post?.hook || "") + '</strong><br/>' + esc(json.post?.caption || "") + '<br/>' + esc((json.post?.onScreenText || []).join(" | ")) + '</p><button class="primary-button" data-copy-target="rescue-caption">Copy Rescue Post</button></div>' +
-                  '<div class="output-card"><p class="output-label">SMS</p><p id="rescue-sms" class="output-value">' + esc(json.sms?.message || "") + '</p><button class="secondary-button" data-copy-target="rescue-sms">Copy Rescue SMS</button></div>' +
-                  '<div class="output-card"><p class="output-label">3 quick actions</p><p class="output-value">' + esc((json.threeQuickActions || []).join(" | ")) + '</p></div></section>';
-              }
-              if (status) status.textContent = json.confidenceBoostMessage || "Taking action is a win - let's try a quick adjustment.";
-              window.__setupCopyButtons?.();
-            }
             document.getElementById("run-daily")?.addEventListener("click", runDailyPack);
-            document.getElementById("run-rescue")?.addEventListener("click", runRescuePack);
             document.getElementById("share-daily")?.addEventListener("click", async () => {
               const text = [
                 document.getElementById("daily-caption")?.textContent || "",
@@ -1850,15 +1756,16 @@ router.get("/create", async (req, res, next) => {
     if (!context) {
       return;
     }
+    const runDailyHref = withSelection("/app", context, { runDaily: "1" });
+    const checkinHref = withSelection("/app", context);
     const body = `<div class="rounded-2xl p-6 shadow-sm bg-white">
-        <h2 class="text-xl">Get a quick win</h2>
-        <p class="muted">Pick one thing to make today.</p>
+        <h2 class="text-xl">Three simple actions</h2>
+        <p class="muted">Today’s Plan, Snap &amp; Share, and How Did It Go?</p>
       </div>
       <div class="grid">
-        ${cardLink(withSelection("/app/promo", context), "🟢", "Make today’s plan", "Special + sign + ready-to-post copy")}
-        ${cardLink(withSelection("/app/social", context), "🎥", "Ready-to-post", "Hooks, caption, and reel text")}
-        ${cardLink(withSelection("/app/autopublicity", context), "📣", "Post Everywhere", "Upload once and publish with one tap")}
-        ${cardLink(withSelection("/app/post-now", context), "⚡", "Should I Post Right Now?", "Real-time timing coach")}
+        ${cardLink(runDailyHref, "✅", "Today's Plan", "One clear local move for today")}
+        ${cardLink(withSelection("/app/camera", context), "📷", "Snap & Share", "Capture and publish in seconds")}
+        ${cardLink(checkinHref, "💬", "How Did It Go?", "Quick check-in to keep momentum steady")}
       </div>`;
     return res
       .type("html")
@@ -2370,7 +2277,7 @@ router.get("/camera", async (req, res, next) => {
     const uploadEndpoint = withSelection("/api/media/upload-url", context);
     const analyzeEndpoint = withSelection("/api/media/analyze", context);
     const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
-      <h2 class="text-xl">Snap & Post</h2>
+      <h2 class="text-xl">Snap & Share</h2>
       <p class="muted">Capture with your camera, review quickly, then post everywhere.</p>
       <div class="output-card">
         <p class="output-label">Capture mode</p>
@@ -2671,7 +2578,7 @@ router.get("/camera", async (req, res, next) => {
       .type("html")
       .send(
         easyLayout({
-          title: "Snap & Post",
+          title: "Snap & Share",
           context,
           active: "create",
           currentPath: "/app/camera",
@@ -3284,7 +3191,7 @@ router.get("/sign/today", async (req, res, next) => {
             context,
             active: "home",
             currentPath: "/app/sign/today",
-            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack found yet. Tap “Make Me Money Today” first.</p></section>`,
+            body: `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily plan found yet. Tap "Today's Plan" first.</p></section>`,
           }),
         );
     }

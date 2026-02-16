@@ -111,8 +111,8 @@ router.post("/", async (req, res, next) => {
           }
         : undefined,
       message: parsedBody.data.confirmPost
-        ? "Posted everywhere possible. Open-ready channels are prepared."
-        : "Autopublicity pack is ready. Confirm to post everywhere.",
+        ? "We're posting everywhere possible. Open-ready channels are prepared."
+        : "We're ready with your post pack. Confirm when you want to share.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Autopublicity failed";

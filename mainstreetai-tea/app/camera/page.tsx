@@ -383,7 +383,7 @@ export default function CameraModePage() {
           <p style={{ margin: 0, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: "#9ca3af" }}>
             Camera Mode
           </p>
-          <h1 style={{ margin: 0, fontSize: 26, lineHeight: 1.25 }}>Snap → AI → Post Everywhere</h1>
+          <h1 style={{ margin: 0, fontSize: 26, lineHeight: 1.25 }}>Snap → AI → Share Together</h1>
           <p style={{ margin: 0, color: "#d1d5db" }}>Capture and post in seconds. No editing complexity.</p>
         </div>
 

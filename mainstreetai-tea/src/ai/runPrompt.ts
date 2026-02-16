@@ -5,6 +5,7 @@ import type { BrandProfile } from "../schemas/brandSchema";
 import type { BrandVoiceProfile } from "../schemas/voiceSchema";
 import { getBrandVoiceProfile } from "../services/voiceStore";
 import { getOpenAIClient, getTextModelName, getVisionModelName } from "./openaiClient";
+import { applyCommunityPolish, mainStreetTest, presenceTest } from "./communityProtocol";
 
 type RunPromptOptions<TOutput> = {
   promptFile: string;
@@ -246,7 +247,8 @@ export async function runPrompt<TOutput>({
 
   try {
     const firstParsed = parseModelJson(firstRaw);
-    return outputSchema.parse(firstParsed);
+    const polished = applyCommunityPolish(firstParsed);
+    return outputSchema.parse(polished);
   } catch (firstError) {
     const repairPrompt = [
       composedPrompt,
@@ -266,6 +268,12 @@ export async function runPrompt<TOutput>({
       imageUrls,
     });
     const repairedParsed = parseModelJson(repairRaw);
-    return outputSchema.parse(repairedParsed);
+    const polished = applyCommunityPolish(repairedParsed);
+    const serialized = JSON.stringify(polished);
+    if (!mainStreetTest({ text: serialized }) || !presenceTest({ text: serialized })) {
+      const secondPass = applyCommunityPolish(polished);
+      return outputSchema.parse(secondPass);
+    }
+    return outputSchema.parse(polished);
   }
 }

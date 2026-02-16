@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 19)
+# MainStreetAI Platform API (Phase 20)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -1336,10 +1336,10 @@ Brand profile now supports a Community Vibe block:
 - `communityVibeProfile.audienceStyle` (`everyone|young-professionals|fitness|blue-collar|creative|mixed`)
 - `communityVibeProfile.avoidCorporateTone` (default `true`)
 
-Easy Mode home (`/app`) now focuses on:
-- **✅ Make Me Money Today** (primary action)
-- **🛟 Fix a Slow Day** (secondary action)
-- Quick links: Post Now, Upload Photo, Plan My Week, Insights
+Easy Mode home (`/app`) now focuses on three primary actions:
+- **Today's Plan**
+- **Snap & Share**
+- **How Did It Go?**
 
 Output is intentionally simple:
 1. Today’s Special
@@ -1922,14 +1922,14 @@ Easy Mode updates:
   - simple upload + checkbox list + one `Post Everywhere` button
   - no extra setup menus
 - Daily pack integration now includes:
-  - `Upload Photo & Post Now` quick action button
+  - `Snap & Share` quick action button
 - Home/Create quick actions include `Post Everywhere`.
 
 Safety behavior:
 - Never auto-post without explicit owner confirmation.
 - Keeps setup intentionally simple and low-friction.
 
-## Phase 19: Camera Mode (Snap -> AI -> Post Everywhere)
+## Phase 19: Camera Mode (Snap -> AI -> Share Together)
 
 Phase 19 adds a camera-first flow so owners can capture content and publish in seconds.
 
@@ -1965,4 +1965,42 @@ UI updates:
   - `app/camera/page.tsx`
   - full-screen capture flow with photo/video toggle and large shutter
   - quick review + editable caption + one-tap post
-- Easy Mode now includes a `📷 Snap & Post` button above daily pack on home.
+- Easy Mode now includes a `📷 Snap & Share` button above daily pack on home.
+
+## Phase 20: Main Street Community Protocol + Presence System
+
+Phase 20 adds a unified behavior layer for voice, UI simplicity, and subtle shared-presence signals.
+
+Core protocol:
+- Owners should feel like they are checking in with their town, not operating a tool.
+- Primary surface actions are intentionally limited to:
+  - `Today's Plan`
+  - `Snap & Share`
+  - `How Did It Go?`
+
+Global voice and polish:
+- `prompts/system.md` now enforces:
+  - we-mode language (`we`, `our town`, `neighbors`, `together`)
+  - calm, grounded, local-premium tone
+  - anti-hype, anti-competitive framing
+  - Main Street Test + Presence Test rewrite requirement
+
+System-wide output filter:
+- `src/ai/communityProtocol.ts`
+  - applies lightweight text polish across AI outputs
+  - strips pressure/competitive phrasing
+  - keeps copy simpler and community-first
+- `src/ai/runPrompt.ts`
+  - now applies the community polish pass before returning schema-validated JSON
+
+Presence system:
+- `src/presence/presenceSystem.ts`
+  - builds subtle emotional presence signals:
+    - town greeting
+    - calm presence badge
+    - gentle participation line
+- Easy Mode header/home now show presence lines without rankings or pressure metrics.
+
+Simplicity safeguards:
+- Home/Create surfaces now center on the three primary actions.
+- Advanced systems remain background-only in the core home flow.
