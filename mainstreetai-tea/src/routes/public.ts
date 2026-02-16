@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type Request } from "express";
 import { buildBrandFromTemplate } from "../data/templateStore";
+import { isEmailEnabled, isTwilioEnabled } from "../integrations/env";
 import { autopilotSettingsUpsertSchema } from "../schemas/autopilotSettingsSchema";
 import { brandProfileSchema, brandSupportLevelSchema } from "../schemas/brandSchema";
 import { assignSponsoredSeatForBrand } from "../services/communityImpactService";

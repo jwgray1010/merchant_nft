@@ -130,9 +130,11 @@ export type BrandLocalTrustStyle = z.infer<typeof brandLocalTrustStyleSchema>;
 export type BrandServiceTag = z.infer<typeof brandServiceTagSchema>;
 
 export function brandLifecycleStatusFor(
-  brand: Pick<BrandProfile, "status"> | null | undefined,
+  brand: { status?: unknown } | null | undefined,
 ): BrandLifecycleStatus {
-  const parsed = brandLifecycleStatusSchema.safeParse(brand?.status);
+  const parsed = brandLifecycleStatusSchema.safeParse(
+    typeof brand?.status === "string" ? brand.status : undefined,
+  );
   return parsed.success ? parsed.data : "active";
 }
 
