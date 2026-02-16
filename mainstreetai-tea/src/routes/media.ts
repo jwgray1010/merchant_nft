@@ -190,6 +190,8 @@ router.post("/analyze", async (req, res, next) => {
       asset: analyzed.asset,
       analysis: analyzed.analysis,
       analysisRecordId: analyzed.analysisRecord.id,
+      ...(analyzed.cameraPack ?? {}),
+      camera: analyzed.cameraPack,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Media analysis failed";

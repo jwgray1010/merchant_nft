@@ -38,6 +38,12 @@ export default function PremiumLocalHomePage() {
           You've been showing up consistently - keep today's step simple.
         </p>
       </Card>
+      <a
+        href="/camera"
+        className="w-full py-6 text-xl rounded-2xl bg-[#1F4E79] text-white transition-all duration-150 ease-out hover:opacity-95 active:scale-[0.98] font-semibold no-underline inline-flex items-center justify-center"
+      >
+        <span className="inline-flex items-center gap-2">📷 Snap &amp; Post</span>
+      </a>
       <PrimaryButton className="py-6 text-xl rounded-2xl bg-[#1F4E79]" type="button">
         <span className="inline-flex items-center gap-2">
           <Sparkles size={20} strokeWidth={1.5} />

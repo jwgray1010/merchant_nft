@@ -41,6 +41,23 @@ export const visualReviewOutputSchema = z.object({
   hashtags: z.array(z.string()).min(3).max(8),
 });
 
+export const cameraPlatformCaptionsSchema = z.object({
+  masterCaption: z.string().min(1),
+  facebookCaption: z.string().min(1),
+  instagramCaption: z.string().min(1),
+  twitterCaption: z.string().min(1),
+  googleCaption: z.string().min(1),
+  tiktokHook: z.string().min(1),
+  snapchatText: z.string().min(1),
+});
+
+export const cameraCaptionOutputSchema = z.object({
+  sceneDescription: z.string().min(1),
+  captionIdea: z.string().min(1),
+  platformCaptions: cameraPlatformCaptionsSchema,
+  signText: z.string().min(1),
+});
+
 export const mediaAnalysisSchema = z.object({
   id: z.string().min(1),
   ownerId: z.string().min(1),
@@ -58,6 +75,8 @@ export const mediaAnalyzeRequestSchema = z
     platform: mediaPlatformSchema,
     goals: z.array(visualGoalSchema).min(1).max(3),
     imageContext: z.string().optional(),
+    mediaKind: mediaKindSchema.optional(),
+    cameraMode: z.boolean().optional(),
   })
   .refine((value) => Boolean(value.assetId || value.imageUrl), {
     message: "assetId or imageUrl is required",
@@ -82,5 +101,6 @@ export type MediaAssetCreate = z.infer<typeof mediaAssetCreateSchema>;
 export type MediaAnalysis = z.infer<typeof mediaAnalysisSchema>;
 export type MediaAnalyzeRequest = z.infer<typeof mediaAnalyzeRequestSchema>;
 export type VisualReviewOutput = z.infer<typeof visualReviewOutputSchema>;
+export type CameraCaptionOutput = z.infer<typeof cameraCaptionOutputSchema>;
 export type MediaPlatform = z.infer<typeof mediaPlatformSchema>;
 export type MediaUploadUrlRequest = z.infer<typeof mediaUploadUrlRequestSchema>;

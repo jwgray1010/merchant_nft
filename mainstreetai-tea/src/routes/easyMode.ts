@@ -1386,6 +1386,7 @@ router.get("/", async (req, res, next) => {
     ]);
     const signUrl = withSelection("/app/sign/today", context);
     const autopublicityUrl = withSelection("/app/autopublicity", context);
+    const cameraModeUrl = withSelection("/app/camera", context);
     const routeWindowOverride = parseTownWindowOverride(optionalText(req.query.window));
     const seasonOverride = parseSeasonOverride(optionalText(req.query.season));
     const routeWindowOptions = [
@@ -1482,6 +1483,7 @@ router.get("/", async (req, res, next) => {
             ${launchFlowMessage}
             ${momentumMessage}
             <p class="muted" style="margin-top:8px;">Made for local owners. Built for real life.</p>
+            <a class="primary-button hero-button w-full font-semibold" href="${escapeHtml(cameraModeUrl)}" style="margin-top:10px;">📷 Snap &amp; Post</a>
           </section>
           ${
             latest
@@ -1519,6 +1521,7 @@ router.get("/", async (req, res, next) => {
               <textarea id="daily-notes" placeholder="Only if needed: weather, staffing, special event, etc."></textarea>
             </details>
             ${routeWindowSelect}
+            <a class="primary-button hero-button w-full font-semibold" href="${escapeHtml(cameraModeUrl)}">📷 Snap &amp; Post</a>
             <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">${escapeHtml(runDailyLabel)}</button>
             <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">${escapeHtml(
               rescueButtonLabel,
@@ -2349,6 +2352,329 @@ router.get("/post-now", async (req, res, next) => {
           context,
           active: "create",
           currentPath: "/app/post-now",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/camera", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    const autopublicityEndpoint = withSelection("/api/autopublicity", context);
+    const uploadEndpoint = withSelection("/api/media/upload-url", context);
+    const analyzeEndpoint = withSelection("/api/media/analyze", context);
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Snap & Post</h2>
+      <p class="muted">Capture with your camera, review quickly, then post everywhere.</p>
+      <div class="output-card">
+        <p class="output-label">Capture mode</p>
+        <div class="two-col">
+          <button id="camera-mode-photo" class="secondary-button" type="button">Photo</button>
+          <button id="camera-mode-video" class="secondary-button" type="button">Video</button>
+        </div>
+        <div style="display:flex;justify-content:center;margin-top:12px;">
+          <button id="camera-shutter" class="primary-button hero-button" type="button" style="max-width:220px;">● Capture</button>
+        </div>
+        <input id="camera-photo-file" type="file" accept="image/*" capture="environment" style="display:none;" />
+        <input id="camera-video-file" type="file" accept="video/*" capture="environment" style="display:none;" />
+      </div>
+      <p id="camera-status" class="muted" style="margin-top:10px;">Ready when you are.</p>
+    </section>
+    <section id="camera-preview" class="rounded-2xl p-6 shadow-sm bg-white" style="display:none;">
+      <h3>Preview</h3>
+      <div id="camera-preview-wrap" class="output-card"></div>
+    </section>
+    <section id="camera-review" class="rounded-2xl p-6 shadow-sm bg-white" style="display:none;">
+      <h3>Quick Review</h3>
+      <div class="output-card">
+        <p class="output-label">Scene</p>
+        <p id="camera-scene" class="output-value"></p>
+      </div>
+      <label class="field-label">Caption (editable)
+        <textarea id="camera-caption" rows="3" placeholder="Fresh local update..."></textarea>
+      </label>
+      <div class="output-card">
+        <p class="output-label">Platforms</p>
+        <label class="checkbox-row"><input id="camera-facebook" type="checkbox" checked /> Facebook</label>
+        <label class="checkbox-row"><input id="camera-instagram" type="checkbox" checked /> Instagram</label>
+        <label class="checkbox-row"><input id="camera-google" type="checkbox" checked /> Google</label>
+        <label class="checkbox-row"><input id="camera-x" type="checkbox" checked /> X (Twitter)</label>
+        <label class="checkbox-row"><input id="camera-tiktok" type="checkbox" /> TikTok (Open Ready)</label>
+        <label class="checkbox-row"><input id="camera-snapchat" type="checkbox" /> Snapchat (Open Ready)</label>
+      </div>
+      <div class="output-card">
+        <p class="output-label">Platform caption preview</p>
+        <p id="camera-facebook-caption" class="output-value"></p>
+        <p id="camera-instagram-caption" class="output-value"></p>
+        <p id="camera-google-caption" class="output-value"></p>
+        <p id="camera-x-caption" class="output-value"></p>
+      </div>
+      <div class="output-card">
+        <p class="output-label">Sign text</p>
+        <p id="camera-sign-text" class="output-value"></p>
+      </div>
+      <button id="camera-post-now" class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="button">Post Now</button>
+      <p id="camera-post-status" class="muted" style="margin-top:8px;"></p>
+      <div id="camera-open-ready" class="output-card" style="display:none;">
+        <p class="output-label">Open-ready channels</p>
+        <p id="camera-open-ready-text" class="output-value"></p>
+        <div class="two-col">
+          <a id="camera-open-tiktok" class="secondary-button" href="#" target="_blank" rel="noopener" style="display:none;">Open TikTok</a>
+          <a id="camera-open-snapchat" class="secondary-button" href="#" target="_blank" rel="noopener" style="display:none;">Open Snapchat</a>
+        </div>
+      </div>
+    </section>
+    <script>
+      function esc(value) {
+        return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+      }
+      let captureMode = "photo";
+      let currentMediaUrl = "";
+      let currentMediaKind = "image";
+      let previewObjectUrl = "";
+      function setMode(mode) {
+        captureMode = mode === "video" ? "video" : "photo";
+        const photoBtn = document.getElementById("camera-mode-photo");
+        const videoBtn = document.getElementById("camera-mode-video");
+        if (photoBtn) photoBtn.style.background = captureMode === "photo" ? "#1F4E79" : "#fff";
+        if (photoBtn) photoBtn.style.color = captureMode === "photo" ? "#fff" : "#111827";
+        if (videoBtn) videoBtn.style.background = captureMode === "video" ? "#1F4E79" : "#fff";
+        if (videoBtn) videoBtn.style.color = captureMode === "video" ? "#fff" : "#111827";
+      }
+      async function normalizeImage(file) {
+        if (!file || !file.type || !file.type.startsWith("image/")) return file;
+        if (typeof createImageBitmap !== "function") return file;
+        const bitmap = await createImageBitmap(file).catch(() => null);
+        if (!bitmap) return file;
+        const target = Math.max(1, Math.min(bitmap.width, bitmap.height));
+        const sx = Math.max(0, Math.floor((bitmap.width - target) / 2));
+        const sy = Math.max(0, Math.floor((bitmap.height - target) / 2));
+        const canvas = document.createElement("canvas");
+        canvas.width = target;
+        canvas.height = target;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          bitmap.close();
+          return file;
+        }
+        // Keep adjustments natural: subtle brightness/contrast + center crop.
+        ctx.filter = "brightness(1.05) contrast(1.08)";
+        ctx.drawImage(bitmap, sx, sy, target, target, 0, 0, target, target);
+        bitmap.close();
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+        if (!blob) return file;
+        const base = (file.name || "camera").replace(/\\.[^/.]+$/, "");
+        return new File([blob], base + "-camera.jpg", { type: "image/jpeg", lastModified: Date.now() });
+      }
+      function showPreview(file, kind) {
+        const wrap = document.getElementById("camera-preview-wrap");
+        const section = document.getElementById("camera-preview");
+        if (!wrap || !section) return;
+        if (previewObjectUrl) {
+          URL.revokeObjectURL(previewObjectUrl);
+        }
+        previewObjectUrl = URL.createObjectURL(file);
+        if (kind === "video") {
+          wrap.innerHTML = '<video src="' + esc(previewObjectUrl) + '" controls playsinline style="width:100%;max-height:420px;object-fit:cover;border-radius:10px;"></video>';
+        } else {
+          wrap.innerHTML = '<img src="' + esc(previewObjectUrl) + '" alt="Camera preview" style="width:100%;max-height:420px;object-fit:cover;border-radius:10px;" />';
+        }
+        section.style.display = "block";
+      }
+      function cameraPayloadFromAnalyze(json) {
+        const camera = json.camera || {};
+        const scene = json.sceneDescription || camera.sceneDescription || "";
+        const captionIdea = json.captionIdea || camera.captionIdea || json.analysis?.captionRewrite || "";
+        const platform = json.platformCaptions || camera.platformCaptions || {};
+        return {
+          scene,
+          captionIdea,
+          platformCaptions: {
+            masterCaption: platform.masterCaption || captionIdea,
+            facebookCaption: platform.facebookCaption || captionIdea,
+            instagramCaption: platform.instagramCaption || captionIdea,
+            twitterCaption: platform.twitterCaption || captionIdea,
+            googleCaption: platform.googleCaption || captionIdea,
+            tiktokHook: platform.tiktokHook || captionIdea,
+            snapchatText: platform.snapchatText || captionIdea,
+          },
+          signText: json.signText || camera.signText || "",
+        };
+      }
+      async function uploadAndAnalyze(file, kind) {
+        const status = document.getElementById("camera-status");
+        const review = document.getElementById("camera-review");
+        if (status) status.textContent = kind === "image" ? "Applying natural camera adjustments..." : "Preparing video...";
+        const prepared = kind === "image" ? await normalizeImage(file) : file;
+        showPreview(prepared, kind);
+        currentMediaKind = kind;
+        if (status) status.textContent = "Uploading...";
+        const signed = await fetch(${JSON.stringify(uploadEndpoint)}, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: prepared.name || ("camera-" + Date.now()),
+            contentType: prepared.type || "application/octet-stream",
+            kind,
+          }),
+        });
+        const signedJson = await signed.json().catch(() => ({}));
+        if (!signed.ok || !signedJson.signedUrl || !signedJson.publicUrl) {
+          if (status) status.textContent = signedJson.error || "Upload failed.";
+          return;
+        }
+        const putResponse = await fetch(signedJson.signedUrl, {
+          method: "PUT",
+          headers: { "Content-Type": prepared.type || "application/octet-stream" },
+          body: prepared,
+        });
+        if (!putResponse.ok) {
+          if (status) status.textContent = "Upload failed.";
+          return;
+        }
+        currentMediaUrl = signedJson.publicUrl || "";
+        if (!currentMediaUrl) {
+          if (status) status.textContent = "Upload completed but media URL is missing.";
+          return;
+        }
+        if (status) status.textContent = "Generating local caption pack...";
+        const analyzeResponse = await fetch(${JSON.stringify(analyzeEndpoint)}, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageUrl: currentMediaUrl,
+            mediaKind: kind,
+            platform: "instagram",
+            goals: [${JSON.stringify(context.defaultGoal)}],
+            imageContext: "Fresh camera capture",
+            cameraMode: true,
+          }),
+        });
+        const analyzeJson = await analyzeResponse.json().catch(() => ({}));
+        if (!analyzeResponse.ok) {
+          if (status) status.textContent = analyzeJson.error || "Could not analyze this capture.";
+          return;
+        }
+        const camera = cameraPayloadFromAnalyze(analyzeJson);
+        document.getElementById("camera-scene").textContent = camera.scene || "";
+        document.getElementById("camera-caption").value = camera.captionIdea || "";
+        document.getElementById("camera-sign-text").textContent = camera.signText || "";
+        document.getElementById("camera-facebook-caption").textContent = "Facebook: " + (camera.platformCaptions.facebookCaption || "");
+        document.getElementById("camera-instagram-caption").textContent = "Instagram: " + (camera.platformCaptions.instagramCaption || "");
+        document.getElementById("camera-google-caption").textContent = "Google: " + (camera.platformCaptions.googleCaption || "");
+        document.getElementById("camera-x-caption").textContent = "X: " + (camera.platformCaptions.twitterCaption || "");
+        if (review) review.style.display = "block";
+        window.__setupCopyButtons?.();
+        if (status) status.textContent = "Quick review ready.";
+      }
+
+      document.getElementById("camera-mode-photo")?.addEventListener("click", () => setMode("photo"));
+      document.getElementById("camera-mode-video")?.addEventListener("click", () => setMode("video"));
+      setMode("photo");
+
+      document.getElementById("camera-shutter")?.addEventListener("click", () => {
+        if (captureMode === "video") {
+          document.getElementById("camera-video-file")?.click();
+          return;
+        }
+        document.getElementById("camera-photo-file")?.click();
+      });
+
+      document.getElementById("camera-photo-file")?.addEventListener("change", (event) => {
+        const file = event.target?.files?.[0];
+        if (!file) return;
+        uploadAndAnalyze(file, "image").catch(() => {
+          const status = document.getElementById("camera-status");
+          if (status) status.textContent = "Could not process this photo.";
+        });
+      });
+
+      document.getElementById("camera-video-file")?.addEventListener("change", (event) => {
+        const file = event.target?.files?.[0];
+        if (!file) return;
+        uploadAndAnalyze(file, "video").catch(() => {
+          const status = document.getElementById("camera-status");
+          if (status) status.textContent = "Could not process this video.";
+        });
+      });
+
+      document.getElementById("camera-post-now")?.addEventListener("click", async () => {
+        const status = document.getElementById("camera-post-status");
+        if (!currentMediaUrl) {
+          if (status) status.textContent = "Capture media first.";
+          return;
+        }
+        if (status) status.textContent = "Posting now...";
+        const payload = {
+          mediaUrl: currentMediaUrl,
+          captionIdea: (document.getElementById("camera-caption")?.value || "").trim() || undefined,
+          confirmPost: true,
+          cameraMode: true,
+          channels: {
+            facebook: Boolean(document.getElementById("camera-facebook")?.checked),
+            instagram: Boolean(document.getElementById("camera-instagram")?.checked),
+            google: Boolean(document.getElementById("camera-google")?.checked),
+            x: Boolean(document.getElementById("camera-x")?.checked),
+            tiktok: Boolean(document.getElementById("camera-tiktok")?.checked),
+            snapchat: Boolean(document.getElementById("camera-snapchat")?.checked),
+          },
+        };
+        const response = await fetch(${JSON.stringify(autopublicityEndpoint)}, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (status) status.textContent = json.error || "Could not post.";
+          return;
+        }
+        const momentum = json.ownerConfidence?.level
+          ? (" Momentum: " + json.ownerConfidence.level + (json.ownerConfidence.line ? " - " + json.ownerConfidence.line : ""))
+          : "";
+        if (status) status.textContent = (json.message || "Posted.") + momentum;
+        const openReady = json.openReady || {};
+        const openReadyLines = [];
+        const openReadySection = document.getElementById("camera-open-ready");
+        const openReadyText = document.getElementById("camera-open-ready-text");
+        const openTikTok = document.getElementById("camera-open-tiktok");
+        const openSnapchat = document.getElementById("camera-open-snapchat");
+        if (openReady.tiktok?.enabled) {
+          openReadyLines.push("TikTok: " + (openReady.tiktok.text || ""));
+          openTikTok.href = openReady.tiktok.openUrl || "#";
+          openTikTok.style.display = "inline-flex";
+        } else {
+          openTikTok.style.display = "none";
+        }
+        if (openReady.snapchat?.enabled) {
+          openReadyLines.push("Snapchat: " + (openReady.snapchat.text || ""));
+          openSnapchat.href = openReady.snapchat.openUrl || "#";
+          openSnapchat.style.display = "inline-flex";
+        } else {
+          openSnapchat.style.display = "none";
+        }
+        if (openReadyLines.length > 0) {
+          if (openReadyText) openReadyText.textContent = openReadyLines.join(" | ");
+          if (openReadySection) openReadySection.style.display = "block";
+        } else if (openReadySection) {
+          openReadySection.style.display = "none";
+        }
+      });
+    </script>`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Snap & Post",
+          context,
+          active: "create",
+          currentPath: "/app/camera",
           body,
         }),
       );

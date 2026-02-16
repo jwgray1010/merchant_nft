@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 18)
+# MainStreetAI Platform API (Phase 19)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -60,6 +60,7 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - Town adoption milestones + partner credibility pages
   - Local Trust Engine identity assets + trust messaging
   - AutoPublicity Engine simple mode (upload once, post everywhere)
+  - Camera Mode (snap -> AI captions -> post everywhere)
   - Public marketing pages (`/`, `/pricing`, `/demo`)
   - Onboarding wizard (`/onboarding`)
   - Demo-mode write protection middleware
@@ -1927,3 +1928,41 @@ Easy Mode updates:
 Safety behavior:
 - Never auto-post without explicit owner confirmation.
 - Keeps setup intentionally simple and low-friction.
+
+## Phase 19: Camera Mode (Snap -> AI -> Post Everywhere)
+
+Phase 19 adds a camera-first flow so owners can capture content and publish in seconds.
+
+New prompt:
+- `prompts/camera_caption.md`
+  - outputs:
+    - `sceneDescription`
+    - `captionIdea`
+    - `platformCaptions`
+    - `signText`
+  - tone rules keep copy short, human, and local-first.
+
+Media analyze updates:
+- `POST /api/media/analyze` now supports camera-specific request fields:
+  - `cameraMode`
+  - `mediaKind` (`image|video`)
+- camera mode responses include:
+  - top-level camera caption payload fields
+  - preserved legacy visual analysis fields for compatibility
+
+Camera posting behavior:
+- Camera capture can be posted through `POST /api/autopublicity` with `cameraMode=true`.
+- On successful camera posting:
+  - records `owner_progress.action_type = "camera_post"`
+  - returns boosted owner confidence context.
+
+Progress model update:
+- `owner_progress.action_type` now supports:
+  - `camera_post`
+
+UI updates:
+- New Next-style camera page:
+  - `app/camera/page.tsx`
+  - full-screen capture flow with photo/video toggle and large shutter
+  - quick review + editable caption + one-tap post
+- Easy Mode now includes a `📷 Snap & Post` button above daily pack on home.

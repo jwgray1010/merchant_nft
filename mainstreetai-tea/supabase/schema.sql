@@ -246,7 +246,7 @@ create table if not exists public.owner_progress (
   owner_id uuid not null references auth.users(id) on delete cascade,
   brand_ref uuid not null references public.brands(id) on delete cascade,
   action_date date not null,
-  action_type text not null check (action_type in ('daily_pack','post_now','rescue_used','story_used')),
+  action_type text not null check (action_type in ('daily_pack','post_now','rescue_used','story_used','camera_post')),
   created_at timestamptz not null default now()
 );
 
@@ -256,6 +256,12 @@ create table if not exists public.owner_win_moments (
   message text not null,
   created_at timestamptz not null default now()
 );
+
+alter table public.owner_progress
+  drop constraint if exists owner_progress_action_type_check;
+alter table public.owner_progress
+  add constraint owner_progress_action_type_check
+  check (action_type in ('daily_pack','post_now','rescue_used','story_used','camera_post'));
 
 create table if not exists public.history (
   id uuid primary key default gen_random_uuid(),

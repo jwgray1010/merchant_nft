@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requirePlan } from "../billing/requirePlan";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { autopublicityRequestSchema } from "../schemas/autopublicitySchema";
+import { getOwnerConfidenceForBrand, recordOwnerProgressAction } from "../services/ownerConfidenceService";
 import { getAdapter } from "../storage/getAdapter";
 import { runAutopublicity } from "../services/autopublicityService";
 
@@ -72,12 +73,43 @@ router.post("/", async (req, res, next) => {
       locationId: parsedBody.data.locationId,
     });
 
+    const postedSomewhere = Object.values(result.autoPost).some(
+      (entry) => entry.requested && (entry.status === "posted" || entry.status === "queued"),
+    );
+    const shouldRecordCameraProgress = Boolean(
+      parsedBody.data.confirmPost && parsedBody.data.cameraMode && postedSomewhere,
+    );
+    if (shouldRecordCameraProgress) {
+      await recordOwnerProgressAction({
+        ownerId,
+        brandId: parsedBrand.brandId,
+        actionType: "camera_post",
+      }).catch(() => {
+        // Progress tracking should not block posting flow.
+      });
+    }
+    const confidence = shouldRecordCameraProgress
+      ? await getOwnerConfidenceForBrand({
+          ownerId,
+          brandId: parsedBrand.brandId,
+          includePromptLine: true,
+          minimumLevel: "rising",
+        }).catch(() => null)
+      : null;
+
     return res.json({
       confirmed: Boolean(parsedBody.data.confirmPost),
       job: result.job,
       pack: result.pack,
       autoPost: result.autoPost,
       openReady: result.openReady,
+      ownerConfidence: confidence
+        ? {
+            level: confidence.confidenceLevel,
+            streakDays: confidence.streakDays,
+            line: confidence.line,
+          }
+        : undefined,
       message: parsedBody.data.confirmPost
         ? "Posted everywhere possible. Open-ready channels are prepared."
         : "Autopublicity pack is ready. Confirm to post everywhere.",

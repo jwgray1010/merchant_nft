@@ -44,6 +44,7 @@ export const autopublicityRequestSchema = z.object({
   channels: autopublicityChannelsSchema.optional(),
   confirmPost: z.boolean().default(false),
   locationId: z.string().trim().min(1).optional(),
+  cameraMode: z.boolean().default(false),
 });
 
 export type AutopublicityPack = z.infer<typeof autopublicityPackSchema>;

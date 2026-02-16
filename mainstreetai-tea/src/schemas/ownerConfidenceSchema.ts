@@ -5,6 +5,7 @@ export const ownerProgressActionTypeSchema = z.enum([
   "post_now",
   "rescue_used",
   "story_used",
+  "camera_post",
 ]);
 
 export const ownerProgressRowSchema = z.object({
