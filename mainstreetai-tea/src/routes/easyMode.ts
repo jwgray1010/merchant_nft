@@ -45,6 +45,7 @@ import { buildTodayTasks } from "../services/todayService";
 import { getOwnerConfidenceForBrand, listOwnerWinMoments } from "../services/ownerConfidenceService";
 import { getFirstWinStatusForBrand } from "../services/firstWinService";
 import { buildPresenceSignals } from "../presence/presenceSystem";
+import { buildCommunityPresenceLineForBrand } from "../services/communityEventsService";
 import type { BrandProfile } from "../schemas/brandSchema";
 import { townGraphCategorySchema, type TownGraphCategory } from "../schemas/townGraphSchema";
 import type { LocationRecord } from "../schemas/locationSchema";
@@ -1157,7 +1158,12 @@ async function smsSuggestion(ownerUserId: string, brandId: string): Promise<stri
   return "Hey! We have fresh specials today. Stop by and see what’s new.";
 }
 
-function renderDailyPackSection(pack: DailyOutput, signUrl: string, autopublicityUrl: string): string {
+function renderDailyPackSection(
+  pack: DailyOutput,
+  signUrl: string,
+  autopublicityUrl: string,
+  eventInterestEndpoint: string,
+): string {
   const localBoostSection = pack.localBoost
     ? `<article class="result-card">
         <p class="section-title">Local Boost</p>
@@ -1244,6 +1250,48 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string, autopublicit
         </div>
       </article>`
     : "";
+  const communityOpportunitySection = pack.communityOpportunity
+    ? `<article class="result-card" id="daily-community-opportunity">
+        <p class="section-title">Community Opportunity</p>
+        <h2 class="text-lg">🟢 ${escapeHtml(pack.communityOpportunity.title)}</h2>
+        <p class="output-value" id="daily-community-line">${escapeHtml(pack.communityOpportunity.line)}</p>
+        <p class="muted">${escapeHtml(
+          new Date(pack.communityOpportunity.eventDate).toLocaleString(),
+        )} · ${escapeHtml(pack.communityOpportunity.source)}</p>
+        ${
+          pack.communityOpportunity.suggestedMessage
+            ? `<div class="divider">
+                <p id="daily-community-message" class="output-value">${escapeHtml(
+                  pack.communityOpportunity.suggestedMessage,
+                )}</p>
+              </div>`
+            : ""
+        }
+        <div class="button-stack" style="margin-top:10px;">
+          <button
+            class="primary-button community-interest-btn"
+            type="button"
+            data-event-id="${escapeHtml(pack.communityOpportunity.eventId)}"
+            data-interest-type="${escapeHtml(pack.communityOpportunity.suggestedInterestType)}"
+            data-endpoint="${escapeHtml(eventInterestEndpoint)}"
+          >I'm Interested</button>
+          <button class="secondary-button community-later-btn" type="button">Maybe Later</button>
+          ${
+            pack.communityOpportunity.suggestedMessage
+              ? `<button class="secondary-button" data-copy-target="daily-community-message" type="button">Send Message</button>`
+              : ""
+          }
+          ${
+            pack.communityOpportunity.signupUrl
+              ? `<a class="secondary-button" href="${escapeHtml(
+                  pack.communityOpportunity.signupUrl,
+                )}" target="_blank" rel="noopener">Open Signup</a>`
+              : ""
+          }
+        </div>
+        <p id="daily-community-status" class="muted"></p>
+      </article>`
+    : "";
   const firstWinStepsSection = pack.firstWin?.active
     ? `<article class="result-card">
         <p class="section-title">First Win Steps</p>
@@ -1299,6 +1347,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string, autopublicit
     townMicroRouteSection,
     townSeasonalSection,
     ownerConfidenceSection,
+    communityOpportunitySection,
     nextStepCard,
   ].filter(Boolean);
   const stackedCards = cards
@@ -1396,7 +1445,7 @@ router.get("/", async (req, res, next) => {
     const townPulseUnlocked = Boolean(
       context.townMilestone?.featuresUnlocked.includes("town_pulse_learning"),
     );
-    const [latest, checkin, townPulse] = await Promise.all([
+    const [latest, checkin, townPulse, communityPresenceLine] = await Promise.all([
       getLatestDailyPack(context.ownerUserId, context.selectedBrandId),
       dailyCheckinStatus(context.ownerUserId, context.selectedBrandId),
       townPulseUnlocked
@@ -1406,15 +1455,22 @@ router.get("/", async (req, res, next) => {
             recomputeIfMissing: true,
           }).catch(() => null)
         : Promise.resolve(null),
+      buildCommunityPresenceLineForBrand({
+        ownerId: context.ownerUserId,
+        brandId: context.selectedBrandId,
+      }).catch(() => null),
     ]);
     const signUrl = withSelection("/app/sign/today", context);
     const autopublicityUrl = withSelection("/app/autopublicity", context);
+    const eventInterestEndpoint = withSelection("/api/events/interest", context);
     const cameraModeUrl = withSelection("/app/camera", context);
-    const pulsePresenceLine = townPulse?.model.eventEnergy === "high"
-      ? "We're building steady momentum downtown today."
-      : townPulse?.model.eventEnergy === "medium"
-        ? "Downtown has a calm rhythm right now."
-        : context.presence.participationLine;
+    const pulsePresenceLine = communityPresenceLine
+      ? communityPresenceLine
+      : townPulse?.model.eventEnergy === "high"
+        ? "We're building steady momentum downtown today."
+        : townPulse?.model.eventEnergy === "medium"
+          ? "Downtown has a calm rhythm right now."
+          : context.presence.participationLine;
     const homeChipRow = `<div class="chip-row"><span class="presence-chip">${escapeHtml(context.presence.badge)}</span></div>
       <p class="presence-note">${escapeHtml(context.presence.greeting)}</p>
       <p class="muted" style="margin-top:4px;">${escapeHtml(pulsePresenceLine)}</p>`;
@@ -1459,7 +1515,7 @@ router.get("/", async (req, res, next) => {
           </section>
           ${
             latest
-              ? renderDailyPackSection(latest.output, signUrl, autopublicityUrl)
+              ? renderDailyPackSection(latest.output, signUrl, autopublicityUrl, eventInterestEndpoint)
               : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack yet. Ask an owner to tap "${escapeHtml(
                   runDailyLabel,
                 )}".</p></section>`
@@ -1489,7 +1545,7 @@ router.get("/", async (req, res, next) => {
           <section id="daily-pack-wrapper">
             ${
               latest
-                ? renderDailyPackSection(latest.output, signUrl, autopublicityUrl)
+                ? renderDailyPackSection(latest.output, signUrl, autopublicityUrl, eventInterestEndpoint)
                 : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Tap "${escapeHtml(
                     runDailyLabel,
                   )}" to create today's special, post, and sign.</p></section>`
@@ -1520,6 +1576,7 @@ router.get("/", async (req, res, next) => {
             const checkinEndpoint = ${JSON.stringify(withSelection("/api/daily/checkin", context))};
             const signUrl = ${JSON.stringify(signUrl)};
             const autopublicityUrl = ${JSON.stringify(autopublicityUrl)};
+            const eventInterestEndpoint = ${JSON.stringify(eventInterestEndpoint)};
             const firstWinMode = ${JSON.stringify(startFirstWin)};
             function esc(value) {
               return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
@@ -1581,6 +1638,24 @@ router.get("/", async (req, res, next) => {
               const ownerConfidenceSection = pack.ownerConfidence
                 ? '<article class="result-card"><p class="section-title">Owner confidence</p><h2 class="text-lg">Momentum: ' + esc(confidenceLabel(pack.ownerConfidence.level || "steady")) + '</h2><div class="divider"><p class="output-value">' + esc(pack.ownerConfidence.line || "") + '</p><p class="muted">Current streak: ' + esc(String(pack.ownerConfidence.streakDays || 0)) + ' day(s)</p></div></article>'
                 : '';
+              const communityOpportunitySection = pack.communityOpportunity
+                ? '<article class="result-card" id="daily-community-opportunity">' +
+                    '<p class="section-title">Community Opportunity</p>' +
+                    '<h2 class="text-lg">🟢 ' + esc(pack.communityOpportunity.title || "") + '</h2>' +
+                    '<p id="daily-community-line" class="output-value">' + esc(pack.communityOpportunity.line || "") + '</p>' +
+                    '<p class="muted">' + esc(new Date(pack.communityOpportunity.eventDate || "").toLocaleString()) + ' · ' + esc(pack.communityOpportunity.source || "") + '</p>' +
+                    (pack.communityOpportunity.suggestedMessage
+                      ? '<div class="divider"><p id="daily-community-message" class="output-value">' + esc(pack.communityOpportunity.suggestedMessage || "") + '</p></div>'
+                      : '') +
+                    '<div class="button-stack" style="margin-top:10px;">' +
+                      '<button class="primary-button community-interest-btn" type="button" data-event-id="' + esc(pack.communityOpportunity.eventId || "") + '" data-interest-type="' + esc(pack.communityOpportunity.suggestedInterestType || "assist") + '" data-endpoint="' + esc(eventInterestEndpoint) + '">I\\'m Interested</button>' +
+                      '<button class="secondary-button community-later-btn" type="button">Maybe Later</button>' +
+                      (pack.communityOpportunity.suggestedMessage ? '<button class="secondary-button" data-copy-target="daily-community-message" type="button">Send Message</button>' : '') +
+                      (pack.communityOpportunity.signupUrl ? '<a class="secondary-button" href="' + esc(pack.communityOpportunity.signupUrl) + '" target="_blank" rel="noopener">Open Signup</a>' : '') +
+                    '</div>' +
+                    '<p id="daily-community-status" class="muted"></p>' +
+                  '</article>'
+                : '';
               const firstWinStepsSection = pack.firstWin?.active
                 ? '<article class="result-card"><p class="section-title">First Win Steps</p><p class="output-value"><strong>Step 1:</strong> Here\\'s today\\'s quick win.</p><p class="output-value"><strong>Step 2:</strong> Copy Post and Copy Sign.</p><p class="output-value"><strong>Step 3:</strong> Tell us how it went (Slow / Okay / Busy).</p></article>'
                 : '';
@@ -1599,6 +1674,7 @@ router.get("/", async (req, res, next) => {
                 townMicroRouteSection,
                 townSeasonalSection,
                 ownerConfidenceSection,
+                communityOpportunitySection,
                 nextStepSection,
               ].filter(Boolean);
               const stackedCards = cards.map((card, index) => (index === 0 ? card : '<div class="street-divider"></div>' + card)).join("");
@@ -1638,6 +1714,48 @@ router.get("/", async (req, res, next) => {
               }
               return base + " Reduced-cost Starter path is available in Billing.";
             }
+            async function submitCommunityInterest(button) {
+              const status = document.getElementById("daily-community-status");
+              const eventId = button?.getAttribute("data-event-id") || "";
+              const interestType = button?.getAttribute("data-interest-type") || "assist";
+              const endpoint = button?.getAttribute("data-endpoint") || eventInterestEndpoint;
+              if (!eventId) {
+                if (status) status.textContent = "Event details are missing.";
+                return;
+              }
+              if (status) status.textContent = "Saving interest...";
+              const response = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ eventId, interestType })
+              });
+              const json = await response.json().catch(() => ({}));
+              if (!response.ok) {
+                if (status) status.textContent = json.error || "Could not save interest.";
+                return;
+              }
+              if (status) status.textContent = "Great - we're interested. Message is ready.";
+              if (json.message && document.getElementById("daily-community-message")) {
+                document.getElementById("daily-community-message").textContent = json.message;
+              }
+            }
+            function setupCommunityOpportunityActions() {
+              document.querySelectorAll(".community-interest-btn").forEach((button) => {
+                if (button.getAttribute("data-bound") === "1") return;
+                button.setAttribute("data-bound", "1");
+                button.addEventListener("click", () => submitCommunityInterest(button));
+              });
+              document.querySelectorAll(".community-later-btn").forEach((button) => {
+                if (button.getAttribute("data-bound") === "1") return;
+                button.setAttribute("data-bound", "1");
+                button.addEventListener("click", () => {
+                  const card = document.getElementById("daily-community-opportunity");
+                  if (card) {
+                    card.style.display = "none";
+                  }
+                });
+              });
+            }
             async function runDailyPack() {
               const status = document.getElementById("daily-status");
               if (status) status.textContent = firstWinMode ? "Starting your first win..." : "Making today\\'s plan...";
@@ -1657,6 +1775,7 @@ router.get("/", async (req, res, next) => {
               if (wrapper) wrapper.innerHTML = renderDailyPack(json);
               if (status) status.textContent = "Ready-to-post.";
               window.__setupCopyButtons?.();
+              setupCommunityOpportunityActions();
               const shareButton = document.getElementById("share-daily");
               shareButton?.addEventListener("click", async () => {
                 const text = [
@@ -1703,6 +1822,7 @@ router.get("/", async (req, res, next) => {
                 await navigator.clipboard.writeText(text).catch(() => {});
               }
             });
+            setupCommunityOpportunityActions();
             document.querySelectorAll(".checkin-btn").forEach((button) => {
               button.addEventListener("click", async () => {
                 const outcome = button.getAttribute("data-outcome");

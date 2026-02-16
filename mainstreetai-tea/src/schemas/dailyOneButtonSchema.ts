@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { communityOpportunitySchema } from "./communityEventsSchema";
 
 export const dailyGoalSchema = z.enum(["new_customers", "repeat_customers", "slow_hours"]);
 export const dailyPlatformSchema = z.enum(["instagram", "facebook", "tiktok", "gbp", "other"]);
@@ -108,6 +109,7 @@ export const dailyOutputSchema = z.object({
   ownerConfidence: dailyOwnerConfidenceSchema.optional(),
   firstWin: dailyFirstWinSchema.optional(),
   trustLine: z.string().min(1).optional(),
+  communityOpportunity: communityOpportunitySchema.optional(),
   nextStep: z.string().min(1),
 });
 
@@ -130,4 +132,5 @@ export type DailyTownMicroRoute = z.infer<typeof dailyTownMicroRouteSchema>;
 export type DailyTownSeasonalBoost = z.infer<typeof dailyTownSeasonalBoostSchema>;
 export type DailyOwnerConfidence = z.infer<typeof dailyOwnerConfidenceSchema>;
 export type DailyFirstWin = z.infer<typeof dailyFirstWinSchema>;
+export type DailyCommunityOpportunity = z.infer<typeof communityOpportunitySchema>;
 export type DailyCheckinRequest = z.infer<typeof dailyCheckinRequestSchema>;

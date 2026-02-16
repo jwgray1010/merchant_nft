@@ -60,6 +60,7 @@ import {
   firstWinCompletionLine,
   getFirstWinStatusForBrand,
 } from "./firstWinService";
+import { buildCommunityOpportunityForBrand } from "./communityEventsService";
 
 type DailyPackRecord = {
   id: string;
@@ -686,6 +687,11 @@ export async function runDailyOneButton(input: {
         useCase: "daily_pack",
       }).catch(() => "Thanks for supporting local today.")
     : undefined;
+  const communityOpportunity = await buildCommunityOpportunityForBrand({
+    ownerId: input.userId,
+    brandId: input.brandId,
+    brand,
+  }).catch(() => null);
   const pack = dailyOutputSchema.parse({
     ...packBase,
     ownerConfidence: {
@@ -694,6 +700,7 @@ export async function runDailyOneButton(input: {
       line: ownerConfidence.line,
     },
     trustLine,
+    communityOpportunity: communityOpportunity ?? undefined,
   });
 
   const history = await adapter.addHistory(
@@ -712,6 +719,7 @@ export async function runDailyOneButton(input: {
       seasonOverride: input.seasonOverride,
       firstWinActive,
       firstWinSessionId: firstWinStatus.activeSession?.id,
+      communityOpportunityEventId: communityOpportunity?.eventId,
     },
     {
       pack,
@@ -890,6 +898,11 @@ export async function runDailyOneButton(input: {
           : ""
       }
       ${pack.trustLine ? `<p><strong>Local Trust Line:</strong> ${pack.trustLine}</p>` : ""}
+      ${
+        pack.communityOpportunity
+          ? `<p><strong>Community Opportunity:</strong> ${pack.communityOpportunity.title}<br/>${pack.communityOpportunity.line}</p>`
+          : ""
+      }
     </body></html>`;
     const log = await adapter.addEmailLog(input.userId, input.brandId, {
       toEmail: emailTarget,

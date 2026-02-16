@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 20)
+# MainStreetAI Platform API (Phase 21)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -61,6 +61,7 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - Local Trust Engine identity assets + trust messaging
   - AutoPublicity Engine simple mode (upload once, post everywhere)
   - Camera Mode (snap -> AI captions -> post everywhere)
+  - Community Events Bridge (chamber/school/youth opportunities in daily flow)
   - Public marketing pages (`/`, `/pricing`, `/demo`)
   - Onboarding wizard (`/onboarding`)
   - Demo-mode write protection middleware
@@ -163,6 +164,7 @@ All multi-tenant API endpoints require auth:
 - `/integrations`, `/publish`, `/sms`, `/gbp`, `/email`, `/outbox`
 - `/autopilot`, `/alerts`
 - `/autopublicity`
+- `/api/events/opportunities`, `/api/events/interest`
 - `/api/billing/create-checkout-session`, `/api/billing/cancel-subscription`
 - `/api/team`
 
@@ -2004,3 +2006,60 @@ Presence system:
 Simplicity safeguards:
 - Home/Create surfaces now center on the three primary actions.
 - Advanced systems remain background-only in the core home flow.
+
+## Phase 21: Community Events Bridge (Chamber, Schools, Youth, Nonprofit -> Local Businesses)
+
+Phase 21 adds a calm, invitation-based bridge between community organizers and local businesses.
+
+New data model:
+- `community_events`
+  - `id`
+  - `town_ref`
+  - `source` (`chamber|school|youth|nonprofit`)
+  - `title`
+  - `description`
+  - `event_date`
+  - `needs` (`jsonb`, simplified help tags)
+  - `signup_url`
+  - `created_at`
+- `event_interest`
+  - `id`
+  - `brand_ref`
+  - `event_ref`
+  - `interest_type` (`cater|sponsor|assist`)
+  - `created_at`
+- `brands.service_tags`
+  - supports matching owner capabilities to relevant opportunities
+  - examples: `catering`, `drinks`, `snacks`, `fundraising`, `youth-support`
+
+Import and submission flows:
+- New public routes (no organizer account required):
+  - `POST /api/events/import`
+    - accepts ICS feed URL, Google webhook payload, website text, or manual event list
+  - `POST /api/events/submit`
+    - simple form-compatible payload for chamber/school/youth coordinators
+  - `GET /api/events/form`
+    - hosted lightweight submission form page
+
+Owner experience:
+- Opportunities are surfaced inside daily planning output (no dashboard browsing).
+- Owners see one calm `Community Opportunity` card with:
+  - event title/date/source
+  - needed help tags
+  - optional signup link
+  - one-tap actions: `I'm Interested`, `Maybe Later`, `Send Message`
+- New protected routes:
+  - `GET /api/events/opportunities`
+  - `POST /api/events/interest`
+
+AI and tone updates:
+- New prompt:
+  - `prompts/event_response.md`
+  - generates short, warm, ready-to-send event support messages
+- `prompts/system.md` now enforces:
+  - event opportunities should feel like invitations, not transactions
+  - no dashboards, bidding systems, rankings, or public competition
+
+Presence integration:
+- Community events can shape subtle town presence lines in easy mode (for example: "We've got a busy weekend with youth events - let's show up together.").
+- Messaging remains low-pressure, community-first, and non-competitive.

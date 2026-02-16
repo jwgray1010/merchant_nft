@@ -19,6 +19,7 @@ create table if not exists public.brands (
   support_level text not null default 'steady' check (support_level in ('growing_fast','steady','struggling','just_starting')),
   local_trust_enabled boolean not null default true,
   local_trust_style text not null default 'mainstreet' check (local_trust_style in ('mainstreet','network')),
+  service_tags jsonb not null default '[]'::jsonb,
   type text not null,
   voice text not null,
   audiences jsonb not null default '[]'::jsonb,
@@ -48,6 +49,9 @@ alter table public.brands
 
 alter table public.brands
   add column if not exists local_trust_style text not null default 'mainstreet';
+
+alter table public.brands
+  add column if not exists service_tags jsonb not null default '[]'::jsonb;
 
 alter table public.brands
   drop constraint if exists brands_support_level_check;
@@ -221,6 +225,26 @@ create table if not exists public.town_success_signals (
   town_ref uuid not null references public.towns(id) on delete cascade,
   signal text not null check (signal in ('busy_days_up','repeat_customers_up','new_faces_seen')),
   weight numeric not null default 1,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.community_events (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  source text not null check (source in ('chamber','school','youth','nonprofit')),
+  title text not null,
+  description text not null default '',
+  event_date timestamptz not null,
+  needs jsonb not null default '[]'::jsonb,
+  signup_url text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.event_interest (
+  id uuid primary key default gen_random_uuid(),
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  event_ref uuid not null references public.community_events(id) on delete cascade,
+  interest_type text not null check (interest_type in ('cater','sponsor','assist')),
   created_at timestamptz not null default now()
 );
 
@@ -670,6 +694,18 @@ create index if not exists town_success_signals_town_created_idx
 create index if not exists town_success_signals_town_signal_idx
   on public.town_success_signals(town_ref, signal, created_at desc);
 
+create index if not exists community_events_town_date_idx
+  on public.community_events(town_ref, event_date asc, created_at desc);
+
+create index if not exists community_events_town_source_idx
+  on public.community_events(town_ref, source, event_date asc);
+
+create unique index if not exists event_interest_brand_event_unique
+  on public.event_interest(brand_ref, event_ref);
+
+create index if not exists event_interest_event_created_idx
+  on public.event_interest(event_ref, created_at desc);
+
 create unique index if not exists owner_progress_owner_day_action_unique
   on public.owner_progress(owner_id, action_date, action_type);
 
@@ -927,6 +963,8 @@ alter table public.sponsored_memberships enable row level security;
 alter table public.town_ambassadors enable row level security;
 alter table public.town_invites enable row level security;
 alter table public.town_success_signals enable row level security;
+alter table public.community_events enable row level security;
+alter table public.event_interest enable row level security;
 alter table public.owner_progress enable row level security;
 alter table public.owner_win_moments enable row level security;
 alter table public.first_win_sessions enable row level security;
@@ -1247,6 +1285,43 @@ create policy town_success_signals_member_modify on public.town_success_signals
 for all
 using (public.is_town_member(town_ref))
 with check (public.is_town_member(town_ref));
+
+drop policy if exists community_events_member_select on public.community_events;
+create policy community_events_member_select on public.community_events
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists community_events_public_insert on public.community_events;
+create policy community_events_public_insert on public.community_events
+for insert
+to anon, authenticated
+with check (true);
+
+drop policy if exists community_events_member_modify on public.community_events;
+create policy community_events_member_modify on public.community_events
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
+
+drop policy if exists event_interest_member_select on public.event_interest;
+create policy event_interest_member_select on public.event_interest
+for select
+using (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin','member']::text[])
+);
+
+drop policy if exists event_interest_member_modify on public.event_interest;
+create policy event_interest_member_modify on public.event_interest
+for all
+using (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin','member']::text[])
+)
+with check (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin','member']::text[])
+);
 
 drop policy if exists owner_progress_owner_all on public.owner_progress;
 create policy owner_progress_owner_all on public.owner_progress

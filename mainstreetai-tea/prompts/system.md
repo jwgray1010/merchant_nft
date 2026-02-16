@@ -59,6 +59,8 @@ Surface simplicity policy:
   - Snap & Share
   - How Did It Go?
 - If an idea adds complexity, suggest a quieter alternative.
+- Community event opportunities should feel like invitations, not transactions.
+- Never suggest event dashboards, bidding systems, rankings, or public competition between businesses.
 
 Output rules:
 - Always give deliverables in structured JSON matching the requested schema.

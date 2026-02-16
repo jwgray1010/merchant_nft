@@ -30,6 +30,14 @@ export const brandLocalTrustStyleSchema = z.enum([
   "network",
 ]);
 
+export const brandServiceTagSchema = z.enum([
+  "catering",
+  "drinks",
+  "snacks",
+  "fundraising",
+  "youth-support",
+]);
+
 export const brandConstraintsSchema = z.object({
   noHugeDiscounts: z.boolean(),
   keepPromosSimple: z.boolean(),
@@ -71,6 +79,7 @@ export const brandProfileSchema = z.object({
   supportLevel: brandSupportLevelSchema.default("steady"),
   localTrustEnabled: z.boolean().default(true),
   localTrustStyle: brandLocalTrustStyleSchema.default("mainstreet"),
+  serviceTags: z.array(brandServiceTagSchema).default([]),
   type: businessTypeSchema,
   voice: z.string().min(1),
   audiences: z.array(z.string()).default([]),
@@ -103,3 +112,4 @@ export type BrandRegistryItem = z.infer<typeof brandRegistryItemSchema>;
 export type CommunityVibeProfile = z.infer<typeof communityVibeProfileSchema>;
 export type BrandSupportLevel = z.infer<typeof brandSupportLevelSchema>;
 export type BrandLocalTrustStyle = z.infer<typeof brandLocalTrustStyleSchema>;
+export type BrandServiceTag = z.infer<typeof brandServiceTagSchema>;

@@ -20,6 +20,8 @@ import bufferOAuthRouter from "./routes/bufferOAuth";
 import emailDigestRouter from "./routes/emailDigest";
 import easyModeRouter from "./routes/easyMode";
 import dailyRouter from "./routes/daily";
+import communityEventsRouter from "./routes/communityEvents";
+import communityEventsPublicRouter from "./routes/communityEventsPublic";
 import eventsRouter from "./routes/events";
 import gbpRouter from "./routes/gbp";
 import gbpOAuthRouter from "./routes/gbpOAuth";
@@ -147,6 +149,8 @@ app.use(
 // Next.js-style API aliases for phased workflow compatibility
 app.use("/api/integrations/buffer", bufferOAuthRouter);
 app.use("/api/integrations/gbp", gbpOAuthRouter);
+app.use("/api/events", communityEventsPublicRouter);
+app.use("/api/events", verifyAuth, resolveBrandAccessFromQuery(), communityEventsRouter);
 app.use("/api/billing", verifyAuth, billingRouter);
 app.use("/api/integrations", verifyAuth, resolveBrandAccessFromQuery(), integrationsRouter);
 app.use("/api/publish", verifyAuth, resolveBrandAccessFromQuery(), publishRouter);
