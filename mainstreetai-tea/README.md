@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 16)
+# MainStreetAI Platform API (Phase 17)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -1835,3 +1835,44 @@ Prompt and ethics:
   - no superiority messaging
   - no participant ranking
   - no customer pressure
+
+## Phase 17: First Win Engine (fast results for struggling businesses)
+
+Phase 17 adds a guided "first 1-3 uses" system so owners feel tangible value quickly.
+
+New data model:
+- `first_win_sessions`
+  - `id`
+  - `brand_ref`
+  - `started_at`
+  - `completed`
+  - `result_feedback` (`slow|okay|busy`)
+  - `created_at`
+
+New prompt:
+- `prompts/first_win.md`
+  - outputs:
+    - `offerTitle`
+    - `caption`
+    - `signText`
+    - `staffScript`
+    - `timingHint`
+  - rules favor repeat traffic, simple execution, and sustainable operations.
+
+Daily behavior updates:
+- `POST /api/daily` now checks first-win status.
+- If first-win is still incomplete:
+  - uses `first_win.md` flow instead of standard daily prompt
+  - marks output with `firstWin` metadata
+  - keeps copy practical and rescue-aware.
+
+Easy Mode updates:
+- Home screen primary state for brands without a completed first win:
+  - heading: "Let's get your first win today."
+  - primary button: `Start First Win`
+- Daily result view includes clear 3-step first-win guidance.
+- Check-in text now surfaces first-win completion feedback (including busy-state momentum line).
+
+Confidence integration:
+- Completing first win records a dedicated owner win-moment note.
+- Confidence output can floor to `rising` after first-win completion.

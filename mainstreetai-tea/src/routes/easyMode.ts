@@ -45,6 +45,7 @@ import { getLatestTownStoryForBrand } from "../services/townStoriesService";
 import { getTimingModel } from "../services/timingStore";
 import { buildTodayTasks } from "../services/todayService";
 import { getOwnerConfidenceForBrand, listOwnerWinMoments } from "../services/ownerConfidenceService";
+import { getFirstWinStatusForBrand } from "../services/firstWinService";
 import type { BrandProfile } from "../schemas/brandSchema";
 import { townGraphCategorySchema, type TownGraphCategory } from "../schemas/townGraphSchema";
 import type { LocationRecord } from "../schemas/locationSchema";
@@ -96,6 +97,11 @@ type EasyContext = {
     line: string;
     last7DaysActive: boolean[];
     shownUpDaysThisWeek: number;
+  };
+  firstWin: {
+    needsFirstWin: boolean;
+    hasCompleted: boolean;
+    activeSessionId?: string;
   };
   recentWinMoment?: string;
 };
@@ -302,6 +308,10 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         last7DaysActive: [false, false, false, false, false, false, false],
         shownUpDaysThisWeek: 0,
       },
+      firstWin: {
+        needsFirstWin: false,
+        hasCompleted: false,
+      },
     };
   }
 
@@ -335,6 +345,10 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         line: "Steady effort matters more than perfect days.",
         last7DaysActive: [false, false, false, false, false, false, false],
         shownUpDaysThisWeek: 0,
+      },
+      firstWin: {
+        needsFirstWin: false,
+        hasCompleted: false,
       },
     };
   }
@@ -378,8 +392,23 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         last7DaysActive: [false, false, false, false, false, false, false],
         shownUpDaysThisWeek: 0,
       },
+      firstWin: {
+        needsFirstWin: false,
+        hasCompleted: false,
+      },
     };
   }
+
+  const firstWinStatus = await getFirstWinStatusForBrand({
+    ownerId: access.ownerId,
+    brandId: access.brandId,
+    createIfMissing: false,
+  }).catch(() => ({
+    needsFirstWin: false,
+    hasCompleted: false,
+    activeSession: null,
+    latestCompleted: null,
+  }));
 
   const [locations, autopilotSettings, timingModel, communitySupport, ambassador, townMilestone, confidence, winMoments] =
     await Promise.all([
@@ -410,6 +439,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         ownerId: access.ownerId,
         brandId: access.brandId,
         includePromptLine: false,
+        minimumLevel: firstWinStatus.hasCompleted ? "rising" : undefined,
       }).catch(() => ({
         confidenceLevel: "steady" as const,
         streakDays: 0,
@@ -489,6 +519,11 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       line: confidence.line,
       last7DaysActive: confidence.last7DaysActive,
       shownUpDaysThisWeek: confidence.shownUpDaysThisWeek,
+    },
+    firstWin: {
+      needsFirstWin: firstWinStatus.needsFirstWin,
+      hasCompleted: firstWinStatus.hasCompleted,
+      activeSessionId: firstWinStatus.activeSession?.id,
     },
     recentWinMoment: winMoments[0]?.message,
   };
@@ -1175,6 +1210,14 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
         </div>
       </article>`
     : "";
+  const firstWinStepsSection = pack.firstWin?.active
+    ? `<article class="result-card">
+        <p class="section-title">First Win Steps</p>
+        <p class="output-value"><strong>Step 1:</strong> Here's today's quick win.</p>
+        <p class="output-value"><strong>Step 2:</strong> Copy Post and Copy Sign.</p>
+        <p class="output-value"><strong>Step 3:</strong> Tell us how it went (Slow / Okay / Busy).</p>
+      </article>`
+    : "";
   const nextStepCard = `<article class="result-card">
       <p class="section-title">Next step</p>
       <p class="output-value">Post this at <strong>${escapeHtml(pack.post.bestTime)}</strong></p>
@@ -1182,6 +1225,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
       <p class="output-value">If it’s slow, tap Rescue</p>
     </article>`;
   const cards = [
+    firstWinStepsSection,
     `<article class="result-card">
       <p class="section-title">Today’s Special</p>
       <h2 class="text-lg">${escapeHtml(pack.todaySpecial.promoName)}</h2>
@@ -1226,6 +1270,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
   const stackedCards = cards
     .map((card, index) => (index === 0 ? card : `<div class="street-divider"></div>${card}`))
     .join("");
+  const copyPostLabel = pack.firstWin?.active ? "Copy Post" : "Copy Caption";
   return `<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">
     <h3 class="text-xl">Your daily plan</h3>
     <div class="result-stack">
@@ -1282,7 +1327,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
       <a class="secondary-button" id="print-daily-sign" href="${escapeHtml(signUrl)}">Printable Sign</a>
     </div>
     <div class="result-action-bar">
-      <button class="primary-button touch-target" data-copy-target="daily-caption">Copy Caption</button>
+      <button class="primary-button touch-target" data-copy-target="daily-caption">${escapeHtml(copyPostLabel)}</button>
       <button class="secondary-button touch-target" data-copy-target="daily-sign">Copy Sign</button>
     </div>
   </section>`;
@@ -1398,6 +1443,15 @@ router.get("/", async (req, res, next) => {
     const momentumMessage = context.townMilestone?.momentumLine
       ? `<p class="muted" style="margin-top:6px;">${escapeHtml(context.townMilestone.momentumLine)}</p>`
       : "";
+    const startFirstWin = context.firstWin.needsFirstWin;
+    const dailyHeading = startFirstWin ? "Let's get your first win today." : "One clear move for today";
+    const dailySubheading = startFirstWin
+      ? "Fast, simple, and built around what already works in your business."
+      : "No dashboard clutter. Just what to do next.";
+    const runDailyLabel = startFirstWin ? "Start First Win" : "✅ Make Me Money Today";
+    const firstWinNote = startFirstWin
+      ? `<p class="muted" style="margin-top:8px;">We'll guide this as a quick 3-step flow: run it, copy assets, then check in.</p>`
+      : "";
     const rescuePriority = context.selectedBrand.supportLevel === "struggling";
     const rescueButtonLabel = rescuePriority ? "Fix a Slow Day (Priority)" : "Fix a Slow Day";
     const rescuePriorityNote = rescuePriority
@@ -1419,7 +1473,9 @@ router.get("/", async (req, res, next) => {
           ${
             latest
               ? renderDailyPackSection(latest.output, signUrl)
-              : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack yet. Ask an owner to tap “Make Me Money Today”.</p></section>`
+              : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack yet. Ask an owner to tap "${escapeHtml(
+                  runDailyLabel,
+                )}".</p></section>`
           }
           <div class="street-divider"></div>
           <section class="rounded-2xl p-6 shadow-sm bg-white">
@@ -1437,18 +1493,19 @@ router.get("/", async (req, res, next) => {
       context.role !== "member"
         ? `${homeChipRow}<section class="rounded-2xl p-6 shadow-sm bg-white">
             <p class="section-title">Daily focus</p>
-            <h2 class="text-xl">One clear move for today</h2>
-            <p class="muted">No dashboard clutter. Just what to do next.</p>
+            <h2 class="text-xl">${escapeHtml(dailyHeading)}</h2>
+            <p class="muted">${escapeHtml(dailySubheading)}</p>
             <div style="margin-top:10px;">${confidenceChip}</div>
             ${confidenceLine}
             ${launchFlowMessage}
             ${momentumMessage}
+            ${firstWinNote}
             <details style="margin-top:10px;">
               <summary class="muted">Optional note for today</summary>
               <textarea id="daily-notes" placeholder="Only if needed: weather, staffing, special event, etc."></textarea>
             </details>
             ${routeWindowSelect}
-            <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">✅ Make Me Money Today</button>
+            <button id="run-daily" class="primary-button hero-button w-full font-semibold" type="button">${escapeHtml(runDailyLabel)}</button>
             <button id="run-rescue" class="secondary-button w-full text-lg py-4 rounded-xl font-semibold" type="button" style="margin-top:10px;">${escapeHtml(
               rescueButtonLabel,
             )}</button>
@@ -1472,7 +1529,9 @@ router.get("/", async (req, res, next) => {
             ${
               latest
                 ? renderDailyPackSection(latest.output, signUrl)
-                : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Tap “Make Me Money Today” to create today’s special, post, and sign.</p></section>`
+                : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Tap "${escapeHtml(
+                    runDailyLabel,
+                  )}" to create today's special, post, and sign.</p></section>`
             }
           </section>
           ${
@@ -1497,6 +1556,7 @@ router.get("/", async (req, res, next) => {
             const rescueEndpoint = ${JSON.stringify(withSelection("/api/rescue", context))};
             const checkinEndpoint = ${JSON.stringify(withSelection("/api/daily/checkin", context))};
             const signUrl = ${JSON.stringify(signUrl)};
+            const firstWinMode = ${JSON.stringify(startFirstWin)};
             function esc(value) {
               return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
             }
@@ -1557,8 +1617,12 @@ router.get("/", async (req, res, next) => {
               const ownerConfidenceSection = pack.ownerConfidence
                 ? '<article class="result-card"><p class="section-title">Owner confidence</p><h2 class="text-lg">Momentum: ' + esc(confidenceLabel(pack.ownerConfidence.level || "steady")) + '</h2><div class="divider"><p class="output-value">' + esc(pack.ownerConfidence.line || "") + '</p><p class="muted">Current streak: ' + esc(String(pack.ownerConfidence.streakDays || 0)) + ' day(s)</p></div></article>'
                 : '';
+              const firstWinStepsSection = pack.firstWin?.active
+                ? '<article class="result-card"><p class="section-title">First Win Steps</p><p class="output-value"><strong>Step 1:</strong> Here\\'s today\\'s quick win.</p><p class="output-value"><strong>Step 2:</strong> Copy Post and Copy Sign.</p><p class="output-value"><strong>Step 3:</strong> Tell us how it went (Slow / Okay / Busy).</p></article>'
+                : '';
               const nextStepSection = '<article class="result-card"><p class="section-title">Next step</p><p class="output-value">Post this at <strong>' + esc(pack.post?.bestTime || "") + '</strong></p><p class="output-value">Print the sign</p><p class="output-value">If it\\'s slow, tap Rescue</p></article>';
               const cards = [
+                firstWinStepsSection,
                 '<article class="result-card"><p class="section-title">Today\\'s Special</p><h2 class="text-lg">' + esc(pack.todaySpecial?.promoName || "") + '</h2><p id="daily-special" class="output-value">' + esc(pack.todaySpecial?.offer || "") + '<br/>' + esc(pack.todaySpecial?.timeWindow || "") + '</p><div class="divider"><p class="muted">' + esc(pack.todaySpecial?.whyThisWorks || "") + '</p></div></article>',
                 '<article class="result-card"><p class="section-title">Ready-to-post</p><h2 class="text-lg">' + esc(pack.post?.hook || "") + '</h2><p id="daily-caption" class="output-value">' + esc(pack.post?.caption || "") + '<br/>' + esc((pack.post?.onScreenText || []).join(" | ")) + '</p><div class="divider"><p class="muted">Best time: ' + esc(pack.post?.bestTime || "") + ' · ' + esc(pack.post?.platform || "") + '</p></div></article>',
                 '<article class="result-card"><p class="section-title">Store Sign</p><h2 class="text-lg">' + esc(pack.sign?.headline || "") + '</h2><p id="daily-sign" class="output-value">' + esc(pack.sign?.body || "") + (pack.sign?.finePrint ? '<br/><span class="muted">' + esc(pack.sign.finePrint) + '</span>' : '') + '</p><div class="divider"><a class="secondary-button" id="open-sign-print" href="' + esc(signUrl) + '">Print sign</a></div></article>',
@@ -1574,6 +1638,7 @@ router.get("/", async (req, res, next) => {
                 nextStepSection,
               ].filter(Boolean);
               const stackedCards = cards.map((card, index) => (index === 0 ? card : '<div class="street-divider"></div>' + card)).join("");
+              const copyPostLabel = pack.firstWin?.active ? "Copy Post" : "Copy Caption";
               return '<section id="daily-pack" class="rounded-2xl p-6 shadow-sm bg-white">' +
                 '<h3 class="text-xl">Your daily plan</h3>' +
                 '<div class="result-stack">' + stackedCards + '</div>' +
@@ -1590,7 +1655,7 @@ router.get("/", async (req, res, next) => {
                 '<a class="secondary-button" id="print-daily-sign" href="' + esc(signUrl) + '">Printable Sign</a>' +
                 '</div>' +
                 '<div class="result-action-bar">' +
-                '<button class="primary-button touch-target" data-copy-target="daily-caption">Copy Caption</button>' +
+                '<button class="primary-button touch-target" data-copy-target="daily-caption">' + esc(copyPostLabel) + '</button>' +
                 '<button class="secondary-button touch-target" data-copy-target="daily-sign">Copy Sign</button>' +
                 '</div></section>';
             }
@@ -1610,7 +1675,7 @@ router.get("/", async (req, res, next) => {
             }
             async function runDailyPack() {
               const status = document.getElementById("daily-status");
-              if (status) status.textContent = "Making today\\'s plan...";
+              if (status) status.textContent = firstWinMode ? "Starting your first win..." : "Making today\\'s plan...";
               const notes = document.getElementById("daily-notes")?.value || "";
               const selectedWindow = document.getElementById("daily-window")?.value || "";
               const selectedSeason = document.getElementById("daily-season")?.value || "";
@@ -1729,7 +1794,7 @@ router.get("/", async (req, res, next) => {
                   if (status) status.textContent = json.error || "Could not save check-in.";
                   return;
                 }
-                if (status) status.textContent = "Saved. Thank you.";
+                if (status) status.textContent = json.message || "Saved. Thank you.";
               });
             });
             ${

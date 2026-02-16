@@ -71,6 +71,11 @@ export const dailyOwnerConfidenceSchema = z.object({
   line: z.string().min(1),
 });
 
+export const dailyFirstWinSchema = z.object({
+  active: z.boolean(),
+  sessionId: z.string().min(1),
+});
+
 export const dailyOutputSchema = z.object({
   todaySpecial: z.object({
     promoName: z.string().min(1),
@@ -101,6 +106,7 @@ export const dailyOutputSchema = z.object({
   townMicroRoute: dailyTownMicroRouteSchema.optional(),
   townSeasonalBoost: dailyTownSeasonalBoostSchema.optional(),
   ownerConfidence: dailyOwnerConfidenceSchema.optional(),
+  firstWin: dailyFirstWinSchema.optional(),
   trustLine: z.string().min(1).optional(),
   nextStep: z.string().min(1),
 });
@@ -123,4 +129,5 @@ export type DailyTownGraphBoost = z.infer<typeof dailyTownGraphBoostSchema>;
 export type DailyTownMicroRoute = z.infer<typeof dailyTownMicroRouteSchema>;
 export type DailyTownSeasonalBoost = z.infer<typeof dailyTownSeasonalBoostSchema>;
 export type DailyOwnerConfidence = z.infer<typeof dailyOwnerConfidenceSchema>;
+export type DailyFirstWin = z.infer<typeof dailyFirstWinSchema>;
 export type DailyCheckinRequest = z.infer<typeof dailyCheckinRequestSchema>;

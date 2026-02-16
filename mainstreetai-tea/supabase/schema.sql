@@ -224,6 +224,15 @@ create table if not exists public.town_success_signals (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.first_win_sessions (
+  id uuid primary key default gen_random_uuid(),
+  brand_ref uuid not null references public.brands(id) on delete cascade,
+  started_at timestamptz not null default now(),
+  completed boolean not null default false,
+  result_feedback text check (result_feedback in ('slow','okay','busy')),
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.owner_progress (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -656,6 +665,12 @@ create index if not exists owner_progress_owner_brand_day_idx
 create index if not exists owner_win_moments_owner_created_idx
   on public.owner_win_moments(owner_id, created_at desc);
 
+create index if not exists first_win_sessions_brand_created_idx
+  on public.first_win_sessions(brand_ref, created_at desc);
+
+create index if not exists first_win_sessions_brand_completed_idx
+  on public.first_win_sessions(brand_ref, completed, created_at desc);
+
 create index if not exists posts_owner_brand_posted_at_idx
   on public.posts(owner_id, brand_ref, posted_at desc);
 
@@ -894,6 +909,7 @@ alter table public.town_invites enable row level security;
 alter table public.town_success_signals enable row level security;
 alter table public.owner_progress enable row level security;
 alter table public.owner_win_moments enable row level security;
+alter table public.first_win_sessions enable row level security;
 alter table public.history enable row level security;
 alter table public.posts enable row level security;
 alter table public.metrics enable row level security;
@@ -1222,6 +1238,26 @@ create policy owner_win_moments_owner_all on public.owner_win_moments
 for all
 using (owner_id = auth.uid())
 with check (owner_id = auth.uid());
+
+drop policy if exists first_win_sessions_member_select on public.first_win_sessions;
+create policy first_win_sessions_member_select on public.first_win_sessions
+for select
+using (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin','member']::text[])
+);
+
+drop policy if exists first_win_sessions_owner_modify on public.first_win_sessions;
+create policy first_win_sessions_owner_modify on public.first_win_sessions
+for all
+using (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+)
+with check (
+  public.is_brand_owner(brand_ref)
+  or public.has_team_role(brand_ref, array['owner','admin']::text[])
+);
 
 drop policy if exists history_owner_all on public.history;
 create policy history_owner_all on public.history

@@ -13,6 +13,7 @@ import {
   type DailyPlatform,
   type DailyRequest,
 } from "../schemas/dailyOneButtonSchema";
+import { firstWinPromptOutputSchema } from "../schemas/firstWinSchema";
 import {
   localCollabOutputSchema,
   localCollabRequestSchema,
@@ -21,6 +22,7 @@ import {
 } from "../schemas/localCollabSchema";
 import { rescueOutputSchema, rescueRequestSchema, type RescueOutput, type RescueRequest } from "../schemas/rescueOneButtonSchema";
 import { getAdapter } from "../storage/getAdapter";
+import { resolveTownWindow } from "../town/windows";
 import { getTimezoneParts, parsePostTimeToHourMinute, timezoneOrDefault, zonedDateTimeToUtcIso } from "../utils/timezone";
 import { getUpcomingLocalEvents } from "./localEventAwareness";
 import { getLocationById } from "./locationStore";
@@ -49,9 +51,15 @@ import type { TownSeasonKey } from "../schemas/townSeasonSchema";
 import {
   getOwnerConfidenceForBrand,
   maybeRecordOutcomeWinMoments,
+  recordOwnerWinMoment,
   recordOwnerProgressAction,
 } from "./ownerConfidenceService";
 import { generateLocalTrustLine, isLocalTrustEnabled } from "./localTrustService";
+import {
+  completeFirstWinSessionForBrand,
+  firstWinCompletionLine,
+  getFirstWinStatusForBrand,
+} from "./firstWinService";
 
 type DailyPackRecord = {
   id: string;
@@ -289,6 +297,16 @@ function recentPostSnapshots(posts: Array<{ platform: string; postedAt: string; 
   }));
 }
 
+function firstWinOnScreenText(offerTitle: string): [string, string, string] {
+  const normalized = offerTitle.trim();
+  const line = normalized.length > 34 ? `${normalized.slice(0, 31)}...` : normalized;
+  return [
+    line || "Quick local win",
+    "Simple to run today",
+    "Welcome back, neighbors",
+  ];
+}
+
 export async function runDailyOneButton(input: {
   userId: string;
   brandId: string;
@@ -314,6 +332,17 @@ export async function runDailyOneButton(input: {
   if (!brand) {
     throw new Error(`Brand '${input.brandId}' was not found`);
   }
+  const firstWinStatus = await getFirstWinStatusForBrand({
+    ownerId: input.userId,
+    brandId: input.brandId,
+    createIfMissing: true,
+  }).catch(() => ({
+    needsFirstWin: false,
+    hasCompleted: false,
+    activeSession: null,
+    latestCompleted: null,
+  }));
+  const firstWinActive = Boolean(firstWinStatus.needsFirstWin && firstWinStatus.activeSession);
   const milestone = brand.townRef
     ? await getTownMilestoneSummary({
         townId: brand.townRef,
@@ -350,9 +379,10 @@ export async function runDailyOneButton(input: {
       : Promise.resolve(null),
   ]);
   const timezone = timezoneOrDefault(location?.timezone ?? settings?.timezone ?? "America/Chicago");
-  const chosenGoal =
-    parsedRequest.goal ??
-    (brand.supportLevel === "struggling" ? "slow_hours" : defaultGoalFromClock(timezone));
+  const chosenGoal = firstWinActive
+    ? "repeat_customers"
+    : parsedRequest.goal ??
+      (brand.supportLevel === "struggling" ? "slow_hours" : defaultGoalFromClock(timezone));
   const preferred = preferredPlatformFromSettings(settings?.channels);
   const chosenPlatform = await selectPlatform({
     userId: input.userId,
@@ -369,123 +399,6 @@ export async function runDailyOneButton(input: {
   const upcomingEvents = await getUpcomingLocalEvents(input.userId, input.brandId, 3);
   const recentPosts = recentPostSnapshots(await adapter.listPosts(input.userId, input.brandId, 30));
 
-  const promptOutput = await runPrompt({
-    promptFile: "daily_one_button.md",
-    brandProfile: brand,
-    userId: input.userId,
-    locationContext: location
-      ? {
-          id: location.id,
-          name: location.name,
-          address: location.address,
-          timezone: location.timezone,
-        }
-      : undefined,
-    input: {
-      brand,
-      communityVibeProfile: brand.communityVibeProfile,
-      voiceProfile: voiceProfile
-        ? {
-            styleSummary: voiceProfile.styleSummary,
-            emojiStyle: voiceProfile.emojiStyle,
-            energyLevel: voiceProfile.energyLevel,
-            phrasesToRepeat: voiceProfile.phrasesToRepeat,
-            doNotUse: voiceProfile.doNotUse,
-          }
-        : undefined,
-      timingModel: timingModel?.model,
-      insightsSummary: insightsCache.insights,
-      townPulse: townPulseModel?.model,
-      notes: parsedRequest.notes,
-      goal: chosenGoal,
-      supportContext: {
-        supportLevel: brand.supportLevel,
-        prioritizeRescueIdeas: brand.supportLevel === "struggling",
-      },
-      bestPlatform: chosenPlatform,
-      upcomingEventTieIn: upcomingEvents[0] ?? null,
-      location: location
-        ? {
-            id: location.id,
-            name: location.name,
-            address: location.address,
-            timezone: location.timezone,
-          }
-        : undefined,
-    },
-    outputSchema: dailyOutputSchema,
-  });
-
-  const localBoostSuggestion = await runPrompt({
-    promptFile: "local_boost.md",
-    brandProfile: brand,
-    userId: input.userId,
-    locationContext: location
-      ? {
-          id: location.id,
-          name: location.name,
-          address: location.address,
-          timezone: location.timezone,
-        }
-      : undefined,
-    input: {
-      brand,
-      communityVibeProfile: brand.communityVibeProfile,
-      recentPosts,
-      goal: chosenGoal,
-    },
-    outputSchema: localBoostOutputSchema,
-  }).catch(() => null);
-  const townBoostSuggestion = await buildTownBoostForDaily({
-    userId: input.userId,
-    brandId: input.brandId,
-    brand,
-    goal: chosenGoal,
-  }).catch(() => null);
-  const latestTownStory = townStoriesEnabled
-    ? await getLatestTownStoryForBrand({
-        userId: input.userId,
-        brandId: input.brandId,
-      }).catch(() => null)
-    : null;
-  const townPulseBoost = townPulseModel
-    ? await buildTownPulsePromptSuggestion({
-        userId: input.userId,
-        brand,
-        townPulse: townPulseModel.model,
-      }).catch(() => null)
-    : null;
-  const mergedTownBoost =
-    townBoostSuggestion?.townBoost ??
-    (townPulseBoost
-      ? {
-          line: townPulseBoost.angle,
-          captionAddOn: townPulseBoost.captionAddOn,
-          staffScript: townPulseBoost.timingHint,
-        }
-      : undefined);
-  const dailyTownStory = latestTownStory
-    ? {
-        headline: latestTownStory.content.headline,
-        captionAddOn: latestTownStory.content.socialCaption,
-        staffLine: latestTownStory.content.signLine || latestTownStory.content.conversationStarter,
-      }
-    : undefined;
-  const townGraphBoostSuggestion = await buildTownGraphBoostForDaily({
-    userId: input.userId,
-    brandId: input.brandId,
-    brand,
-    townPulse: townPulseModel?.model,
-    voiceProfile: voiceProfile
-      ? {
-          styleSummary: voiceProfile.styleSummary,
-          emojiStyle: voiceProfile.emojiStyle,
-          energyLevel: voiceProfile.energyLevel,
-          phrasesToRepeat: voiceProfile.phrasesToRepeat,
-          doNotUse: voiceProfile.doNotUse,
-        }
-      : undefined,
-  }).catch(() => null);
   const townMicroRouteSuggestion = await buildTownMicroRouteForDaily({
     userId: input.userId,
     brandId: input.brandId,
@@ -506,53 +419,249 @@ export async function runDailyOneButton(input: {
     windowOverride: input.windowOverride,
     seasonOverride: input.seasonOverride,
   }).catch(() => null);
-  if (townPulseBoost && mergedTownBoost && townBoostSuggestion?.townBoost) {
-    const captionAddOn = `${mergedTownBoost.captionAddOn} ${townPulseBoost.captionAddOn}`.trim();
-    mergedTownBoost.captionAddOn = captionAddOn;
-    mergedTownBoost.staffScript = `${mergedTownBoost.staffScript} ${townPulseBoost.timingHint}`.trim();
-  }
-  if (brand.townRef && mergedTownBoost) {
-    const fromCategory = townGraphCategoryFromBrandType(brand.type);
-    const hintedCategory = inferTownGraphCategoryFromText(
-      `${mergedTownBoost.line} ${mergedTownBoost.captionAddOn} ${mergedTownBoost.staffScript}`,
-    );
-    if (hintedCategory && hintedCategory !== fromCategory) {
-      await addTownGraphEdge({
-        townId: brand.townRef,
-        fromCategory,
-        toCategory: hintedCategory,
-        weight: 0.75,
-        userId: input.userId,
-      }).catch(() => {
-        // Town Graph is a best-effort intelligence layer.
-      });
-    }
-  }
-
   const twilioIntegration = await adapter.getIntegration(input.userId, input.brandId, "twilio");
-  const packBase = dailyOutputSchema.parse({
-    ...promptOutput,
-    post: {
-      ...promptOutput.post,
-      platform: sanitizeDailyPlatform(promptOutput.post.platform),
-    },
-    optionalSms: {
-      ...promptOutput.optionalSms,
-      enabled: Boolean(twilioIntegration),
-    },
-    localBoost: localBoostSuggestion
+  let latestTownStory: Awaited<ReturnType<typeof getLatestTownStoryForBrand>> | null = null;
+  let packBase: DailyOutput;
+
+  if (firstWinActive) {
+    const activeWindow =
+      townMicroRouteSuggestion?.townMicroRoute?.window ??
+      input.windowOverride ??
+      resolveTownWindow({
+        timezone,
+      });
+    const seasonTags =
+      townSeasonalBoostSuggestion?.townSeasonalBoost?.seasonTags ??
+      (input.seasonOverride ? [input.seasonOverride] : []);
+    const firstWinOutput = await runPrompt({
+      promptFile: "first_win.md",
+      brandProfile: brand,
+      userId: input.userId,
+      locationContext: location
+        ? {
+            id: location.id,
+            name: location.name,
+            address: location.address,
+            timezone: location.timezone,
+          }
+        : undefined,
+      input: {
+        brand,
+        townPulse: townPulseModel?.model ?? null,
+        window: activeWindow,
+        seasonTags,
+        support_level: brand.supportLevel,
+      },
+      outputSchema: firstWinPromptOutputSchema,
+    }).catch(() => ({
+      offerTitle: "Quick local welcome-back special",
+      caption: "Today only: a simple local favorite, ready when you are. We would love to see you.",
+      signText: "Today: quick local favorite. Ask us what regulars are picking this week.",
+      staffScript: "Welcome back. We are running a quick favorite for regulars today.",
+      timingHint: "Run this in your busiest local window for repeat traffic.",
+    }));
+
+    packBase = dailyOutputSchema.parse({
+      todaySpecial: {
+        promoName: firstWinOutput.offerTitle,
+        offer: firstWinOutput.signText,
+        timeWindow: firstWinOutput.timingHint,
+        whyThisWorks: "Built around your existing strengths with a simple repeat-traffic focus.",
+      },
+      post: {
+        platform: chosenPlatform,
+        bestTime: timingModel?.model.bestTimeLabel ?? "Today",
+        hook: firstWinOutput.offerTitle,
+        caption: firstWinOutput.caption,
+        onScreenText: firstWinOnScreenText(firstWinOutput.offerTitle),
+      },
+      sign: {
+        headline: firstWinOutput.offerTitle,
+        body: firstWinOutput.signText,
+        finePrint: "Simple offer. Easy to run.",
+      },
+      optionalSms: {
+        enabled: Boolean(twilioIntegration),
+        message: `${firstWinOutput.offerTitle} — ${firstWinOutput.staffScript}`.trim(),
+      },
+      localBoost: {
+        line: "Here is today's quick win.",
+        captionAddOn: firstWinOutput.caption,
+        staffScript: firstWinOutput.staffScript,
+      },
+      townMicroRoute: townMicroRouteSuggestion?.townMicroRoute,
+      townSeasonalBoost: townSeasonalBoostSuggestion?.townSeasonalBoost,
+      firstWin: {
+        active: true,
+        sessionId: firstWinStatus.activeSession?.id ?? "first-win-session",
+      },
+      nextStep: "Step 1: run this quick win. Step 2: copy post and sign. Step 3: tell us Slow, Okay, or Busy.",
+    });
+  } else {
+    const promptOutput = await runPrompt({
+      promptFile: "daily_one_button.md",
+      brandProfile: brand,
+      userId: input.userId,
+      locationContext: location
+        ? {
+            id: location.id,
+            name: location.name,
+            address: location.address,
+            timezone: location.timezone,
+          }
+        : undefined,
+      input: {
+        brand,
+        communityVibeProfile: brand.communityVibeProfile,
+        voiceProfile: voiceProfile
+          ? {
+              styleSummary: voiceProfile.styleSummary,
+              emojiStyle: voiceProfile.emojiStyle,
+              energyLevel: voiceProfile.energyLevel,
+              phrasesToRepeat: voiceProfile.phrasesToRepeat,
+              doNotUse: voiceProfile.doNotUse,
+            }
+          : undefined,
+        timingModel: timingModel?.model,
+        insightsSummary: insightsCache.insights,
+        townPulse: townPulseModel?.model,
+        notes: parsedRequest.notes,
+        goal: chosenGoal,
+        supportContext: {
+          supportLevel: brand.supportLevel,
+          prioritizeRescueIdeas: brand.supportLevel === "struggling",
+        },
+        bestPlatform: chosenPlatform,
+        upcomingEventTieIn: upcomingEvents[0] ?? null,
+        location: location
+          ? {
+              id: location.id,
+              name: location.name,
+              address: location.address,
+              timezone: location.timezone,
+            }
+          : undefined,
+      },
+      outputSchema: dailyOutputSchema,
+    });
+
+    const localBoostSuggestion = await runPrompt({
+      promptFile: "local_boost.md",
+      brandProfile: brand,
+      userId: input.userId,
+      locationContext: location
+        ? {
+            id: location.id,
+            name: location.name,
+            address: location.address,
+            timezone: location.timezone,
+          }
+        : undefined,
+      input: {
+        brand,
+        communityVibeProfile: brand.communityVibeProfile,
+        recentPosts,
+        goal: chosenGoal,
+      },
+      outputSchema: localBoostOutputSchema,
+    }).catch(() => null);
+    const townBoostSuggestion = await buildTownBoostForDaily({
+      userId: input.userId,
+      brandId: input.brandId,
+      brand,
+      goal: chosenGoal,
+    }).catch(() => null);
+    latestTownStory = townStoriesEnabled
+      ? await getLatestTownStoryForBrand({
+          userId: input.userId,
+          brandId: input.brandId,
+        }).catch(() => null)
+      : null;
+    const townPulseBoost = townPulseModel
+      ? await buildTownPulsePromptSuggestion({
+          userId: input.userId,
+          brand,
+          townPulse: townPulseModel.model,
+        }).catch(() => null)
+      : null;
+    const mergedTownBoost =
+      townBoostSuggestion?.townBoost ??
+      (townPulseBoost
+        ? {
+            line: townPulseBoost.angle,
+            captionAddOn: townPulseBoost.captionAddOn,
+            staffScript: townPulseBoost.timingHint,
+          }
+        : undefined);
+    const dailyTownStory = latestTownStory
       ? {
-          line: localBoostSuggestion.localAngle,
-          captionAddOn: localBoostSuggestion.captionAddOn,
-          staffScript: localBoostSuggestion.staffLine,
+          headline: latestTownStory.content.headline,
+          captionAddOn: latestTownStory.content.socialCaption,
+          staffLine: latestTownStory.content.signLine || latestTownStory.content.conversationStarter,
         }
-      : undefined,
-    townBoost: mergedTownBoost,
-    townStory: dailyTownStory,
-    townGraphBoost: townGraphBoostSuggestion?.townGraphBoost,
-    townMicroRoute: townMicroRouteSuggestion?.townMicroRoute,
-    townSeasonalBoost: townSeasonalBoostSuggestion?.townSeasonalBoost,
-  });
+      : undefined;
+    const townGraphBoostSuggestion = await buildTownGraphBoostForDaily({
+      userId: input.userId,
+      brandId: input.brandId,
+      brand,
+      townPulse: townPulseModel?.model,
+      voiceProfile: voiceProfile
+        ? {
+            styleSummary: voiceProfile.styleSummary,
+            emojiStyle: voiceProfile.emojiStyle,
+            energyLevel: voiceProfile.energyLevel,
+            phrasesToRepeat: voiceProfile.phrasesToRepeat,
+            doNotUse: voiceProfile.doNotUse,
+          }
+        : undefined,
+    }).catch(() => null);
+    if (townPulseBoost && mergedTownBoost && townBoostSuggestion?.townBoost) {
+      const captionAddOn = `${mergedTownBoost.captionAddOn} ${townPulseBoost.captionAddOn}`.trim();
+      mergedTownBoost.captionAddOn = captionAddOn;
+      mergedTownBoost.staffScript = `${mergedTownBoost.staffScript} ${townPulseBoost.timingHint}`.trim();
+    }
+    if (brand.townRef && mergedTownBoost) {
+      const fromCategory = townGraphCategoryFromBrandType(brand.type);
+      const hintedCategory = inferTownGraphCategoryFromText(
+        `${mergedTownBoost.line} ${mergedTownBoost.captionAddOn} ${mergedTownBoost.staffScript}`,
+      );
+      if (hintedCategory && hintedCategory !== fromCategory) {
+        await addTownGraphEdge({
+          townId: brand.townRef,
+          fromCategory,
+          toCategory: hintedCategory,
+          weight: 0.75,
+          userId: input.userId,
+        }).catch(() => {
+          // Town Graph is a best-effort intelligence layer.
+        });
+      }
+    }
+
+    packBase = dailyOutputSchema.parse({
+      ...promptOutput,
+      post: {
+        ...promptOutput.post,
+        platform: sanitizeDailyPlatform(promptOutput.post.platform),
+      },
+      optionalSms: {
+        ...promptOutput.optionalSms,
+        enabled: Boolean(twilioIntegration),
+      },
+      localBoost: localBoostSuggestion
+        ? {
+            line: localBoostSuggestion.localAngle,
+            captionAddOn: localBoostSuggestion.captionAddOn,
+            staffScript: localBoostSuggestion.staffLine,
+          }
+        : undefined,
+      townBoost: mergedTownBoost,
+      townStory: dailyTownStory,
+      townGraphBoost: townGraphBoostSuggestion?.townGraphBoost,
+      townMicroRoute: townMicroRouteSuggestion?.townMicroRoute,
+      townSeasonalBoost: townSeasonalBoostSuggestion?.townSeasonalBoost,
+    });
+  }
   await recordOwnerProgressAction({
     ownerId: input.userId,
     brandId: input.brandId,
@@ -564,6 +673,7 @@ export async function runDailyOneButton(input: {
     ownerId: input.userId,
     brandId: input.brandId,
     includePromptLine: true,
+    minimumLevel: firstWinStatus.hasCompleted ? "rising" : undefined,
   }).catch(() => ({
     confidenceLevel: "steady" as const,
     streakDays: 0,
@@ -600,6 +710,8 @@ export async function runDailyOneButton(input: {
       locationId: location?.id,
       windowOverride: input.windowOverride,
       seasonOverride: input.seasonOverride,
+      firstWinActive,
+      firstWinSessionId: firstWinStatus.activeSession?.id,
     },
     {
       pack,
@@ -980,13 +1092,20 @@ export async function dailyCheckinStatus(userId: string, brandId: string): Promi
   latestPackId?: string;
   latestPackAt?: string;
 }> {
+  const firstWinStatus = await getFirstWinStatusForBrand({
+    ownerId: userId,
+    brandId,
+    createIfMissing: false,
+  }).catch(() => ({
+    needsFirstWin: false,
+    hasCompleted: false,
+    activeSession: null,
+    latestCompleted: null,
+  }));
+  const firstWinPending = Boolean(firstWinStatus.needsFirstWin && firstWinStatus.activeSession);
   const latest = await getLatestDailyPack(userId, brandId);
   if (!latest) {
     return { pending: false };
-  }
-  const createdMs = new Date(latest.createdAt).getTime();
-  if (!Number.isFinite(createdMs) || Date.now() - createdMs < 24 * 60 * 60 * 1000) {
-    return { pending: false, latestPackId: latest.id, latestPackAt: latest.createdAt };
   }
   const metrics = await getAdapter().listMetrics(userId, brandId, 200);
   const alreadyCheckedIn = metrics.some(
@@ -994,6 +1113,17 @@ export async function dailyCheckinStatus(userId: string, brandId: string): Promi
       typeof metric.salesNotes === "string" &&
       metric.salesNotes.includes(`daily_checkin:${latest.id}:`),
   );
+  if (firstWinPending) {
+    return {
+      pending: !alreadyCheckedIn,
+      latestPackId: latest.id,
+      latestPackAt: latest.createdAt,
+    };
+  }
+  const createdMs = new Date(latest.createdAt).getTime();
+  if (!Number.isFinite(createdMs) || Date.now() - createdMs < 24 * 60 * 60 * 1000) {
+    return { pending: false, latestPackId: latest.id, latestPackAt: latest.createdAt };
+  }
   return {
     pending: !alreadyCheckedIn,
     latestPackId: latest.id,
@@ -1005,7 +1135,13 @@ export async function submitDailyCheckin(input: {
   userId: string;
   brandId: string;
   request: DailyCheckinRequest;
-}): Promise<{ status: "saved" | "skipped"; reason?: string }> {
+}): Promise<{
+  status: "saved" | "skipped";
+  reason?: string;
+  message?: string;
+  firstWinCompleted?: boolean;
+  ownerConfidenceLevel?: "low" | "steady" | "rising";
+}> {
   const parsed = dailyCheckinRequestSchema.parse(input.request);
   const latest = await getLatestDailyPack(input.userId, input.brandId);
   if (!latest) {
@@ -1055,5 +1191,30 @@ export async function submitDailyCheckin(input: {
   }).catch(() => {
     // Win-moment tracking is best-effort.
   });
-  return { status: "saved" };
+  const firstWinCompletion = await completeFirstWinSessionForBrand({
+    ownerId: input.userId,
+    brandId: input.brandId,
+    resultFeedback: parsed.outcome,
+  }).catch(() => ({
+    completed: false,
+    session: null,
+  }));
+  if (firstWinCompletion.completed) {
+    await recordOwnerWinMoment({
+      ownerId: input.userId,
+      message:
+        parsed.outcome === "busy"
+          ? "Your first win is underway. Keep this simple pattern going."
+          : "You completed your first win session. That first step matters.",
+      dedupeWindowDays: 21,
+    }).catch(() => {
+      // Win-moment writes are best-effort.
+    });
+  }
+  return {
+    status: "saved",
+    message: firstWinCompletion.completed ? firstWinCompletionLine(parsed.outcome) : "Saved. Thank you.",
+    firstWinCompleted: firstWinCompletion.completed,
+    ownerConfidenceLevel: firstWinCompletion.completed ? "rising" : undefined,
+  };
 }

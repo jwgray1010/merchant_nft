@@ -146,6 +146,39 @@ function msDaysAgo(days: number): number {
   return Date.now() - days * 24 * 60 * 60 * 1000;
 }
 
+const CONFIDENCE_LEVEL_RANK: Record<"low" | "steady" | "rising", number> = {
+  low: 0,
+  steady: 1,
+  rising: 2,
+};
+
+function minimumHint(level: "low" | "steady" | "rising"): string {
+  if (level === "rising") {
+    return "You are building momentum through steady follow-through.";
+  }
+  if (level === "steady") {
+    return "Steady effort matters more than perfect days.";
+  }
+  return "A small action today can restart momentum.";
+}
+
+function applyMinimumConfidenceLevel(
+  summary: OwnerConfidenceSummary,
+  minimumLevel: "low" | "steady" | "rising" | undefined,
+): OwnerConfidenceSummary {
+  if (!minimumLevel) {
+    return summary;
+  }
+  if (CONFIDENCE_LEVEL_RANK[summary.confidenceLevel] >= CONFIDENCE_LEVEL_RANK[minimumLevel]) {
+    return summary;
+  }
+  return {
+    ...summary,
+    confidenceLevel: minimumLevel,
+    momentumHint: minimumHint(minimumLevel),
+  };
+}
+
 async function resolveBrandContext(input: {
   ownerId: string;
   brandId: string;
@@ -437,10 +470,27 @@ export async function listOwnerWinMoments(input: {
     .slice(0, max);
 }
 
+export async function recordOwnerWinMoment(input: {
+  ownerId: string;
+  message: string;
+  dedupeWindowDays?: number;
+}): Promise<void> {
+  const message = input.message.trim();
+  if (!message) {
+    return;
+  }
+  await createWinMomentIfNeeded({
+    ownerId: input.ownerId,
+    message,
+    dedupeWindowDays: input.dedupeWindowDays,
+  }).catch(() => null);
+}
+
 export async function getOwnerConfidenceForBrand(input: {
   ownerId: string;
   brandId: string;
   includePromptLine?: boolean;
+  minimumLevel?: "low" | "steady" | "rising";
 }): Promise<
   OwnerConfidenceSummary & {
     line: string;
@@ -452,15 +502,18 @@ export async function getOwnerConfidenceForBrand(input: {
     brandId: input.brandId,
   });
   if (!context) {
-    const fallback = calcConfidence({
-      last7ActionDates: [],
-      last30ActionDates: [],
-      checkinOutcomesLast30: [],
-      rescueActionsLast30: 0,
-    });
+    const fallback = applyMinimumConfidenceLevel(
+      calcConfidence({
+        last7ActionDates: [],
+        last30ActionDates: [],
+        checkinOutcomesLast30: [],
+        rescueActionsLast30: 0,
+      }),
+      input.minimumLevel,
+    );
     return {
       ...fallback,
-      line: "A small action today can restart momentum.",
+      line: fallback.momentumHint,
     };
   }
 
@@ -488,11 +541,12 @@ export async function getOwnerConfidenceForBrand(input: {
     checkinOutcomesLast30,
     rescueActionsLast30,
   });
+  const adjustedSummary = applyMinimumConfidenceLevel(summary, input.minimumLevel);
 
   if (!includePromptLine) {
     return {
-      ...summary,
-      line: summary.momentumHint,
+      ...adjustedSummary,
+      line: adjustedSummary.momentumHint,
     };
   }
 
@@ -501,17 +555,17 @@ export async function getOwnerConfidenceForBrand(input: {
     brandProfile: context.brand,
     userId: input.ownerId,
     input: {
-      confidenceLevel: summary.confidenceLevel,
-      streakDays: summary.streakDays,
-      recentTrend: summary.recentTrend,
+      confidenceLevel: adjustedSummary.confidenceLevel,
+      streakDays: adjustedSummary.streakDays,
+      recentTrend: adjustedSummary.recentTrend,
     },
     outputSchema: ownerConfidencePromptOutputSchema,
   })
     .then((result) => result.confidenceLine)
-    .catch(() => summary.momentumHint);
+    .catch(() => adjustedSummary.momentumHint);
 
   return {
-    ...summary,
+    ...adjustedSummary,
     line: promptLine,
   };
 }
