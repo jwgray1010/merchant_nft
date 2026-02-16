@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 17)
+# MainStreetAI Platform API (Phase 18)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -59,6 +59,7 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - Invite-based local adoption loops (non-spam)
   - Town adoption milestones + partner credibility pages
   - Local Trust Engine identity assets + trust messaging
+  - AutoPublicity Engine simple mode (upload once, post everywhere)
   - Public marketing pages (`/`, `/pricing`, `/demo`)
   - Onboarding wizard (`/onboarding`)
   - Demo-mode write protection middleware
@@ -160,6 +161,7 @@ All multi-tenant API endpoints require auth:
 - `/sign.pdf`
 - `/integrations`, `/publish`, `/sms`, `/gbp`, `/email`, `/outbox`
 - `/autopilot`, `/alerts`
+- `/autopublicity`
 - `/api/billing/create-checkout-session`, `/api/billing/cancel-subscription`
 - `/api/team`
 
@@ -1876,3 +1878,52 @@ Easy Mode updates:
 Confidence integration:
 - Completing first win records a dedicated owner win-moment note.
 - Confidence output can floor to `rising` after first-win completion.
+
+## Phase 18: AutoPublicity Engine (simple post-everywhere mode)
+
+Phase 18 adds a calm, one-screen publishing flow so owners can upload media once and post everywhere with minimal decisions.
+
+New data model:
+- `autopublicity_jobs`
+  - `id`
+  - `brand_ref`
+  - `media_url`
+  - `status` (`draft|posting|posted`)
+  - `created_at`
+
+New prompt:
+- `prompts/autopublicity.md`
+  - outputs:
+    - `masterCaption`
+    - `facebookCaption`
+    - `instagramCaption`
+    - `twitterCaption`
+    - `googleCaption`
+    - `tiktokHook`
+    - `snapchatText`
+  - rules enforce short local voice and optional trust-line inclusion.
+
+API and service updates:
+- New route: `POST /api/autopublicity?brandId=...`
+  - generates a full AutoPublicity pack from uploaded media
+  - only posts when `confirmPost=true` (explicit owner/admin confirmation)
+  - auto-post targets:
+    - Facebook (Buffer)
+    - Instagram (Buffer)
+    - X (via Buffer profile routing)
+    - Google Business Profile
+  - open-ready targets:
+    - TikTok (prepared hook + open link)
+    - Snapchat (prepared text + open link)
+
+Easy Mode updates:
+- New page: `/app/autopublicity`
+  - simple upload + checkbox list + one `Post Everywhere` button
+  - no extra setup menus
+- Daily pack integration now includes:
+  - `Upload Photo & Post Now` quick action button
+- Home/Create quick actions include `Post Everywhere`.
+
+Safety behavior:
+- Never auto-post without explicit owner confirmation.
+- Keeps setup intentionally simple and low-friction.

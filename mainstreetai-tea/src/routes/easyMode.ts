@@ -715,6 +715,17 @@ function easyLayout(input: {
       .action-card .emoji { font-size: 1.15rem; display: block; margin-bottom: 8px; color: var(--subtext); }
       .selector-grid { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; margin-top: 12px; }
       .field-label { display: grid; gap: 6px; font-size: 0.88rem; color: #4b5563; }
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.95rem;
+        margin-top: 6px;
+      }
+      .checkbox-row input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+      }
       input, textarea, select {
         border: 1px solid var(--border);
         border-radius: 0.8rem;
@@ -1123,7 +1134,7 @@ async function smsSuggestion(ownerUserId: string, brandId: string): Promise<stri
   return "Hey! We have fresh specials today. Stop by and see what’s new.";
 }
 
-function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
+function renderDailyPackSection(pack: DailyOutput, signUrl: string, autopublicityUrl: string): string {
   const localBoostSection = pack.localBoost
     ? `<article class="result-card">
         <p class="section-title">Local Boost</p>
@@ -1323,6 +1334,7 @@ function renderDailyPackSection(pack: DailyOutput, signUrl: string): string {
              <button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Staff Line</button>`
           : ""
       }
+      <a class="primary-button" href="${escapeHtml(autopublicityUrl)}">Upload Photo &amp; Post Now</a>
       <button class="secondary-button" id="share-daily" type="button">Share</button>
       <a class="secondary-button" id="print-daily-sign" href="${escapeHtml(signUrl)}">Printable Sign</a>
     </div>
@@ -1373,6 +1385,7 @@ router.get("/", async (req, res, next) => {
         : Promise.resolve(null),
     ]);
     const signUrl = withSelection("/app/sign/today", context);
+    const autopublicityUrl = withSelection("/app/autopublicity", context);
     const routeWindowOverride = parseTownWindowOverride(optionalText(req.query.window));
     const seasonOverride = parseSeasonOverride(optionalText(req.query.season));
     const routeWindowOptions = [
@@ -1472,7 +1485,7 @@ router.get("/", async (req, res, next) => {
           </section>
           ${
             latest
-              ? renderDailyPackSection(latest.output, signUrl)
+              ? renderDailyPackSection(latest.output, signUrl, autopublicityUrl)
               : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack yet. Ask an owner to tap "${escapeHtml(
                   runDailyLabel,
                 )}".</p></section>`
@@ -1482,6 +1495,7 @@ router.get("/", async (req, res, next) => {
             <p class="section-title">Quick actions</p>
             <div class="action-grid">
               ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Right-now timing check")}
+              ${cardLink(withSelection("/app/autopublicity", context), "📣", "Post Everywhere", "Upload once, publish everywhere")}
               ${cardLink(withSelection("/app/media", context), "📷", "Media", "Improve a photo post")}
               ${cardLink(withSelection("/app/insights", context), "📈", "What worked lately", "See what to repeat")}
               ${cardLink(withSelection("/app/town", context), "📍", "Town", "View local network flow")}
@@ -1518,6 +1532,7 @@ router.get("/", async (req, res, next) => {
             <p class="section-title">Secondary actions</p>
             <div class="action-grid">
               ${cardLink(withSelection("/app/post-now", context), "🕒", "Post Now", "Check this moment")}
+              ${cardLink(withSelection("/app/autopublicity", context), "📣", "Post Everywhere", "Upload once, publish everywhere")}
               ${cardLink(withSelection("/app/media", context), "📷", "Media", "Polish your visual post")}
               ${cardLink(withSelection("/app/town", context), "📍", "Town", "See local network flow")}
               ${cardLink(withSelection("/app/insights", context), "📈", "What worked lately", "Repeat what works")}
@@ -1528,7 +1543,7 @@ router.get("/", async (req, res, next) => {
           <section id="daily-pack-wrapper">
             ${
               latest
-                ? renderDailyPackSection(latest.output, signUrl)
+                ? renderDailyPackSection(latest.output, signUrl, autopublicityUrl)
                 : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Tap "${escapeHtml(
                     runDailyLabel,
                   )}" to create today's special, post, and sign.</p></section>`
@@ -1556,6 +1571,7 @@ router.get("/", async (req, res, next) => {
             const rescueEndpoint = ${JSON.stringify(withSelection("/api/rescue", context))};
             const checkinEndpoint = ${JSON.stringify(withSelection("/api/daily/checkin", context))};
             const signUrl = ${JSON.stringify(signUrl)};
+            const autopublicityUrl = ${JSON.stringify(autopublicityUrl)};
             const firstWinMode = ${JSON.stringify(startFirstWin)};
             function esc(value) {
               return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
@@ -1651,6 +1667,7 @@ router.get("/", async (req, res, next) => {
                 (pack.townGraphBoost ? '<button class="primary-button" data-copy-target="daily-town-graph-caption">Copy Next Stop Add-on</button><button class="secondary-button" data-copy-target="daily-town-graph-staff-line">Copy Staff Line</button>' : '') +
                 (pack.townMicroRoute ? '<button class="primary-button" data-copy-target="daily-town-micro-route-caption">Copy Route Add-on</button><button class="secondary-button" data-copy-target="daily-town-micro-route-staff-line">Copy Route Staff Line</button>' : '') +
                 (pack.townSeasonalBoost ? '<button class="primary-button" data-copy-target="daily-town-seasonal-caption">Copy Seasonal Add-on</button><button class="secondary-button" data-copy-target="daily-town-seasonal-staff-line">Copy Staff Line</button>' : '') +
+                '<a class="primary-button" href="' + esc(autopublicityUrl) + '">Upload Photo &amp; Post Now</a>' +
                 '<button class="secondary-button" id="share-daily" type="button">Share</button>' +
                 '<a class="secondary-button" id="print-daily-sign" href="' + esc(signUrl) + '">Printable Sign</a>' +
                 '</div>' +
@@ -1837,6 +1854,7 @@ router.get("/create", async (req, res, next) => {
       <div class="grid">
         ${cardLink(withSelection("/app/promo", context), "🟢", "Make today’s plan", "Special + sign + ready-to-post copy")}
         ${cardLink(withSelection("/app/social", context), "🎥", "Ready-to-post", "Hooks, caption, and reel text")}
+        ${cardLink(withSelection("/app/autopublicity", context), "📣", "Post Everywhere", "Upload once and publish with one tap")}
         ${cardLink(withSelection("/app/post-now", context), "⚡", "Should I Post Right Now?", "Real-time timing coach")}
       </div>`;
     return res
@@ -2331,6 +2349,206 @@ router.get("/post-now", async (req, res, next) => {
           context,
           active: "create",
           currentPath: "/app/post-now",
+          body,
+        }),
+      );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/autopublicity", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req, res);
+    if (!context) {
+      return;
+    }
+    const autopublicityEndpoint = withSelection("/api/autopublicity", context);
+    const uploadEndpoint = withSelection("/api/media/upload-url", context);
+    const fromDaily = optionalText(req.query.fromDaily) === "1";
+    const fromDailyNote = fromDaily
+      ? `<p class="muted" style="margin-top:6px;">Using your daily workflow: upload media and post in one step.</p>`
+      : "";
+    const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
+      <h2 class="text-xl">Post Everywhere</h2>
+      <p class="muted">Upload photo/video once. AI adapts captions for each platform.</p>
+      ${fromDailyNote}
+      <div class="output-card">
+        <label class="field-label">Upload Photo/Video
+          <input id="autopub-file" type="file" accept="image/*,video/*" />
+        </label>
+        <button class="secondary-button" id="autopub-upload-btn" type="button">Upload selected media</button>
+        <p id="autopub-upload-status" class="muted"></p>
+      </div>
+      <form id="autopub-form" style="display:grid;gap:10px;margin-top:10px;">
+        <label class="field-label">Media URL
+          <input id="autopub-url" placeholder="https://..." />
+        </label>
+        <label class="field-label">Optional caption idea
+          <input id="autopub-idea" placeholder="what this post is about (optional)" />
+        </label>
+        <div class="output-card">
+          <p class="output-label">Choose channels</p>
+          <label class="checkbox-row"><input id="autopub-facebook" type="checkbox" checked /> Facebook</label>
+          <label class="checkbox-row"><input id="autopub-instagram" type="checkbox" checked /> Instagram</label>
+          <label class="checkbox-row"><input id="autopub-google" type="checkbox" checked /> Google</label>
+          <label class="checkbox-row"><input id="autopub-x" type="checkbox" checked /> X (Twitter)</label>
+          <label class="checkbox-row"><input id="autopub-tiktok" type="checkbox" /> TikTok (Open Ready)</label>
+          <label class="checkbox-row"><input id="autopub-snapchat" type="checkbox" /> Snapchat (Open Ready)</label>
+        </div>
+        <button class="primary-button w-full text-lg py-4 rounded-xl font-semibold" type="submit">Post Everywhere</button>
+      </form>
+      <p id="autopub-status" class="muted" style="margin-top:8px;"></p>
+    </section>
+    <section id="autopub-output" class="rounded-2xl p-6 shadow-sm bg-white" style="display:none;">
+      <div class="output-card"><p class="output-label">Master caption</p><p id="autopub-master" class="output-value"></p><button class="copy-button" data-copy-target="autopub-master">Copy</button></div>
+      <div class="output-card"><p class="output-label">Facebook</p><p id="autopub-facebook-caption" class="output-value"></p><button class="copy-button" data-copy-target="autopub-facebook-caption">Copy</button></div>
+      <div class="output-card"><p class="output-label">Instagram</p><p id="autopub-instagram-caption" class="output-value"></p><button class="copy-button" data-copy-target="autopub-instagram-caption">Copy</button></div>
+      <div class="output-card"><p class="output-label">X (Twitter)</p><p id="autopub-twitter-caption" class="output-value"></p><button class="copy-button" data-copy-target="autopub-twitter-caption">Copy</button></div>
+      <div class="output-card"><p class="output-label">Google</p><p id="autopub-google-caption" class="output-value"></p><button class="copy-button" data-copy-target="autopub-google-caption">Copy</button></div>
+      <div class="output-card"><p class="output-label">TikTok hook</p><p id="autopub-tiktok-hook" class="output-value"></p><button class="copy-button" data-copy-target="autopub-tiktok-hook">Copy</button></div>
+      <div class="output-card"><p class="output-label">Snapchat text</p><p id="autopub-snapchat-text" class="output-value"></p><button class="copy-button" data-copy-target="autopub-snapchat-text">Copy</button></div>
+      <div class="output-card">
+        <p class="output-label">Posting status</p>
+        <p id="autopub-post-results" class="output-value"></p>
+      </div>
+      <div class="output-card" id="autopub-open-ready" style="display:none;">
+        <p class="output-label">Open-ready channels</p>
+        <p id="autopub-open-ready-text" class="output-value"></p>
+        <div class="two-col">
+          <a id="autopub-open-tiktok" class="secondary-button" href="#" target="_blank" rel="noopener" style="display:none;">Open TikTok</a>
+          <a id="autopub-open-snapchat" class="secondary-button" href="#" target="_blank" rel="noopener" style="display:none;">Open Snapchat</a>
+        </div>
+      </div>
+    </section>
+    <script>
+      function esc(value) {
+        return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+      }
+      function statusLine(item, label) {
+        if (!item?.requested) return label + ": not selected";
+        const detail = item?.detail ? " - " + item.detail : "";
+        return label + ": " + (item?.status || "queued") + detail;
+      }
+      const autopubUploadStatus = document.getElementById("autopub-upload-status");
+      document.getElementById("autopub-upload-btn")?.addEventListener("click", async () => {
+        const fileInput = document.getElementById("autopub-file");
+        const file = fileInput?.files?.[0];
+        if (!file) {
+          autopubUploadStatus.textContent = "Choose a file first.";
+          return;
+        }
+        const kind = file.type.startsWith("video/") ? "video" : "image";
+        autopubUploadStatus.textContent = "Preparing upload...";
+        const signed = await fetch(${JSON.stringify(uploadEndpoint)}, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", kind })
+        });
+        const signedJson = await signed.json().catch(() => ({}));
+        if (!signed.ok) {
+          autopubUploadStatus.textContent = signedJson.error || "Upload URL unavailable. Paste media URL instead.";
+          return;
+        }
+        const putResponse = await fetch(signedJson.signedUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          body: file
+        });
+        if (!putResponse.ok) {
+          autopubUploadStatus.textContent = "Upload failed. Try media URL instead.";
+          return;
+        }
+        document.getElementById("autopub-url").value = signedJson.publicUrl || "";
+        autopubUploadStatus.textContent = "Upload complete. Ready to post.";
+      });
+
+      const form = document.getElementById("autopub-form");
+      const status = document.getElementById("autopub-status");
+      const output = document.getElementById("autopub-output");
+      form?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const mediaUrl = (document.getElementById("autopub-url")?.value || "").trim();
+        if (!mediaUrl) {
+          alert("Please upload or paste a media URL first.");
+          return;
+        }
+        if (status) status.textContent = "Building captions and posting...";
+        const payload = {
+          mediaUrl,
+          captionIdea: (document.getElementById("autopub-idea")?.value || "").trim() || undefined,
+          confirmPost: true,
+          channels: {
+            facebook: Boolean(document.getElementById("autopub-facebook")?.checked),
+            instagram: Boolean(document.getElementById("autopub-instagram")?.checked),
+            google: Boolean(document.getElementById("autopub-google")?.checked),
+            x: Boolean(document.getElementById("autopub-x")?.checked),
+            tiktok: Boolean(document.getElementById("autopub-tiktok")?.checked),
+            snapchat: Boolean(document.getElementById("autopub-snapchat")?.checked),
+          }
+        };
+        const response = await fetch(${JSON.stringify(autopublicityEndpoint)}, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (status) status.textContent = json.error || "Could not post everywhere.";
+          return;
+        }
+        if (status) status.textContent = json.message || "Posted.";
+        document.getElementById("autopub-master").textContent = json.pack?.masterCaption || "";
+        document.getElementById("autopub-facebook-caption").textContent = json.pack?.facebookCaption || "";
+        document.getElementById("autopub-instagram-caption").textContent = json.pack?.instagramCaption || "";
+        document.getElementById("autopub-twitter-caption").textContent = json.pack?.twitterCaption || "";
+        document.getElementById("autopub-google-caption").textContent = json.pack?.googleCaption || "";
+        document.getElementById("autopub-tiktok-hook").textContent = json.pack?.tiktokHook || "";
+        document.getElementById("autopub-snapchat-text").textContent = json.pack?.snapchatText || "";
+        const lines = [
+          statusLine(json.autoPost?.facebook, "Facebook"),
+          statusLine(json.autoPost?.instagram, "Instagram"),
+          statusLine(json.autoPost?.google, "Google"),
+          statusLine(json.autoPost?.x, "X"),
+        ];
+        document.getElementById("autopub-post-results").innerHTML = lines.map((line) => esc(line)).join("<br/>");
+        const openReady = json.openReady || {};
+        const openReadyLines = [];
+        const tiktokLink = document.getElementById("autopub-open-tiktok");
+        const snapchatLink = document.getElementById("autopub-open-snapchat");
+        if (openReady.tiktok?.enabled) {
+          openReadyLines.push("TikTok: " + (openReady.tiktok.text || ""));
+          tiktokLink.href = openReady.tiktok.openUrl || "#";
+          tiktokLink.style.display = "inline-flex";
+        } else {
+          tiktokLink.style.display = "none";
+        }
+        if (openReady.snapchat?.enabled) {
+          openReadyLines.push("Snapchat: " + (openReady.snapchat.text || ""));
+          snapchatLink.href = openReady.snapchat.openUrl || "#";
+          snapchatLink.style.display = "inline-flex";
+        } else {
+          snapchatLink.style.display = "none";
+        }
+        const openReadySection = document.getElementById("autopub-open-ready");
+        if (openReadyLines.length > 0) {
+          document.getElementById("autopub-open-ready-text").textContent = openReadyLines.join(" | ");
+          openReadySection.style.display = "block";
+        } else {
+          openReadySection.style.display = "none";
+        }
+        output.style.display = "block";
+        window.__setupCopyButtons?.();
+      });
+    </script>`;
+    return res
+      .type("html")
+      .send(
+        easyLayout({
+          title: "Post Everywhere",
+          context,
+          active: "create",
+          currentPath: "/app/autopublicity",
           body,
         }),
       );
