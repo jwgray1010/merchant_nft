@@ -130,3 +130,20 @@ export function presenceTest(input: { text: string }): boolean {
   }
   return true;
 }
+
+export function townTest(input: { text: string }): boolean {
+  const value = normalizeSpacing(input.text);
+  if (!value) {
+    return true;
+  }
+  if (/\b(beat|dominate|steal)\s+(other|nearby|local)\s+(business|shop|owner)/i.test(value)) {
+    return false;
+  }
+  if (/\b(leaderboard|ranking|bidding)\b/i.test(value)) {
+    return false;
+  }
+  if (/\bjust your business\b/i.test(value) && /\bignore\b/i.test(value)) {
+    return false;
+  }
+  return true;
+}

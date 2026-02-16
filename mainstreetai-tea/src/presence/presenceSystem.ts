@@ -17,7 +17,28 @@ function periodLabel(hour: number): "morning" | "afternoon" | "evening" {
 function greetingFor(input: {
   period: "morning" | "afternoon" | "evening";
   level: "low" | "steady" | "rising";
+  townName?: string;
+  greetingStyle?: string;
+  communityFocus?: string;
+  seasonalPriority?: string;
+  schoolIntegrationEnabled?: boolean;
 }): string {
+  const townPrefix = input.townName ? `${input.townName} ` : "Our town ";
+  const mentionsYouth = input.schoolIntegrationEnabled || /\byouth|school|student\b/i.test(input.communityFocus ?? "");
+  if (mentionsYouth && input.period !== "morning") {
+    return input.period === "evening"
+      ? `${townPrefix}is preparing for a busy weekend with youth events.`
+      : `${townPrefix}is preparing for youth events this week.`;
+  }
+  if (input.communityFocus && input.level !== "low") {
+    return `${townPrefix}is moving steadily around ${input.communityFocus}.`;
+  }
+  if (input.seasonalPriority && input.level === "rising") {
+    return `${townPrefix}is finding a steady rhythm for ${input.seasonalPriority}.`;
+  }
+  if (input.greetingStyle && input.level === "steady") {
+    return `${townPrefix}feels ${input.greetingStyle} today.`;
+  }
   if (input.level === "rising") {
     if (input.period === "morning") {
       return "Good morning - our town is building steady momentum today.";
@@ -68,6 +89,11 @@ function badgeFor(level: "low" | "steady" | "rising"): string {
 export function buildPresenceSignals(input: {
   confidenceLevel: "low" | "steady" | "rising";
   now?: Date;
+  townName?: string;
+  greetingStyle?: string;
+  communityFocus?: string;
+  seasonalPriority?: string;
+  schoolIntegrationEnabled?: boolean;
 }): PresenceSignals {
   const now = input.now ?? new Date();
   const period = periodLabel(now.getHours());
@@ -75,6 +101,11 @@ export function buildPresenceSignals(input: {
     greeting: greetingFor({
       period,
       level: input.confidenceLevel,
+      townName: input.townName,
+      greetingStyle: input.greetingStyle,
+      communityFocus: input.communityFocus,
+      seasonalPriority: input.seasonalPriority,
+      schoolIntegrationEnabled: input.schoolIntegrationEnabled,
     }),
     badge: badgeFor(input.confidenceLevel),
     participationLine: participationLineFor(input.confidenceLevel),

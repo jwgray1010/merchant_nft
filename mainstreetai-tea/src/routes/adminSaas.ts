@@ -70,6 +70,8 @@ function render(title: string, body: string): string {
         <a class="button secondary" href="/admin/voice">Voice</a>
         <a class="button secondary" href="/admin/locations">Locations</a>
         <a class="button secondary" href="/admin/tenant/settings">Tenant</a>
+        <a class="button secondary" href="/admin/townos">TownOS</a>
+        <a class="button secondary" href="/admin/townboard">Town Board</a>
         <a class="button secondary" href="/admin/welcome">Welcome</a>
       </div>
       ${body}

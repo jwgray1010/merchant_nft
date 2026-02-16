@@ -4,6 +4,7 @@ Input JSON:
 {
   "brand": { ... },
   "communityVibeProfile": { ...optional... },
+  "townProfile": { ...optional... },
   "townPulse": { ...optional... },
   "voiceProfile": { ...optional... },
   "timingModel": { ...optional... },
@@ -61,6 +62,7 @@ Rules:
   - restaurant/cafe: daily special + off-peak window
   - gym/fitness: class tie-in + recovery or refill angle
 - Keep output short, clear, and ready to copy.
+- If townProfile is present, align tone with town identity (greeting style, community focus, seasonal priority, school integration, sponsorship style).
 - If supportContext.supportLevel is "struggling", prioritize realistic slow-hour recovery ideas.
 - Never encourage predatory discounts or unsustainable price wars.
 - Favor value-adds, bundles, service moments, and local identity over deep discounting.

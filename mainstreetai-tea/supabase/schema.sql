@@ -9,6 +9,18 @@ create table if not exists public.towns (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.town_profiles (
+  id uuid primary key default gen_random_uuid(),
+  town_ref uuid not null references public.towns(id) on delete cascade,
+  greeting_style text not null default 'warm and neighborly',
+  community_focus text not null default 'support local families and small businesses',
+  seasonal_priority text not null default 'school events and seasonal community rhythms',
+  school_integration_enabled boolean not null default true,
+  sponsorship_style text not null default 'community-first local sponsorship',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.brands (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -69,6 +81,12 @@ alter table public.brands
 
 create unique index if not exists brands_owner_brand_id_unique
   on public.brands(owner_id, brand_id);
+
+create unique index if not exists town_profiles_town_ref_unique
+  on public.town_profiles(town_ref);
+
+create index if not exists town_profiles_town_updated_idx
+  on public.town_profiles(town_ref, updated_at desc);
 
 create table if not exists public.town_memberships (
   id uuid primary key default gen_random_uuid(),
@@ -966,6 +984,7 @@ check (public.same_town_brand_pair(brand_ref, partner_brand_ref));
 -- RLS: owner can only access own rows.
 alter table public.brands enable row level security;
 alter table public.towns enable row level security;
+alter table public.town_profiles enable row level security;
 alter table public.town_memberships enable row level security;
 alter table public.town_rotations enable row level security;
 alter table public.town_pulse_signals enable row level security;
@@ -1067,6 +1086,17 @@ drop policy if exists towns_authenticated_insert on public.towns;
 create policy towns_authenticated_insert on public.towns
 for insert
 with check (auth.uid() is not null);
+
+drop policy if exists town_profiles_member_select on public.town_profiles;
+create policy town_profiles_member_select on public.town_profiles
+for select
+using (public.is_town_member(town_ref));
+
+drop policy if exists town_profiles_member_modify on public.town_profiles;
+create policy town_profiles_member_modify on public.town_profiles
+for all
+using (public.is_town_member(town_ref))
+with check (public.is_town_member(town_ref));
 
 drop policy if exists town_memberships_owner_all on public.town_memberships;
 create policy town_memberships_owner_all on public.town_memberships

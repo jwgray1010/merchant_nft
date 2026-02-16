@@ -1,7 +1,16 @@
 import { Router } from "express";
-import { communityEventNeedSchema, type CommunityEventNeed } from "../schemas/communityEventsSchema";
+import { z } from "zod";
+import {
+  communityEventNeedSchema,
+  communityEventSourceSchema,
+  type CommunityEventNeed,
+} from "../schemas/communityEventsSchema";
+import { townProfileUpsertSchema } from "../schemas/townProfileSchema";
 import { townBoardSourceSchema, townBoardStatusSchema, type TownBoardSource, type TownBoardStatus } from "../schemas/townBoardSchema";
-import { listTownBoardPostsForModeration, moderateTownBoardPost } from "../services/townBoardService";
+import { importCommunityEvents } from "../services/communityEventsService";
+import { listTownBoardPostsForModeration, moderateTownBoardPost, townSlugForRecord } from "../services/townBoardService";
+import { listTownsForActor } from "../services/townModeService";
+import { resolveTownProfileForTown, townHubHeaderLine, upsertTownProfileForTown } from "../services/townProfileService";
 import { extractAuthToken, resolveAuthUser } from "../supabase/verifyAuth";
 
 const router = Router();
@@ -79,6 +88,21 @@ function parseNeeds(raw: unknown): CommunityEventNeed[] {
   return out;
 }
 
+function selectedTownIdFrom(input: { queryTownId?: string; townIds: string[] }): string | null {
+  if (input.queryTownId && input.townIds.includes(input.queryTownId)) {
+    return input.queryTownId;
+  }
+  return input.townIds[0] ?? null;
+}
+
+function parseEventSource(value: unknown): z.infer<typeof communityEventSourceSchema> {
+  if (typeof value !== "string") {
+    return "chamber";
+  }
+  const parsed = communityEventSourceSchema.safeParse(value.trim().toLowerCase());
+  return parsed.success ? parsed.data : "chamber";
+}
+
 function pageLayout(body: string, notice?: string): string {
   return `<!doctype html>
 <html lang="en">
@@ -109,6 +133,7 @@ function pageLayout(body: string, notice?: string): string {
       <div class="row" style="margin-bottom:12px;">
         <a class="button secondary" href="/app">Easy Mode</a>
         <a class="button secondary" href="/admin">Admin Home</a>
+        <a class="button secondary" href="/admin/townos">TownOS</a>
         <a class="button secondary" href="/admin/townboard">Town Board</a>
       </div>
       ${notice ? `<p class="status-note">${escapeHtml(notice)}</p>` : ""}
@@ -129,6 +154,199 @@ router.use(async (req, res, next) => {
   }
   req.user = user;
   return next();
+});
+
+router.get("/townos", async (req, res, next) => {
+  try {
+    const actorId = req.user?.id;
+    if (!actorId) {
+      return res.redirect("/admin/login");
+    }
+    const towns = await listTownsForActor(actorId).catch(() => []);
+    const selectedTownId = selectedTownIdFrom({
+      queryTownId: typeof req.query.townId === "string" ? req.query.townId : undefined,
+      townIds: towns.map((town) => town.id),
+    });
+    const selectedTown = selectedTownId ? towns.find((town) => town.id === selectedTownId) ?? null : null;
+    const profile = selectedTown
+      ? await resolveTownProfileForTown({
+          townId: selectedTown.id,
+        }).catch(() => null)
+      : null;
+    const townOptions = towns
+      .map((town) => {
+        const selected = selectedTownId === town.id ? "selected" : "";
+        const label = town.region ? `${town.name}, ${town.region}` : town.name;
+        return `<option value="${escapeHtml(town.id)}" ${selected}>${escapeHtml(label)}</option>`;
+      })
+      .join("");
+    const townSlug = selectedTown ? townSlugForRecord({ name: selectedTown.name, region: selectedTown.region }) : "";
+    const boardUrl = selectedTown ? `/townboard/${encodeURIComponent(townSlug)}` : "";
+    const posterUrl = selectedTown ? `/townboard/${encodeURIComponent(townSlug)}/poster?source=chamber` : "";
+    const body = selectedTown
+      ? `<section class="card">
+          <h1>TownOS Chamber Hub</h1>
+          <p class="muted">Primary customer: Town Hub (Chamber/Main Street organization). Keep owners on three simple actions while town intelligence runs quietly.</p>
+          <div class="row" style="margin-top:10px;">
+            <span class="chip">TOWN_ADMIN</span>
+            <span class="chip">${escapeHtml(townHubHeaderLine({ townName: selectedTown.name }))}</span>
+          </div>
+          <form method="GET" action="/admin/townos" class="row" style="margin-top:10px;">
+            <label><strong>Town</strong></label>
+            <select name="townId">${townOptions}</select>
+            <button type="submit" class="secondary">Switch</button>
+          </form>
+        </section>
+        <section class="card">
+          <h2>Town Identity Profile</h2>
+          <p class="muted">Agents use this profile to adapt greeting tone, community focus, and sponsorship language.</p>
+          <form method="POST" action="/admin/townos/profile" style="margin-top:10px;">
+            <input type="hidden" name="townId" value="${escapeHtml(selectedTown.id)}" />
+            <div class="grid">
+              <label class="field">Greeting style
+                <input name="greetingStyle" value="${escapeHtml(profile?.greetingStyle ?? "warm and neighborly")}" />
+              </label>
+              <label class="field">Seasonal priority
+                <input name="seasonalPriority" value="${escapeHtml(profile?.seasonalPriority ?? "school events and seasonal community rhythms")}" />
+              </label>
+              <label class="field">Community focus
+                <input name="communityFocus" value="${escapeHtml(profile?.communityFocus ?? "support local families and small businesses")}" />
+              </label>
+              <label class="field">Sponsorship style
+                <input name="sponsorshipStyle" value="${escapeHtml(profile?.sponsorshipStyle ?? "community-first local sponsorship")}" />
+              </label>
+            </div>
+            <label class="field" style="margin-top:8px;">
+              <span><strong>School integration enabled</strong></span>
+              <select name="schoolIntegrationEnabled">
+                <option value="true" ${profile?.schoolIntegrationEnabled ?? true ? "selected" : ""}>true</option>
+                <option value="false" ${profile?.schoolIntegrationEnabled === false ? "selected" : ""}>false</option>
+              </select>
+            </label>
+            <div class="row" style="margin-top:10px;">
+              <button type="submit">Save Town Profile</button>
+            </div>
+          </form>
+        </section>
+        <section class="card">
+          <h2>Event Distribution</h2>
+          <p class="muted">Import chamber calendars, then TownOS routes matched opportunities into daily plans.</p>
+          <form method="POST" action="/admin/townos/import" style="margin-top:10px;">
+            <input type="hidden" name="townId" value="${escapeHtml(selectedTown.id)}" />
+            <div class="grid">
+              <label class="field">Source
+                <select name="source">
+                  <option value="chamber">chamber</option>
+                  <option value="school">school</option>
+                  <option value="youth">youth</option>
+                  <option value="nonprofit">nonprofit</option>
+                </select>
+              </label>
+              <label class="field">ICS feed URL
+                <input name="icsUrl" placeholder="https://..." />
+              </label>
+              <label class="field">Website URL (optional)
+                <input name="websiteUrl" placeholder="https://..." />
+              </label>
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button type="submit">Import Community Events</button>
+            </div>
+          </form>
+          <div class="row" style="margin-top:10px;">
+            <a class="button secondary" href="/admin/townboard">Open Town Board Moderation</a>
+            <a class="button secondary" href="${escapeHtml(boardUrl)}" target="_blank" rel="noopener">Open Public Town Board</a>
+            <a class="button secondary" href="${escapeHtml(posterUrl)}" target="_blank" rel="noopener">Open QR Poster</a>
+          </div>
+        </section>`
+      : `<section class="card">
+          <h1>TownOS Chamber Hub</h1>
+          <p class="muted">No towns are linked to your account yet. Connect a brand to Town Mode first, then this hub will activate.</p>
+          <a class="button secondary" href="/app/settings">Open Easy Mode Settings</a>
+        </section>`;
+    const notice = typeof req.query.notice === "string" ? req.query.notice : undefined;
+    return res.type("html").send(pageLayout(body, notice));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/townos/profile", async (req, res) => {
+  const actorId = req.user?.id;
+  if (!actorId) {
+    return res.redirect("/admin/login");
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const townId = typeof body.townId === "string" ? body.townId.trim() : "";
+  if (!townId) {
+    return res.redirect("/admin/townos?notice=Missing%20town%20id");
+  }
+  const towns = await listTownsForActor(actorId).catch(() => []);
+  if (!towns.some((town) => town.id === townId)) {
+    return res.redirect(`/admin/townos?townId=${encodeURIComponent(townId)}&notice=Town%20not%20accessible`);
+  }
+  const parsed = townProfileUpsertSchema.safeParse({
+    greetingStyle: String(body.greetingStyle ?? ""),
+    communityFocus: String(body.communityFocus ?? ""),
+    seasonalPriority: String(body.seasonalPriority ?? ""),
+    schoolIntegrationEnabled: String(body.schoolIntegrationEnabled ?? "true") === "true",
+    sponsorshipStyle: String(body.sponsorshipStyle ?? ""),
+  });
+  if (!parsed.success) {
+    return res.redirect(
+      `/admin/townos?townId=${encodeURIComponent(townId)}&notice=${encodeURIComponent("Invalid Town Profile input")}`,
+    );
+  }
+  try {
+    await upsertTownProfileForTown({
+      townId,
+      updates: parsed.data,
+    });
+    return res.redirect(
+      `/admin/townos?townId=${encodeURIComponent(townId)}&notice=${encodeURIComponent("Town profile saved.")}`,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not save town profile";
+    return res.redirect(`/admin/townos?townId=${encodeURIComponent(townId)}&notice=${encodeURIComponent(message)}`);
+  }
+});
+
+router.post("/townos/import", async (req, res) => {
+  const actorId = req.user?.id;
+  if (!actorId) {
+    return res.redirect("/admin/login");
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const townId = typeof body.townId === "string" ? body.townId.trim() : "";
+  if (!townId) {
+    return res.redirect("/admin/townos?notice=Missing%20town%20id");
+  }
+  const towns = await listTownsForActor(actorId).catch(() => []);
+  if (!towns.some((town) => town.id === townId)) {
+    return res.redirect(`/admin/townos?townId=${encodeURIComponent(townId)}&notice=Town%20not%20accessible`);
+  }
+  const source = parseEventSource(body.source);
+  const icsUrl = typeof body.icsUrl === "string" && body.icsUrl.trim() ? body.icsUrl.trim() : undefined;
+  const websiteUrl =
+    typeof body.websiteUrl === "string" && body.websiteUrl.trim() ? body.websiteUrl.trim() : undefined;
+  if (!icsUrl && !websiteUrl) {
+    return res.redirect(
+      `/admin/townos?townId=${encodeURIComponent(townId)}&notice=${encodeURIComponent("Add an ICS URL or website URL.")}`,
+    );
+  }
+  try {
+    const imported = await importCommunityEvents({
+      townId,
+      source,
+      icsUrl,
+      websiteUrl,
+    });
+    const notice = `Imported ${imported.importedCount} events (${imported.skippedCount} skipped).`;
+    return res.redirect(`/admin/townos?townId=${encodeURIComponent(townId)}&notice=${encodeURIComponent(notice)}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not import events";
+    return res.redirect(`/admin/townos?townId=${encodeURIComponent(townId)}&notice=${encodeURIComponent(message)}`);
+  }
 });
 
 router.get("/townboard", async (req, res, next) => {

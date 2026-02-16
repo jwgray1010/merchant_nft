@@ -61,6 +61,7 @@ import {
   getFirstWinStatusForBrand,
 } from "./firstWinService";
 import { buildCommunityOpportunityForBrand } from "./communityEventsService";
+import { resolveTownProfileForTown } from "./townProfileService";
 
 type DailyPackRecord = {
   id: string;
@@ -350,6 +351,11 @@ export async function runDailyOneButton(input: {
         userId: input.userId,
       }).catch(() => null)
     : null;
+  const townProfile = brand.townRef
+    ? await resolveTownProfileForTown({
+        townId: brand.townRef,
+      }).catch(() => null)
+    : null;
   const townPulseEnabled = Boolean(
     milestone && isTownFeatureUnlocked({ milestone, feature: "town_pulse_learning" }),
   );
@@ -449,6 +455,15 @@ export async function runDailyOneButton(input: {
       input: {
         brand,
         townPulse: townPulseModel?.model ?? null,
+        townProfile: townProfile
+          ? {
+              greetingStyle: townProfile.greetingStyle,
+              communityFocus: townProfile.communityFocus,
+              seasonalPriority: townProfile.seasonalPriority,
+              schoolIntegrationEnabled: townProfile.schoolIntegrationEnabled,
+              sponsorshipStyle: townProfile.sponsorshipStyle,
+            }
+          : null,
         window: activeWindow,
         seasonTags,
         support_level: brand.supportLevel,
@@ -526,6 +541,15 @@ export async function runDailyOneButton(input: {
         timingModel: timingModel?.model,
         insightsSummary: insightsCache.insights,
         townPulse: townPulseModel?.model,
+        townProfile: townProfile
+          ? {
+              greetingStyle: townProfile.greetingStyle,
+              communityFocus: townProfile.communityFocus,
+              seasonalPriority: townProfile.seasonalPriority,
+              schoolIntegrationEnabled: townProfile.schoolIntegrationEnabled,
+              sponsorshipStyle: townProfile.sponsorshipStyle,
+            }
+          : null,
         notes: parsedRequest.notes,
         goal: chosenGoal,
         supportContext: {
@@ -561,6 +585,15 @@ export async function runDailyOneButton(input: {
       input: {
         brand,
         communityVibeProfile: brand.communityVibeProfile,
+        townProfile: townProfile
+          ? {
+              greetingStyle: townProfile.greetingStyle,
+              communityFocus: townProfile.communityFocus,
+              seasonalPriority: townProfile.seasonalPriority,
+              schoolIntegrationEnabled: townProfile.schoolIntegrationEnabled,
+              sponsorshipStyle: townProfile.sponsorshipStyle,
+            }
+          : null,
         recentPosts,
         goal: chosenGoal,
       },

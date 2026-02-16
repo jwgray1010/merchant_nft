@@ -46,6 +46,7 @@ import { getOwnerConfidenceForBrand, listOwnerWinMoments } from "../services/own
 import { getFirstWinStatusForBrand } from "../services/firstWinService";
 import { buildPresenceSignals } from "../presence/presenceSystem";
 import { buildCommunityPresenceLineForBrand } from "../services/communityEventsService";
+import { resolveTownProfileForTown, townHubHeaderLine } from "../services/townProfileService";
 import type { BrandProfile } from "../schemas/brandSchema";
 import { townGraphCategorySchema, type TownGraphCategory } from "../schemas/townGraphSchema";
 import type { LocationRecord } from "../schemas/locationSchema";
@@ -66,6 +67,7 @@ type EasyContext = {
   actorUserId: string;
   ownerUserId: string | null;
   role: "owner" | "admin" | "member";
+  townRole: "TOWN_ADMIN" | "BUSINESS_MEMBER";
   brands: BrandSummary[];
   selectedBrandId: string | null;
   selectedBrand: BrandProfile | null;
@@ -108,6 +110,12 @@ type EasyContext = {
     hasCompleted: boolean;
     activeSessionId?: string;
   };
+  townIdentity: {
+    townName: string;
+    networkHeader: string;
+    poweredByLine: string;
+    communityFocus?: string;
+  } | null;
   recentWinMoment?: string;
 };
 
@@ -288,6 +296,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       actorUserId: authUser.id,
       ownerUserId: null,
       role: "owner",
+      townRole: "BUSINESS_MEMBER",
       brands,
       selectedBrandId: null,
       selectedBrand: null,
@@ -320,6 +329,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         needsFirstWin: false,
         hasCompleted: false,
       },
+      townIdentity: null,
     };
   }
 
@@ -329,6 +339,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       actorUserId: authUser.id,
       ownerUserId: null,
       role: "owner",
+      townRole: "BUSINESS_MEMBER",
       brands,
       selectedBrandId: null,
       selectedBrand: null,
@@ -361,8 +372,10 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         needsFirstWin: false,
         hasCompleted: false,
       },
+      townIdentity: null,
     };
   }
+  const townRole = access.role === "member" ? "BUSINESS_MEMBER" : "TOWN_ADMIN";
   req.brandAccess = access;
   req.user = {
     ...(req.user ?? { email: null }),
@@ -378,6 +391,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       actorUserId: authUser.id,
       ownerUserId: access.ownerId,
       role: access.role,
+      townRole,
       brands,
       selectedBrandId: null,
       selectedBrand: null,
@@ -410,6 +424,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         needsFirstWin: false,
         hasCompleted: false,
       },
+      townIdentity: null,
     };
   }
 
@@ -424,7 +439,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
     latestCompleted: null,
   }));
 
-  const [locations, autopilotSettings, timingModel, communitySupport, ambassador, townMilestone, confidence, winMoments] =
+  const [locations, autopilotSettings, timingModel, communitySupport, ambassador, townMilestone, confidence, winMoments, townMembership] =
     await Promise.all([
     listLocations(access.ownerId, access.brandId).catch(() => []),
     adapter.getAutopilotSettings(access.ownerId, access.brandId).catch(() => null),
@@ -467,7 +482,24 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
         ownerId: access.ownerId,
         limit: 1,
       }).catch(() => []),
+      getTownMembershipForBrand({
+        userId: access.ownerId,
+        brandId: access.brandId,
+      }).catch(() => null),
     ]);
+  const townProfile = townMembership
+    ? await resolveTownProfileForTown({
+        townId: townMembership.town.id,
+      }).catch(() => null)
+    : null;
+  const townIdentity = townMembership
+    ? {
+        townName: townMembership.town.name,
+        networkHeader: townHubHeaderLine({ townName: townMembership.town.name }),
+        poweredByLine: "Powered by your Chamber",
+        communityFocus: townProfile?.communityFocus,
+      }
+    : null;
   const rawLocationQuery = typeof req.query.locationId === "string" ? req.query.locationId : undefined;
   const queryLocationId = rawLocationQuery?.trim();
   const locationIds = locations.map((location) => location.id);
@@ -500,6 +532,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
     actorUserId: authUser.id,
     ownerUserId: access.ownerId,
     role: access.role,
+    townRole,
     brands,
     selectedBrandId: access.brandId,
     selectedBrand: brand,
@@ -536,12 +569,18 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
     },
     presence: buildPresenceSignals({
       confidenceLevel: confidence.confidenceLevel,
+      townName: townMembership?.town.name,
+      greetingStyle: townProfile?.greetingStyle,
+      communityFocus: townProfile?.communityFocus,
+      seasonalPriority: townProfile?.seasonalPriority,
+      schoolIntegrationEnabled: townProfile?.schoolIntegrationEnabled,
     }),
     firstWin: {
       needsFirstWin: firstWinStatus.needsFirstWin,
       hasCompleted: firstWinStatus.hasCompleted,
       activeSessionId: firstWinStatus.activeSession?.id,
     },
+    townIdentity,
     recentWinMoment: winMoments[0]?.message,
   };
 }
@@ -607,6 +646,10 @@ function renderHeader(context: EasyContext, currentPath: string): string {
   const trustBadge = context.selectedBrand.localTrustEnabled
     ? `<span class="neighborhood-chip">Local Network Member</span>`
     : "";
+  const townAdminBadge =
+    context.townRole === "TOWN_ADMIN"
+      ? `<span class="neighborhood-chip">Town Admin</span>`
+      : "";
   const presenceBadge = `<span class="presence-chip">${escapeHtml(context.presence.badge)}</span>`;
   const sponsorshipWaitlistNote =
     !context.communitySupport.supported &&
@@ -614,17 +657,24 @@ function renderHeader(context: EasyContext, currentPath: string): string {
     context.communitySupport.seatsRemaining === 0
       ? `<p class="muted" style="margin-top:8px;">Community sponsorship seats are currently full. Reduced-cost path is available in Billing.</p>`
       : "";
-  const badgeRow = [presenceBadge, communitySupportBadge, ambassadorBadge, trustBadge]
+  const badgeRow = [presenceBadge, communitySupportBadge, ambassadorBadge, trustBadge, townAdminBadge]
     .filter((entry) => entry !== "")
     .join("");
+  const networkHeader = context.townIdentity?.networkHeader ?? "MainStreetAI Easy Mode";
+  const poweredByLine = context.townIdentity?.poweredByLine;
+  const townFocusLine = context.townIdentity?.communityFocus
+    ? `<p class="muted" style="margin-top:4px;">Town focus: ${escapeHtml(context.townIdentity.communityFocus)}</p>`
+    : "";
   const confidenceSupportLine = context.ownerConfidence.line || "Steady effort matters more than perfect days.";
   const winMomentLine = context.recentWinMoment
     ? `<p class="muted" style="margin-top:6px;">${escapeHtml(context.recentWinMoment)}</p>`
     : "";
   return `<header class="rounded-2xl p-6 shadow-sm bg-white">
-    <p class="section-title">MainStreetAI Easy Mode</p>
+    <p class="section-title">${escapeHtml(networkHeader)}</p>
+    ${poweredByLine ? `<p class="muted">${escapeHtml(poweredByLine)}</p>` : ""}
     <h1 class="text-xl">${escapeHtml(greeting)}, ${escapeHtml(context.selectedBrand.businessName)}</h1>
     <p class="muted">${escapeHtml(context.selectedBrand.location)}</p>
+    ${townFocusLine}
     <p class="presence-note">${escapeHtml(context.presence.greeting)}</p>
     <p class="muted" style="margin-top:6px;">${escapeHtml(confidenceSupportLine)}</p>
     <p class="muted" style="margin-top:4px;">${escapeHtml(context.presence.participationLine)}</p>
@@ -1471,7 +1521,11 @@ router.get("/", async (req, res, next) => {
         : townPulse?.model.eventEnergy === "medium"
           ? "Downtown has a calm rhythm right now."
           : context.presence.participationLine;
+    const townIdentityLine = context.townIdentity
+      ? `${context.townIdentity.networkHeader} · ${context.townIdentity.poweredByLine}`
+      : "";
     const homeChipRow = `<div class="chip-row"><span class="presence-chip">${escapeHtml(context.presence.badge)}</span></div>
+      ${townIdentityLine ? `<p class="muted" style="margin-top:4px;">${escapeHtml(townIdentityLine)}</p>` : ""}
       <p class="presence-note">${escapeHtml(context.presence.greeting)}</p>
       <p class="muted" style="margin-top:4px;">${escapeHtml(pulsePresenceLine)}</p>`;
     const confidenceChip = `<a class="momentum-link" href="${escapeHtml(withSelection("/app/progress", context))}">

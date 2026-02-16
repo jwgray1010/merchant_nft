@@ -3,6 +3,7 @@ Task: Create one fast, practical "first win" plan for a small business owner.
 Input JSON:
 {
   "brand": {},
+  "townProfile": {},
   "townPulse": {},
   "window": "morning|lunch|after_work|evening|weekend",
   "seasonTags": [],
@@ -26,4 +27,5 @@ Rules:
 - Avoid heavy discounts and avoid margin-risking offers.
 - Prefer value-add framing, convenience, service quality, or timing-based nudges.
 - Keep language warm, practical, and confidence-building.
+- If townProfile is present, adapt wording to the town's identity and community focus.
 - Keep each output field concise and immediately usable.

@@ -23,6 +23,7 @@ import {
 } from "../schemas/communityEventsSchema";
 import { getAdapter, getStorageMode } from "../storage/getAdapter";
 import { getSupabaseAdminClient } from "../supabase/supabaseAdmin";
+import { getTownById, resolveTownProfileForTown } from "./townProfileService";
 
 const LOCAL_ROOT = path.resolve(process.cwd(), "data", "local_mode");
 const EVENTS_FILE = path.join(LOCAL_ROOT, "community_events.json");
@@ -779,6 +780,11 @@ export async function generateEventResponseMessage(input: {
   brand?: BrandProfile;
 }): Promise<string> {
   const brand = input.brand ?? (await getAdapter().getBrand(input.ownerId, input.brandId));
+  const townProfile = brand?.townRef
+    ? await resolveTownProfileForTown({
+        townId: brand.townRef,
+      }).catch(() => null)
+    : null;
   if (!brand) {
     return "Hi! We're part of the local network and would love to help with this event.";
   }
@@ -795,6 +801,14 @@ export async function generateEventResponseMessage(input: {
         source: input.event.source,
       },
       interestType: input.interestType,
+      townProfile: townProfile
+        ? {
+            greetingStyle: townProfile.greetingStyle,
+            communityFocus: townProfile.communityFocus,
+            sponsorshipStyle: townProfile.sponsorshipStyle,
+            schoolIntegrationEnabled: townProfile.schoolIntegrationEnabled,
+          }
+        : undefined,
     },
     outputSchema: eventResponseOutputSchema,
   }).catch(() => null);
@@ -1190,29 +1204,56 @@ export async function buildCommunityPresenceLineForBrand(input: {
   if (!context?.townRef) {
     return null;
   }
-  const events = await listCommunityEventsForTown({
-    townId: context.townRef,
-    fromIso: new Date().toISOString(),
-    limit: 12,
-  }).catch(() => []);
+  const [events, town, profile] = await Promise.all([
+    listCommunityEventsForTown({
+      townId: context.townRef,
+      fromIso: new Date().toISOString(),
+      limit: 12,
+    }).catch(() => []),
+    getTownById({
+      townId: context.townRef,
+      userId: input.ownerId,
+    }).catch(() => null),
+    resolveTownProfileForTown({
+      townId: context.townRef,
+    }).catch(() => null),
+  ]);
+  const townName = town?.name ?? "Our town";
   const next = events[0];
   if (!next) {
-    return null;
+    if (!profile?.communityFocus) {
+      return null;
+    }
+    return `${townName} is showing up steadily around ${profile.communityFocus}.`;
   }
   const date = new Date(next.eventDate);
   const day = date.getUTCDay();
   const isWeekend = day === 0 || day === 6;
   const text = `${next.title} ${next.description}`.toLowerCase();
-  if (next.source === "youth" || next.source === "school" || /\byouth|school|student|kids\b/.test(text)) {
-    if (isWeekend) {
-      return "We've got a busy weekend with youth events - let's show up together.";
+  const youthSignal = next.source === "youth" || next.source === "school" || /\byouth|school|student|kids\b/.test(text);
+  if (youthSignal) {
+    if (profile?.schoolIntegrationEnabled) {
+      return isWeekend
+        ? `${townName} is preparing for a busy weekend with youth events.`
+        : `${townName} is preparing for youth events this week.`;
     }
-    return "We've got youth events coming up this week - let's show up together.";
+    if (isWeekend) {
+      return `${townName} is moving into a busy weekend with youth events.`;
+    }
+    return `${townName} has youth events coming up this week.`;
   }
   if (/\bfundraiser|festival|game|community\b/.test(text)) {
+    if (profile?.communityFocus) {
+      return isWeekend
+        ? `${townName} is preparing for a community weekend around ${profile.communityFocus}.`
+        : `${townName} is moving steadily this week around ${profile.communityFocus}.`;
+    }
     return isWeekend
-      ? "We've got community events this weekend - let's show up together."
-      : "We've got community events this week - let's show up together.";
+      ? `${townName} is preparing for a community weekend.`
+      : `${townName} is moving steadily with community events this week.`;
+  }
+  if (profile?.seasonalPriority) {
+    return `${townName} is moving with a ${profile.seasonalPriority} rhythm this week.`;
   }
   return null;
 }

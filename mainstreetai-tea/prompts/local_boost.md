@@ -4,6 +4,7 @@ Input JSON:
 {
   "brand": { ... },
   "communityVibeProfile": { ... },
+  "townProfile": { ...optional... },
   "recentPosts": [ ... ],
   "goal": "new_customers|repeat_customers|slow_hours"
 }
@@ -21,3 +22,4 @@ Rules:
 - Keep it subtle and easy to use today.
 - Encourage in-person conversation and neighbor-to-neighbor energy.
 - Do not mention family-friendly framing unless explicitly requested in input.
+- If townProfile is present, align language to that town's greeting style and community focus.

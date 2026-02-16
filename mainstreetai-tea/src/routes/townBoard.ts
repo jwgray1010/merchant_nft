@@ -113,6 +113,7 @@ function renderTownBoardPage(input: {
       <section class="card">
         <h1>🪧 ${escapeHtml(input.townName)} Town Board</h1>
         <p class="muted">Need help from local businesses? Share your event in one step. No account needed.</p>
+        <p class="muted">${escapeHtml(input.townName)} Local Network · Powered by your Chamber</p>
         <span class="pill">Posting as: ${escapeHtml(sourceLabel(input.source))}</span>
         ${statusHtml}
         <form method="POST" action="/townboard/${escapeHtml(encodeURIComponent(input.townSlug))}">

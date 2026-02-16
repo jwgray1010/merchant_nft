@@ -1,4 +1,4 @@
-# MainStreetAI Platform API (Phase 22)
+# MainStreetAI Platform API (Phase 23)
 
 Multi-business (multi-tenant) Express + TypeScript API for local marketing content with memory and learning.
 
@@ -63,6 +63,7 @@ Multi-business (multi-tenant) Express + TypeScript API for local marketing conte
   - Camera Mode (snap -> AI captions -> post everywhere)
   - Community Events Bridge (chamber/school/youth opportunities in daily flow)
   - Town Board + Kitchen Table Mode (zero-step town submissions by QR/link)
+  - TownOS Chamber Hub (town profile + moderation + calm distribution)
   - Public marketing pages (`/`, `/pricing`, `/demo`)
   - Onboarding wizard (`/onboarding`)
   - Demo-mode write protection middleware
@@ -2117,3 +2118,54 @@ Owner-facing behavior (no new owner surface):
   - presence line logic
   - `Community Opportunity` card
 - Owners continue to use one-tap response flow (`I Can Help` + generated message).
+
+## Phase 23: TownOS (Chamber-centered community operating system)
+
+Phase 23 adds a town-level operating layer with chamber stewardship while preserving owner simplicity.
+
+Role hierarchy:
+- `TOWN_ADMIN`
+  - owner/admin town stewards who manage town profile, imports, and moderation
+- `BUSINESS_MEMBER`
+  - owner/member daily operators who stay in the three-action owner flow
+- `COMMUNITY_ORGANIZER`
+  - no-login contributors via Kitchen Table submission links/QR
+
+Town profile system:
+- New table:
+  - `town_profiles`
+  - `greeting_style`
+  - `community_focus`
+  - `seasonal_priority`
+  - `school_integration_enabled`
+  - `sponsorship_style`
+- New API routes:
+  - `GET /api/town/profile?townId=...`
+  - `POST /api/town/profile?townId=...&brandId=...`
+
+TownOS chamber hub:
+- New admin route:
+  - `GET /admin/townos`
+- Supports:
+  - town profile editing
+  - chamber calendar import (`icsUrl`/`websiteUrl`)
+  - quick links to Town Board + QR poster
+
+Presence integration:
+- Presence lines now adapt to town identity and town name where possible.
+- Example style:
+  - `Independence is preparing for a busy weekend with youth events.`
+- No analytics language, no pressure metrics.
+
+Brand positioning and simplicity:
+- Easy Mode header now supports town identity framing:
+  - `<Town> Local Network`
+  - `Powered by your Chamber`
+- Owner surface remains centered on:
+  - `Today's Plan`
+  - `Snap & Share`
+  - `How Did It Go?`
+- Town intelligence stays background-only.
+
+Protocol enforcement:
+- Added Town Test to AI polish checks so outputs avoid anti-community and competitive framing.

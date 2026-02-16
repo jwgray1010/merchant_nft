@@ -3,6 +3,7 @@ import { resolveBrandAccess } from "../auth/brandAccess";
 import { brandIdSchema } from "../schemas/brandSchema";
 import { brandPartnerUpsertSchema, townGraphEdgeUpdateSchema } from "../schemas/townGraphSchema";
 import { townSeasonKeySchema, townSeasonUpsertSchema } from "../schemas/townSeasonSchema";
+import { townProfileUpsertSchema } from "../schemas/townProfileSchema";
 import { townStoryGenerateRequestSchema } from "../schemas/townStorySchema";
 import { townMembershipUpdateSchema } from "../schemas/townSchema";
 import { townInviteCreateSchema } from "../schemas/townAdoptionSchema";
@@ -29,6 +30,7 @@ import { recomputeTownMicroRoutesForTown } from "../services/townMicroRoutesServ
 import { deleteTownSeason, listTownSeasons, resolveTownSeasonStateForTown, upsertTownSeason } from "../services/townSeasonService";
 import { generateTownStoryForTown, getLatestTownStory } from "../services/townStoriesService";
 import { summarizeCommunityImpactForTown } from "../services/communityImpactService";
+import { resolveTownProfileForTown, upsertTownProfileForTown } from "../services/townProfileService";
 import {
   autoAssignTownAmbassadorForBrand,
   createTownInvite,
@@ -220,6 +222,97 @@ router.get("/milestones", async (req, res, next) => {
       featuresUnlocked: milestone.featuresUnlocked,
       launchMessage: milestone.launchMessage ?? null,
       momentumLine: milestone.momentumLine ?? null,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/profile", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const profile = await resolveTownProfileForTown({
+      townId,
+    });
+    return res.json({
+      town: map.town,
+      profile,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/profile", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const townId = typeof req.query.townId === "string" ? req.query.townId.trim() : "";
+  if (!townId) {
+    return res.status(400).json({ error: "Missing townId query parameter" });
+  }
+  const parsedBody = townProfileUpsertSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Invalid town profile payload",
+      details: parsedBody.error.flatten(),
+    });
+  }
+  const requestedBrandId = typeof req.query.brandId === "string" ? req.query.brandId.trim() : "";
+  if (!requestedBrandId) {
+    return res.status(400).json({
+      error: "Missing brandId query parameter. Town profile updates require owner/admin access for a town brand.",
+    });
+  }
+  const parsedBrandId = brandIdSchema.safeParse(requestedBrandId);
+  if (!parsedBrandId.success) {
+    return res.status(400).json({
+      error: "Invalid brandId query parameter",
+      details: parsedBrandId.error.flatten(),
+    });
+  }
+  try {
+    const map = await getTownMapForUser({
+      actorUserId: actorId,
+      townId,
+    });
+    if (!map) {
+      return res.status(404).json({ error: "Town was not found or is not accessible" });
+    }
+    const access = await resolveBrandAccess(actorId, parsedBrandId.data);
+    if (!access) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    if (!ownerOrAdmin(access.role)) {
+      return res.status(403).json({ error: "Only owners/admins can update TownOS profile settings." });
+    }
+    const brand = await getAdapter().getBrand(access.ownerId, access.brandId);
+    if (!brand?.townRef || brand.townRef !== townId) {
+      return res.status(400).json({ error: "Selected brand is not connected to this town." });
+    }
+    const profile = await upsertTownProfileForTown({
+      townId,
+      updates: parsedBody.data,
+    });
+    return res.json({
+      ok: true,
+      town: map.town,
+      profile,
     });
   } catch (error) {
     return next(error);

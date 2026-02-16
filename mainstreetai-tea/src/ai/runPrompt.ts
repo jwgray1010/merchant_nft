@@ -5,7 +5,7 @@ import type { BrandProfile } from "../schemas/brandSchema";
 import type { BrandVoiceProfile } from "../schemas/voiceSchema";
 import { getBrandVoiceProfile } from "../services/voiceStore";
 import { getOpenAIClient, getTextModelName, getVisionModelName } from "./openaiClient";
-import { applyCommunityPolish, mainStreetTest, presenceTest } from "./communityProtocol";
+import { applyCommunityPolish, mainStreetTest, presenceTest, townTest } from "./communityProtocol";
 
 type RunPromptOptions<TOutput> = {
   promptFile: string;
@@ -248,6 +248,11 @@ export async function runPrompt<TOutput>({
   try {
     const firstParsed = parseModelJson(firstRaw);
     const polished = applyCommunityPolish(firstParsed);
+    const serialized = JSON.stringify(polished);
+    if (!mainStreetTest({ text: serialized }) || !presenceTest({ text: serialized }) || !townTest({ text: serialized })) {
+      const secondPass = applyCommunityPolish(polished);
+      return outputSchema.parse(secondPass);
+    }
     return outputSchema.parse(polished);
   } catch (firstError) {
     const repairPrompt = [
@@ -270,7 +275,7 @@ export async function runPrompt<TOutput>({
     const repairedParsed = parseModelJson(repairRaw);
     const polished = applyCommunityPolish(repairedParsed);
     const serialized = JSON.stringify(polished);
-    if (!mainStreetTest({ text: serialized }) || !presenceTest({ text: serialized })) {
+    if (!mainStreetTest({ text: serialized }) || !presenceTest({ text: serialized }) || !townTest({ text: serialized })) {
       const secondPass = applyCommunityPolish(polished);
       return outputSchema.parse(secondPass);
     }
