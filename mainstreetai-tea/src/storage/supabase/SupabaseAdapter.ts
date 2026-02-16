@@ -84,10 +84,18 @@ type BrandRow = {
   brand_id: string;
   business_name: string;
   location: string;
+  status: string | null;
+  status_reason: string | null;
+  status_updated_at: string | null;
+  status_updated_by: string | null;
   town_ref: string | null;
   support_level: string | null;
   local_trust_enabled: boolean | null;
   local_trust_style: string | null;
+  contact_preference: string | null;
+  contact_phone: string | null;
+  contact_email: string | null;
+  event_contact_preference: string | null;
   service_tags: unknown;
   type: string;
   voice: string;
@@ -255,10 +263,18 @@ function toBrandProfile(row: BrandRow): BrandProfile {
     brandId: row.brand_id,
     businessName: row.business_name,
     location: row.location,
+    status: row.status ?? undefined,
+    statusReason: row.status_reason ?? undefined,
+    statusUpdatedAt: row.status_updated_at ?? undefined,
+    statusUpdatedBy: row.status_updated_by ?? undefined,
     townRef: row.town_ref ?? undefined,
     supportLevel: row.support_level ?? undefined,
     localTrustEnabled: row.local_trust_enabled ?? undefined,
     localTrustStyle: row.local_trust_style ?? undefined,
+    contactPreference: row.contact_preference ?? undefined,
+    contactPhone: row.contact_phone ?? undefined,
+    contactEmail: row.contact_email ?? undefined,
+    eventContactPreference: row.event_contact_preference ?? undefined,
     serviceTags: Array.isArray(row.service_tags) ? row.service_tags : undefined,
     type: row.type,
     voice: row.voice,
@@ -487,10 +503,18 @@ export class SupabaseAdapter implements StorageAdapter {
       brand_id: parsed.brandId,
       business_name: parsed.businessName,
       location: parsed.location,
+      status: parsed.status ?? "active",
+      status_reason: parsed.statusReason ?? null,
+      status_updated_at: parsed.statusUpdatedAt ?? null,
+      status_updated_by: parsed.statusUpdatedBy ?? null,
       town_ref: parsed.townRef ?? null,
       support_level: parsed.supportLevel,
       local_trust_enabled: parsed.localTrustEnabled,
       local_trust_style: parsed.localTrustStyle,
+      contact_preference: parsed.contactPreference ?? null,
+      contact_phone: parsed.contactPhone ?? null,
+      contact_email: parsed.contactEmail ?? null,
+      event_contact_preference: parsed.eventContactPreference ?? null,
       service_tags: parsed.serviceTags,
       type: parsed.type,
       voice: parsed.voice,
@@ -533,10 +557,18 @@ export class SupabaseAdapter implements StorageAdapter {
     const updatePayload = {
       business_name: merged.businessName,
       location: merged.location,
+      status: merged.status ?? "active",
+      status_reason: merged.statusReason ?? null,
+      status_updated_at: merged.statusUpdatedAt ?? null,
+      status_updated_by: merged.statusUpdatedBy ?? null,
       town_ref: merged.townRef ?? null,
       support_level: merged.supportLevel,
       local_trust_enabled: merged.localTrustEnabled,
       local_trust_style: merged.localTrustStyle,
+      contact_preference: merged.contactPreference ?? null,
+      contact_phone: merged.contactPhone ?? null,
+      contact_email: merged.contactEmail ?? null,
+      event_contact_preference: merged.eventContactPreference ?? null,
       service_tags: merged.serviceTags,
       type: merged.type,
       voice: merged.voice,

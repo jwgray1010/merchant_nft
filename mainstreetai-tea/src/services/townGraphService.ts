@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { runPrompt } from "../ai/runPrompt";
-import { type BrandProfile, brandProfileSchema } from "../schemas/brandSchema";
+import { brandLifecycleStatusFor, type BrandProfile, brandProfileSchema } from "../schemas/brandSchema";
 import {
   brandPartnerRecordSchema,
   brandPartnerRelationshipSchema,
@@ -36,6 +36,7 @@ type SupabaseBrandRow = {
   brand_id: string;
   business_name: string;
   type: string;
+  status: string | null;
   town_ref: string | null;
 };
 
@@ -243,7 +244,7 @@ async function supabaseFindOwnedBrand(userId: string, brandId: string): Promise<
   const supabase = getSupabaseAdminClient();
   const table = (name: string): any => supabase.from(name as never);
   const { data, error } = await table("brands")
-    .select("id, owner_id, brand_id, business_name, type, town_ref")
+    .select("id, owner_id, brand_id, business_name, type, status, town_ref")
     .eq("owner_id", userId)
     .eq("brand_id", brandId)
     .maybeSingle();
@@ -490,7 +491,7 @@ export async function listPreferredPartnerCategoriesForBrand(input: {
   brandId: string;
 }): Promise<TownGraphCategory[]> {
   const brand = await getAdapter().getBrand(input.userId, input.brandId);
-  if (!brand?.townRef) {
+  if (!brand?.townRef || brandLifecycleStatusFor(brand) !== "active") {
     return [];
   }
   const fromCategory = townGraphCategoryFromBrandType(brand.type);
@@ -509,7 +510,7 @@ export async function recordManualCategoryPreferencesForBrand(input: {
   toCategories: TownGraphCategory[];
 }): Promise<number> {
   const brand = await getAdapter().getBrand(input.userId, input.brandId);
-  if (!brand?.townRef) {
+  if (!brand?.townRef || brandLifecycleStatusFor(brand) !== "active") {
     return 0;
   }
   const fromCategory = townGraphCategoryFromBrandType(brand.type);
@@ -537,7 +538,7 @@ export async function listExplicitPartnersForBrand(input: {
 }): Promise<Array<{ businessName: string; type: string; relationship: z.infer<typeof brandPartnerRelationshipSchema> }>> {
   if (getStorageMode() === "supabase") {
     const brand = await supabaseFindOwnedBrand(input.userId, input.brandId);
-    if (!brand?.town_ref) {
+    if (!brand?.town_ref || brandLifecycleStatusFor({ status: brand.status ?? undefined }) !== "active") {
       return [];
     }
     const supabase = getSupabaseAdminClient();
@@ -557,9 +558,10 @@ export async function listExplicitPartnersForBrand(input: {
       return [];
     }
     const brandsResponse = await table("brands")
-      .select("id, business_name, type, town_ref")
+      .select("id, business_name, type, town_ref, status")
       .in("id", partnerRefs)
-      .eq("town_ref", brand.town_ref);
+      .eq("town_ref", brand.town_ref)
+      .eq("status", "active");
     if (brandsResponse.error) {
       throw brandsResponse.error;
     }
@@ -592,7 +594,7 @@ export async function listExplicitPartnersForBrand(input: {
   }
 
   const baseBrand = await localGetBrand(input.userId, input.brandId);
-  if (!baseBrand?.townRef) {
+  if (!baseBrand?.townRef || brandLifecycleStatusFor(baseBrand) !== "active") {
     return [];
   }
   const rows = await readLocalArray(localPartnersPath(input.userId), brandPartnerRecordSchema);
@@ -600,7 +602,7 @@ export async function listExplicitPartnersForBrand(input: {
   const partners = await Promise.all(
     relevant.map(async (row) => {
       const partner = await localGetBrand(input.userId, row.partnerBrandRef);
-      if (!partner || partner.townRef !== baseBrand.townRef) {
+      if (!partner || partner.townRef !== baseBrand.townRef || brandLifecycleStatusFor(partner) !== "active") {
         return null;
       }
       return {
@@ -622,20 +624,29 @@ export async function upsertExplicitPartnerForBrand(input: {
   const relationship = brandPartnerRelationshipSchema.parse(input.relationship ?? "partner");
   if (getStorageMode() === "supabase") {
     const baseBrand = await supabaseFindOwnedBrand(input.userId, input.brandId);
-    if (!baseBrand?.town_ref) {
+    if (!baseBrand?.town_ref || brandLifecycleStatusFor({ status: baseBrand.status ?? undefined }) !== "active") {
       return null;
     }
     const supabase = getSupabaseAdminClient();
     const table = (name: string): any => supabase.from(name as never);
     const partnerResponse = await table("brands")
-      .select("id, town_ref")
+      .select("id, town_ref, status")
       .eq("id", input.partnerBrandRef)
       .maybeSingle();
     if (partnerResponse.error) {
       throw partnerResponse.error;
     }
-    const partner = (partnerResponse.data ?? null) as { id?: string; town_ref?: string | null } | null;
-    if (!partner?.id || !partner.town_ref || partner.town_ref !== baseBrand.town_ref) {
+    const partner = (partnerResponse.data ?? null) as {
+      id?: string;
+      town_ref?: string | null;
+      status?: string | null;
+    } | null;
+    if (
+      !partner?.id ||
+      !partner.town_ref ||
+      partner.town_ref !== baseBrand.town_ref ||
+      brandLifecycleStatusFor({ status: partner.status ?? undefined }) !== "active"
+    ) {
       throw new Error("Partner brand must belong to the same town");
     }
     const { data, error } = await table("brand_partners")
@@ -666,7 +677,13 @@ export async function upsertExplicitPartnerForBrand(input: {
 
   const brand = await localGetBrand(input.userId, input.brandId);
   const partner = await localGetBrand(input.userId, input.partnerBrandRef);
-  if (!brand?.townRef || !partner?.townRef || brand.townRef !== partner.townRef) {
+  if (
+    !brand?.townRef ||
+    !partner?.townRef ||
+    brand.townRef !== partner.townRef ||
+    brandLifecycleStatusFor(brand) !== "active" ||
+    brandLifecycleStatusFor(partner) !== "active"
+  ) {
     throw new Error("Partner brand must belong to the same town");
   }
   const filePath = localPartnersPath(input.userId);

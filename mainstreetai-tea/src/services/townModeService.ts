@@ -3,7 +3,11 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { runPrompt } from "../ai/runPrompt";
-import { brandProfileSchema, type BrandProfile } from "../schemas/brandSchema";
+import {
+  brandLifecycleStatusFor,
+  brandProfileSchema,
+  type BrandProfile,
+} from "../schemas/brandSchema";
 import type { DailyGoal } from "../schemas/dailyOneButtonSchema";
 import {
   dailyTownBoostSchema,
@@ -31,6 +35,7 @@ type SupabaseBrandRow = {
   brand_id: string;
   business_name: string;
   type: string;
+  status: string | null;
   town_ref: string | null;
 };
 
@@ -175,7 +180,7 @@ async function supabaseFindOwnedBrand(userId: string, brandId: string): Promise<
   const supabase = getSupabaseAdminClient();
   const table = (name: string): any => supabase.from(name as never);
   const { data, error } = await table("brands")
-    .select("id, owner_id, brand_id, business_name, type, town_ref")
+    .select("id, owner_id, brand_id, business_name, type, status, town_ref")
     .eq("owner_id", userId)
     .eq("brand_id", brandId)
     .maybeSingle();
@@ -543,6 +548,9 @@ async function listLocalBusinessesInTown(input: {
       if (!brand) {
         return null;
       }
+      if (brandLifecycleStatusFor(brand) !== "active") {
+        return null;
+      }
       return {
         brandRef: candidate.brandRef,
         name: brand.businessName,
@@ -589,7 +597,7 @@ async function listSupabaseBusinessesInTown(input: {
     return [];
   }
   const [brandsResponse, rotationsResponse] = await Promise.all([
-    table("brands").select("id, business_name, type").in("id", brandRefs),
+    table("brands").select("id, business_name, type, status").in("id", brandRefs).eq("status", "active"),
     table("town_rotations").select("*").eq("town_ref", input.townRef).in("brand_ref", brandRefs),
   ]);
   if (brandsResponse.error) {
@@ -837,7 +845,10 @@ export async function getTownMapForUser(input: {
     if (brandRefs.length === 0) {
       return { town, businesses: [], categories: [] };
     }
-    const brandsResponse = await table("brands").select("business_name, type").in("id", brandRefs);
+    const brandsResponse = await table("brands")
+      .select("business_name, type, status")
+      .in("id", brandRefs)
+      .eq("status", "active");
     if (brandsResponse.error) {
       throw brandsResponse.error;
     }
@@ -870,6 +881,9 @@ export async function getTownMapForUser(input: {
       brandRefs.map(async (brandRef) => {
         const brand = await localGetBrand(input.actorUserId, brandRef);
         if (!brand) {
+          return null;
+        }
+        if (brandLifecycleStatusFor(brand) !== "active") {
           return null;
         }
         return townBusinessSummarySchema.safeParse({

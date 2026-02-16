@@ -2,6 +2,7 @@ import { getAdapter } from "../storage/getAdapter";
 import { dispatchOutboxRecord } from "../integrations/dispatch";
 import type { OutboxType } from "../schemas/outboxSchema";
 import { getTwilioProvider } from "../integrations/providerFactory";
+import { brandLifecycleStatusFor } from "../schemas/brandSchema";
 
 const BACKOFF_MINUTES = [5, 15, 60, 240, 1440] as const;
 
@@ -181,6 +182,38 @@ export async function processDueOutbox(options: ProcessDueOutboxOptions = {}): P
 
   for (const record of due) {
     const nextAttempts = (record.attempts ?? 0) + 1;
+    const recordBrand = await adapter.getBrand(record.ownerId, record.brandId).catch(() => null);
+    if (recordBrand && brandLifecycleStatusFor(recordBrand) === "closed") {
+      const closedMessage = "Brand is closed. Outbox delivery is disabled.";
+      await adapter.updateOutbox(record.id, {
+        status: "failed",
+        attempts: nextAttempts,
+        lastError: closedMessage,
+        scheduledFor: null,
+      });
+      if (record.type === "sms_send") {
+        const smsMessageId =
+          typeof record.payload.smsMessageId === "string" ? record.payload.smsMessageId : undefined;
+        if (smsMessageId) {
+          await adapter.updateSmsMessage(record.ownerId, record.brandId, smsMessageId, {
+            status: "failed",
+            error: closedMessage,
+          });
+        }
+      }
+      if (record.type === "email_send") {
+        const emailLogId =
+          typeof record.payload.emailLogId === "string" ? record.payload.emailLogId : undefined;
+        if (emailLogId) {
+          await adapter.updateEmailLog(record.ownerId, record.brandId, emailLogId, {
+            status: "failed",
+            error: closedMessage,
+          });
+        }
+      }
+      failed += 1;
+      continue;
+    }
     try {
       if (record.type === "sms_send") {
         await processSmsSendOutbox(record);

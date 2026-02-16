@@ -64,6 +64,7 @@ function render(title: string, body: string): string {
         <a class="button secondary" href="/admin">Admin Home</a>
         <a class="button secondary" href="/admin/billing">Billing</a>
         <a class="button secondary" href="/admin/team">Team</a>
+        <a class="button secondary" href="/admin/businesses">Businesses</a>
         <a class="button secondary" href="/admin/media">Media</a>
         <a class="button secondary" href="/admin/timing">Timing</a>
         <a class="button secondary" href="/admin/post-now">Post Now</a>

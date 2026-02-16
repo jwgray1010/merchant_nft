@@ -1,6 +1,12 @@
 import { Router, type Request } from "express";
 import { resolveBrandAccess } from "../auth/brandAccess";
-import { brandIdSchema } from "../schemas/brandSchema";
+import {
+  brandContactPreferenceSchema,
+  brandIdSchema,
+  brandServiceTagSchema,
+  type BrandProfile,
+  type BrandServiceTag,
+} from "../schemas/brandSchema";
 import { brandPartnerUpsertSchema, townGraphEdgeUpdateSchema } from "../schemas/townGraphSchema";
 import { townSeasonKeySchema, townSeasonUpsertSchema } from "../schemas/townSeasonSchema";
 import { townProfileUpsertSchema } from "../schemas/townProfileSchema";
@@ -8,7 +14,7 @@ import { townStoryGenerateRequestSchema } from "../schemas/townStorySchema";
 import { townMembershipUpdateSchema } from "../schemas/townSchema";
 import { townInviteCreateSchema } from "../schemas/townAdoptionSchema";
 import { getAdapter } from "../storage/getAdapter";
-import { isEmailEnabled } from "../integrations/env";
+import { isEmailEnabled, isTwilioEnabled } from "../integrations/env";
 import {
   getTownMapForUser,
   getTownMembershipForBrand,
@@ -38,7 +44,9 @@ import {
   resolveOwnedInviterBrandForTown,
   townInviteMessage,
 } from "../services/townAdoptionService";
+import { townSlugForRecord } from "../services/townBoardService";
 import { parseSeasonOverride } from "../town/seasonDetector";
+import { normalizeUSPhone } from "../utils/phone";
 
 const router = Router();
 
@@ -49,6 +57,42 @@ function actorUserId(req: Request): string | null {
 
 function ownerOrAdmin(role: string | undefined): boolean {
   return role === "owner" || role === "admin";
+}
+
+function appBaseUrl(): string {
+  return (process.env.APP_BASE_URL ?? "http://localhost:3001").trim().replace(/\/+$/, "");
+}
+
+function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== "");
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  return value
+    .split(/[,\n]/g)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+}
+
+function parseServiceTags(value: unknown): BrandServiceTag[] {
+  const tags = toStringArray(value);
+  const out: BrandServiceTag[] = [];
+  for (const entry of tags) {
+    const parsed = brandServiceTagSchema.safeParse(entry.toLowerCase());
+    if (parsed.success && !out.includes(parsed.data)) {
+      out.push(parsed.data);
+    }
+  }
+  return out;
+}
+
+function looksLikeEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function providedCommunityImpactKey(req: Request): string {
@@ -319,6 +363,100 @@ router.post("/profile", async (req, res, next) => {
   }
 });
 
+router.post("/business-profile", async (req, res, next) => {
+  const actorId = actorUserId(req);
+  if (!actorId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const requestedBrandId = typeof req.query.brandId === "string" ? req.query.brandId.trim() : "";
+  const parsedBrandId = brandIdSchema.safeParse(requestedBrandId);
+  if (!parsedBrandId.success) {
+    return res.status(400).json({
+      error: "Missing or invalid brandId query parameter",
+      details: parsedBrandId.error.flatten(),
+    });
+  }
+  try {
+    const access = await resolveBrandAccess(actorId, parsedBrandId.data);
+    if (!access) {
+      return res.status(404).json({ error: `Brand '${parsedBrandId.data}' was not found` });
+    }
+    if (!ownerOrAdmin(access.role)) {
+      return res.status(403).json({ error: "Only owners/admins can update business profile settings." });
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(access.ownerId, access.brandId);
+    if (!brand) {
+      return res.status(404).json({ error: `Brand '${access.brandId}' was not found` });
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsedContactPreference = brandContactPreferenceSchema.safeParse(body.contactPreference);
+    const parsedEventContactPreference = brandContactPreferenceSchema.safeParse(body.eventContactPreference);
+    const contactPreference = parsedContactPreference.success ? parsedContactPreference.data : undefined;
+    const eventContactPreference = parsedEventContactPreference.success
+      ? parsedEventContactPreference.data
+      : undefined;
+    const contactEmailRaw = typeof body.contactEmail === "string" ? body.contactEmail.trim().toLowerCase() : "";
+    if (contactEmailRaw && !looksLikeEmail(contactEmailRaw)) {
+      return res.status(400).json({ error: "contactEmail must be a valid email address" });
+    }
+    const contactPhoneRaw = typeof body.contactPhone === "string" ? body.contactPhone.trim() : "";
+    const contactPhone = contactPhoneRaw
+      ? normalizeUSPhone(contactPhoneRaw) ?? contactPhoneRaw
+      : undefined;
+    const serviceTags = parseServiceTags(body.serviceTags);
+
+    const patch: Partial<BrandProfile> = {};
+    if (serviceTags.length > 0) {
+      patch.serviceTags = serviceTags;
+    }
+    if (contactPreference) {
+      patch.contactPreference = contactPreference;
+    }
+    if (eventContactPreference) {
+      patch.eventContactPreference = eventContactPreference;
+    }
+    if (contactEmailRaw) {
+      patch.contactEmail = contactEmailRaw;
+    }
+    if (contactPhone) {
+      patch.contactPhone = contactPhone;
+    }
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: "No profile updates were provided." });
+    }
+
+    const effectiveContactPreference = patch.contactPreference ?? brand.contactPreference;
+    const effectiveEmail = patch.contactEmail ?? brand.contactEmail;
+    const effectivePhone = patch.contactPhone ?? brand.contactPhone;
+    if (effectiveContactPreference === "email" && !effectiveEmail) {
+      return res.status(400).json({ error: "Email contact preference requires an email address." });
+    }
+    if (effectiveContactPreference === "sms" && !effectivePhone) {
+      return res.status(400).json({ error: "SMS contact preference requires a phone number." });
+    }
+    const effectiveEventPreference = patch.eventContactPreference ?? brand.eventContactPreference;
+    if (effectiveEventPreference === "email" && !effectiveEmail) {
+      return res.status(400).json({ error: "Event contact preference email requires contactEmail." });
+    }
+    if (effectiveEventPreference === "sms" && !effectivePhone) {
+      return res.status(400).json({ error: "Event contact preference sms requires contactPhone." });
+    }
+
+    const updated = await adapter.updateBrand(access.ownerId, access.brandId, patch);
+    if (!updated) {
+      return res.status(404).json({ error: `Brand '${access.brandId}' was not found` });
+    }
+    return res.json({
+      ok: true,
+      brand: updated,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/invite", async (req, res, next) => {
   const actorId = actorUserId(req);
   if (!actorId) {
@@ -387,21 +525,41 @@ router.post("/invite", async (req, res, next) => {
       });
     }
 
+    let normalizedPhone: string | undefined;
+    if (parsedBody.data.phone) {
+      try {
+        normalizedPhone = normalizeUSPhone(parsedBody.data.phone);
+      } catch (_error) {
+        return res.status(400).json({ error: "Phone must be a valid US 10-digit number (or +1 format)." });
+      }
+    }
+    const contactPreference =
+      parsedBody.data.contactPreference ?? (normalizedPhone ? "sms" : parsedBody.data.email ? "email" : undefined);
     const invite = await createTownInvite({
       townId: parsedBody.data.townId,
       invitedBusiness: parsedBody.data.businessName,
       category: parsedBody.data.category,
-      invitedEmail: parsedBody.data.email,
       invitedByBrandRef: inviter.brandRef,
+      inviteCode: undefined,
+      contactPreference,
+      invitedPhone: normalizedPhone,
+      invitedEmail: parsedBody.data.email,
+      allowClosedNameReuse: Boolean(parsedBody.data.confirmClosedReuse),
       status: "pending",
     });
+    const inviteCode = (invite.inviteCode ?? invite.id.slice(0, 12)).toUpperCase();
+    const joinPath = `/join/${encodeURIComponent(townSlugForRecord(map.town))}?code=${encodeURIComponent(
+      inviteCode,
+    )}`;
+    const joinUrl = `${appBaseUrl()}${joinPath}`;
     const message = townInviteMessage({
       townName: map.town.name,
       invitedBusiness: parsedBody.data.businessName,
       invitedByBusiness: inviter.businessName,
+      joinUrl,
     });
 
-    let delivery: "recorded" | "email_queued" = "recorded";
+    let delivery: "recorded" | "email_queued" | "sms_queued" = "recorded";
     if (parsedBody.data.email && isEmailEnabled()) {
       const adapter = getAdapter();
       const subject = `${map.town.name} Main Street invite`;
@@ -430,14 +588,37 @@ router.post("/invite", async (req, res, next) => {
       );
       delivery = "email_queued";
     }
+    if (normalizedPhone && isTwilioEnabled()) {
+      const adapter = getAdapter();
+      await adapter.enqueueOutbox(
+        inviter.ownerId,
+        inviter.brandId,
+        "sms_send",
+        {
+          to: normalizedPhone,
+          body: message,
+          purpose: "invite",
+        },
+        new Date().toISOString(),
+      );
+      delivery = "sms_queued";
+    }
 
     return res.json({
       ok: true,
       invite,
       message,
       delivery,
+      joinUrl,
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.toLowerCase().includes("admin confirmation")) {
+      return res.status(409).json({
+        error: message,
+        needsAdminConfirmation: true,
+      });
+    }
     return next(error);
   }
 });

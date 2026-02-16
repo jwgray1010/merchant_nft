@@ -18,6 +18,9 @@ import {
 } from "../schemas/autopilotSettingsSchema";
 import { autopilotRunRequestSchema } from "../schemas/autopilotRunSchema";
 import {
+  brandIdSchema,
+  brandLifecycleStatusFor,
+  brandLifecycleStatusSchema,
   brandLocalTrustStyleSchema,
   brandProfileSchema,
   brandSupportLevelSchema,
@@ -74,6 +77,9 @@ const COMMUNITY_AUDIENCE_STYLES = [
   "mixed",
 ] as const;
 const SUPPORT_LEVELS = [...brandSupportLevelSchema.options] as Array<(typeof brandSupportLevelSchema.options)[number]>;
+const BUSINESS_STATUSES = [...brandLifecycleStatusSchema.options] as Array<
+  (typeof brandLifecycleStatusSchema.options)[number]
+>;
 const LOCAL_TRUST_STYLES = [...brandLocalTrustStyleSchema.options] as Array<
   (typeof brandLocalTrustStyleSchema.options)[number]
 >;
@@ -227,6 +233,7 @@ function renderLayout(
         <a class="button secondary small" href="/app">Easy Mode</a>
         <a class="button secondary small" href="/admin">Home</a>
         <a class="button secondary small" href="/admin/brands">Brands</a>
+        <a class="button secondary small" href="/admin/businesses">Businesses</a>
         <a class="button secondary small" href="/admin/integrations">Integrations</a>
         <a class="button secondary small" href="/admin/sms">SMS</a>
         <a class="button secondary small" href="/admin/email">Email</a>
@@ -1385,6 +1392,200 @@ router.post("/brands/:brandId", async (req, res, next) => {
       { type: "error", text: message },
     );
     return res.status(400).type("html").send(html);
+  }
+});
+
+router.get("/businesses", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const brands = await getAdapter().listBrands(userId);
+    const status = optionalText(req.query.status);
+    const rows =
+      brands.length > 0
+        ? brands
+            .map((brand) => {
+              const lifecycle = brandLifecycleStatusFor(brand);
+              const updatedAt = brand.statusUpdatedAt ? formatDateTime(brand.statusUpdatedAt) : "—";
+              const reason = brand.statusReason ? escapeHtml(brand.statusReason) : "—";
+              const lifecycleBadge =
+                lifecycle === "active"
+                  ? `<span class="button small secondary" style="pointer-events:none;">Active</span>`
+                  : lifecycle === "inactive"
+                    ? `<span class="button small secondary" style="pointer-events:none;background:#fef9c3;border-color:#fde68a;">Inactive</span>`
+                    : `<span class="button small secondary" style="pointer-events:none;background:#fee2e2;border-color:#fecaca;">Closed</span>`;
+              const statusOptions = BUSINESS_STATUSES.map((entry) => {
+                const selected = lifecycle === entry ? "selected" : "";
+                return `<option value="${entry}" ${selected}>${entry}</option>`;
+              }).join("");
+              return `<tr>
+                <td>
+                  <strong>${escapeHtml(brand.businessName)}</strong><br/>
+                  <span class="muted">${escapeHtml(brand.brandId)} · ${escapeHtml(brand.location)}</span>
+                </td>
+                <td>
+                  ${lifecycleBadge}<br/>
+                  <span class="muted">Reason: ${reason}</span><br/>
+                  <span class="muted">Updated: ${escapeHtml(updatedAt)}</span>
+                </td>
+                <td>
+                  <form method="POST" action="/admin/businesses/${encodeURIComponent(brand.brandId)}/status" class="row" style="margin-bottom:8px;">
+                    <select name="status">${statusOptions}</select>
+                    <input name="reason" placeholder="Reason (optional)" value="${escapeHtml(brand.statusReason ?? "")}" />
+                    <button type="submit">Save</button>
+                  </form>
+                  <div class="row" style="margin-bottom:8px;">
+                    <form method="POST" action="/admin/businesses/${encodeURIComponent(
+                      brand.brandId,
+                    )}/status"><input type="hidden" name="status" value="inactive" /><button class="button secondary small" type="submit">Mark Inactive</button></form>
+                    <form method="POST" action="/admin/businesses/${encodeURIComponent(
+                      brand.brandId,
+                    )}/status"><input type="hidden" name="status" value="closed" /><button class="button secondary small" type="submit">Mark Closed</button></form>
+                    <form method="POST" action="/admin/businesses/${encodeURIComponent(
+                      brand.brandId,
+                    )}/status"><input type="hidden" name="status" value="active" /><button class="button secondary small" type="submit">Reactivate</button></form>
+                  </div>
+                  <form method="POST" action="/admin/businesses/${encodeURIComponent(
+                    brand.brandId,
+                  )}/request-directory" class="row">
+                    <button class="button secondary small" type="submit">Request address/hours</button>
+                  </form>
+                </td>
+              </tr>`;
+            })
+            .join("")
+        : `<tr><td colspan="3" class="muted">No businesses created yet.</td></tr>`;
+
+    const monthlyPrompt =
+      new Date().getDate() <= 7
+        ? `<div class="card"><h2>Monthly chamber review</h2><p class="muted">Any businesses closed or temporarily inactive this month?</p></div>`
+        : "";
+    const notice =
+      status === "updated"
+        ? { type: "success" as const, text: "Business lifecycle updated." }
+        : status === "requested"
+          ? { type: "success" as const, text: "Directory quality prompt sent." }
+          : status === "requested-no-contact"
+            ? { type: "error" as const, text: "No contact method found. Ask owner to add one in-app first." }
+            : status === "not-found"
+              ? { type: "error" as const, text: "Business was not found." }
+              : undefined;
+    const html = renderLayout(
+      "Business Lifecycle",
+      `
+      <div class="card">
+        <h1>Business Lifecycle</h1>
+        <p class="muted">Mark businesses active, temporarily inactive, or closed without deleting records.</p>
+      </div>
+      ${monthlyPrompt}
+      <div class="card">
+        <table>
+          <thead><tr><th>Business</th><th>Lifecycle</th><th>Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      `,
+      notice,
+    );
+    return res.type("html").send(html);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/businesses/:brandId/status", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const parsedBrandId = brandIdSchema.safeParse(req.params.brandId ?? "");
+    if (!parsedBrandId.success) {
+      return res.redirect("/admin/businesses?status=not-found");
+    }
+    const parsedStatus = brandLifecycleStatusSchema.safeParse(
+      String((req.body as Record<string, unknown>)?.status ?? "")
+        .trim()
+        .toLowerCase(),
+    );
+    if (!parsedStatus.success) {
+      return res.redirect("/admin/businesses?status=not-found");
+    }
+    const reason = optionalText((req.body as Record<string, unknown>)?.reason);
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
+    if (!brand) {
+      return res.redirect("/admin/businesses?status=not-found");
+    }
+    const lifecycle = parsedStatus.data;
+    const updated = await adapter.updateBrand(userId, parsedBrandId.data, {
+      status: lifecycle,
+      statusReason: lifecycle === "active" ? undefined : reason,
+      statusUpdatedAt: new Date().toISOString(),
+      statusUpdatedBy: userId,
+    });
+    if (!updated) {
+      return res.redirect("/admin/businesses?status=not-found");
+    }
+    return res.redirect("/admin/businesses?status=updated");
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/businesses/:brandId/request-directory", async (req, res, next) => {
+  try {
+    const userId = req.user?.id ?? "local-dev-user";
+    const parsedBrandId = brandIdSchema.safeParse(req.params.brandId ?? "");
+    if (!parsedBrandId.success) {
+      return res.redirect("/admin/businesses?status=not-found");
+    }
+    const adapter = getAdapter();
+    const brand = await adapter.getBrand(userId, parsedBrandId.data);
+    if (!brand) {
+      return res.redirect("/admin/businesses?status=not-found");
+    }
+    const promptText =
+      "Quick TownOS request from your Chamber: please add or confirm your current address and business hours. It helps keep local directories accurate for neighbors.";
+    const preferred = brand.contactPreference;
+    if (preferred === "sms" && brand.contactPhone && isTwilioEnabled()) {
+      await adapter.enqueueOutbox(
+        userId,
+        parsedBrandId.data,
+        "sms_send",
+        {
+          to: brand.contactPhone,
+          body: promptText,
+          purpose: "directory_quality",
+        },
+        new Date().toISOString(),
+      );
+      return res.redirect("/admin/businesses?status=requested");
+    }
+    if (brand.contactEmail && isEmailEnabled()) {
+      const subject = `${brand.businessName}: quick directory update`;
+      const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;padding:16px;">${escapeHtml(
+        promptText,
+      )}</body></html>`;
+      const log = await adapter.addEmailLog(userId, parsedBrandId.data, {
+        toEmail: brand.contactEmail,
+        subject,
+        status: "queued",
+      });
+      await adapter.enqueueOutbox(
+        userId,
+        parsedBrandId.data,
+        "email_send",
+        {
+          toEmail: brand.contactEmail,
+          subject,
+          html,
+          textSummary: promptText,
+          emailLogId: log.id,
+        },
+        new Date().toISOString(),
+      );
+      return res.redirect("/admin/businesses?status=requested");
+    }
+    return res.redirect("/admin/businesses?status=requested-no-contact");
+  } catch (error) {
+    return next(error);
   }
 });
 

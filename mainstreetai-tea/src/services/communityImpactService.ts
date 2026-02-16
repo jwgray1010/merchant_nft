@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { brandProfileSchema, brandSupportLevelSchema, type BrandSupportLevel } from "../schemas/brandSchema";
+import {
+  brandLifecycleStatusFor,
+  brandProfileSchema,
+  brandSupportLevelSchema,
+  type BrandSupportLevel,
+} from "../schemas/brandSchema";
 import {
   communityImpactSummarySchema,
   communitySponsorRoleSchema,
@@ -26,6 +31,7 @@ type SupabaseBrandContextRow = {
   owner_id: string;
   brand_id: string;
   town_ref: string | null;
+  status: string | null;
   support_level: string | null;
   type: string;
 };
@@ -232,6 +238,9 @@ async function listLocalTownBrands(
       if (!parsed.success) {
         continue;
       }
+      if (brandLifecycleStatusFor(parsed.data) !== "active") {
+        continue;
+      }
       rows.push({
         ownerId,
         brandId,
@@ -251,7 +260,7 @@ async function resolveBrandContext(input: {
     const supabase = getSupabaseAdminClient();
     const table = (name: string): any => supabase.from(name as never);
     const { data, error } = await table("brands")
-      .select("id, owner_id, brand_id, town_ref, support_level, type")
+      .select("id, owner_id, brand_id, town_ref, status, support_level, type")
       .eq("owner_id", input.ownerId)
       .eq("brand_id", input.brandId)
       .maybeSingle();
@@ -526,17 +535,20 @@ async function collectTownBusinessStats(input: {
       };
     }
     const { data: brandsData, error: brandsError } = await table("brands")
-      .select("id, type, support_level")
-      .in("id", brandRefs);
+      .select("id, type, support_level, status")
+      .in("id", brandRefs)
+      .eq("status", "active");
     if (brandsError) {
       throw brandsError;
     }
     const categoryCounts = new Map<string, number>();
     let strugglingBusinesses = 0;
+    let activeBusinesses = 0;
     for (const row of (brandsData ?? []) as Array<{ type?: unknown; support_level?: unknown }>) {
       const type = typeof row.type === "string" ? row.type : "other";
       const bucket = categoryBucket(type);
       categoryCounts.set(bucket, (categoryCounts.get(bucket) ?? 0) + 1);
+      activeBusinesses += 1;
       if (safeSupportLevel(row.support_level) === "struggling") {
         strugglingBusinesses += 1;
       }
@@ -546,7 +558,7 @@ async function collectTownBusinessStats(input: {
       .slice(0, 3)
       .map(([name]) => name);
     return {
-      activeBusinesses: brandRefs.length,
+      activeBusinesses,
       strugglingBusinesses,
       topCategories,
     };

@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import type { BrandProfile } from "../schemas/brandSchema";
+import {
+  brandLifecycleStatusFor,
+  type BrandLifecycleStatus,
+  type BrandProfile,
+} from "../schemas/brandSchema";
 import { communitySponsorRoleSchema } from "../schemas/communityImpactSchema";
 import {
   townAmbassadorRoleSchema,
@@ -28,6 +32,7 @@ type SupabaseBrandRow = {
   owner_id: string;
   brand_id: string;
   business_name: string;
+  status: string | null;
   town_ref: string | null;
 };
 
@@ -42,7 +47,7 @@ type SupabaseTownAmbassadorRow = {
   brand_ref: string;
   role: string | null;
   joined_at: string;
-  brands?: { business_name?: unknown; brand_id?: unknown } | null;
+  brands?: { business_name?: unknown; brand_id?: unknown; status?: unknown } | null;
 };
 
 type SupabaseTownInviteRow = {
@@ -51,6 +56,9 @@ type SupabaseTownInviteRow = {
   invited_business: string;
   invited_by_brand_ref: string;
   category: string | null;
+  invite_code: string | null;
+  contact_preference: string | null;
+  invited_phone: string | null;
   invited_email: string | null;
   status: string;
   created_at: string;
@@ -76,6 +84,15 @@ type SupabaseCommunitySponsorRow = {
 
 function safePathSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function slugify(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
 }
 
 function localUserDir(userId: string): string {
@@ -185,6 +202,20 @@ function safeInviteStatus(value: unknown): z.infer<typeof townInviteRowSchema.sh
   return parsed.success ? parsed.data : "pending";
 }
 
+function safeInviteCode(value: unknown): string {
+  if (typeof value === "string") {
+    const normalized = value.trim().toUpperCase();
+    if (normalized.length >= 4) {
+      return normalized;
+    }
+  }
+  return randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase();
+}
+
+function normalizeInviteCode(value: string): string {
+  return value.trim().toUpperCase();
+}
+
 function safeSuccessSignal(value: unknown): TownSuccessSignal {
   const parsed = townSuccessSignalRowSchema.shape.signal.safeParse(value);
   return parsed.success ? parsed.data : "repeat_customers_up";
@@ -193,6 +224,14 @@ function safeSuccessSignal(value: unknown): TownSuccessSignal {
 function safeSponsorRole(value: unknown): z.infer<typeof communitySponsorRoleSchema> {
   const parsed = communitySponsorRoleSchema.safeParse(value);
   return parsed.success ? parsed.data : "nonprofit";
+}
+
+function safeLifecycleStatus(value: unknown): BrandLifecycleStatus {
+  return brandLifecycleStatusFor({ status: typeof value === "string" ? value : undefined });
+}
+
+function isTownVisibleStatus(value: unknown): boolean {
+  return safeLifecycleStatus(value) === "active";
 }
 
 function toTownAmbassadorRow(row: SupabaseTownAmbassadorRow) {
@@ -212,6 +251,11 @@ function toTownInviteRow(row: SupabaseTownInviteRow) {
     invitedBusiness: row.invited_business,
     invitedByBrandRef: row.invited_by_brand_ref,
     category: row.category ?? "other",
+    inviteCode: safeInviteCode(row.invite_code ?? row.id.slice(0, 12)),
+    contactPreference: row.contact_preference === "sms" || row.contact_preference === "email"
+      ? row.contact_preference
+      : undefined,
+    invitedPhone: row.invited_phone ?? undefined,
     invitedEmail: row.invited_email ?? undefined,
     status: safeInviteStatus(row.status),
     createdAt: row.created_at,
@@ -265,12 +309,12 @@ function momentumLineFromCount(activeCount: number): string | undefined {
 async function resolveBrandTownContext(input: {
   ownerId: string;
   brandId: string;
-}): Promise<{ brandRef: string; townRef: string | null; businessName: string }> {
+}): Promise<{ brandRef: string; townRef: string | null; businessName: string; status: BrandLifecycleStatus }> {
   if (getStorageMode() === "supabase") {
     const supabase = getSupabaseAdminClient();
     const table = (name: string): any => supabase.from(name as never);
     const { data, error } = await table("brands")
-      .select("id, owner_id, brand_id, business_name, town_ref")
+      .select("id, owner_id, brand_id, business_name, town_ref, status")
       .eq("owner_id", input.ownerId)
       .eq("brand_id", input.brandId)
       .maybeSingle();
@@ -285,6 +329,7 @@ async function resolveBrandTownContext(input: {
       brandRef: row.id,
       townRef: row.town_ref,
       businessName: row.business_name,
+      status: safeLifecycleStatus(row.status),
     };
   }
   const brand = await getAdapter().getBrand(input.ownerId, input.brandId);
@@ -295,6 +340,7 @@ async function resolveBrandTownContext(input: {
     brandRef: localBrandRef(input.ownerId, input.brandId),
     townRef: brand.townRef ?? null,
     businessName: brand.businessName,
+    status: safeLifecycleStatus(brand.status),
   };
 }
 
@@ -361,6 +407,9 @@ export async function getTownAmbassadorForBrand(input: {
   if (!context) {
     return null;
   }
+  if (!isTownVisibleStatus(context.status)) {
+    return null;
+  }
   if (getStorageMode() === "supabase") {
     const supabase = getSupabaseAdminClient();
     const table = (name: string): any => supabase.from(name as never);
@@ -398,7 +447,7 @@ export async function ensureTownAmbassadorForBrand(input: {
   role?: TownAmbassadorRole;
 }): Promise<z.infer<typeof townAmbassadorRowSchema> | null> {
   const context = await resolveBrandTownContext(input).catch(() => null);
-  if (!context?.townRef) {
+  if (!context?.townRef || !isTownVisibleStatus(context.status)) {
     return null;
   }
   const role = townAmbassadorRoleSchema.parse(input.role ?? "ambassador");
@@ -446,7 +495,7 @@ export async function autoAssignTownAmbassadorForBrand(input: {
   brandId: string;
 }): Promise<z.infer<typeof townAmbassadorRowSchema> | null> {
   const context = await resolveBrandTownContext(input).catch(() => null);
-  if (!context?.townRef) {
+  if (!context?.townRef || !isTownVisibleStatus(context.status)) {
     return null;
   }
   const [milestone, participation] = await Promise.all([
@@ -491,8 +540,9 @@ export async function listTownAmbassadors(input: {
     const supabase = getSupabaseAdminClient();
     const table = (name: string): any => supabase.from(name as never);
     const { data, error } = await table("town_ambassadors")
-      .select("*, brands!inner(business_name, brand_id)")
+      .select("*, brands!inner(business_name, brand_id, status)")
       .eq("town_ref", input.townId)
+      .eq("brands.status", "active")
       .order("joined_at", { ascending: true });
     if (error) {
       throw error;
@@ -524,8 +574,11 @@ export async function listTownAmbassadors(input: {
       }
       const raw = await readJsonOrNull<unknown>(localBrandPath(parsedRef.ownerId, parsedRef.brandId));
       const parsedBrand = z
-        .object({ businessName: z.string().min(1) })
+        .object({ businessName: z.string().min(1), status: z.string().optional() })
         .safeParse(raw);
+      if (parsedBrand.success && !isTownVisibleStatus(parsedBrand.data.status)) {
+        return null;
+      }
       return {
         id: row.id,
         brandRef: row.brandRef,
@@ -535,7 +588,9 @@ export async function listTownAmbassadors(input: {
       };
     }),
   );
-  return resolved.sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
+  return resolved
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
 }
 
 export async function resolveOwnedInviterBrandForTown(input: {
@@ -548,10 +603,11 @@ export async function resolveOwnedInviterBrandForTown(input: {
     const table = (name: string): any => supabase.from(name as never);
     if (input.preferredBrandId) {
       const { data, error } = await table("brands")
-        .select("id, owner_id, brand_id, business_name, town_ref")
+        .select("id, owner_id, brand_id, business_name, town_ref, status")
         .eq("owner_id", input.ownerId)
         .eq("brand_id", input.preferredBrandId)
         .eq("town_ref", input.townId)
+        .eq("status", "active")
         .maybeSingle();
       if (error) {
         throw error;
@@ -567,9 +623,10 @@ export async function resolveOwnedInviterBrandForTown(input: {
       }
     }
     const { data, error } = await table("brands")
-      .select("id, owner_id, brand_id, business_name, town_ref, created_at")
+      .select("id, owner_id, brand_id, business_name, town_ref, status, created_at")
       .eq("owner_id", input.ownerId)
       .eq("town_ref", input.townId)
+      .eq("status", "active")
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
@@ -590,7 +647,7 @@ export async function resolveOwnedInviterBrandForTown(input: {
 
   if (input.preferredBrandId) {
     const brand = await getAdapter().getBrand(input.ownerId, input.preferredBrandId);
-    if (brand?.townRef === input.townId) {
+    if (brand?.townRef === input.townId && isTownVisibleStatus(brand.status)) {
       return {
         ownerId: input.ownerId,
         brandId: brand.brandId,
@@ -608,7 +665,7 @@ export async function resolveOwnedInviterBrandForTown(input: {
     return null;
   }
   const brand = await getAdapter().getBrand(input.ownerId, firstBrandId);
-  if (!brand) {
+  if (!brand || !isTownVisibleStatus(brand.status)) {
     return null;
   }
   return {
@@ -619,18 +676,93 @@ export async function resolveOwnedInviterBrandForTown(input: {
   };
 }
 
+async function hasClosedBusinessNameConflict(input: {
+  townId: string;
+  invitedBusiness: string;
+}): Promise<boolean> {
+  const targetName = input.invitedBusiness.trim().toLowerCase();
+  const targetSlug = slugify(input.invitedBusiness);
+  if (!targetName || !targetSlug) {
+    return false;
+  }
+  if (getStorageMode() === "supabase") {
+    const supabase = getSupabaseAdminClient();
+    const table = (name: string): any => supabase.from(name as never);
+    const { data, error } = await table("brands")
+      .select("brand_id, business_name, status")
+      .eq("town_ref", input.townId)
+      .eq("status", "closed")
+      .limit(400);
+    if (error) {
+      throw error;
+    }
+    const rows = (data ?? []) as Array<{ brand_id?: unknown; business_name?: unknown }>;
+    return rows.some((row) => {
+      const brandSlug = typeof row.brand_id === "string" ? row.brand_id.trim().toLowerCase() : "";
+      const businessName = typeof row.business_name === "string" ? row.business_name.trim().toLowerCase() : "";
+      return (
+        brandSlug === targetSlug ||
+        businessName === targetName ||
+        (businessName !== "" && slugify(businessName) === targetSlug)
+      );
+    });
+  }
+
+  const users = await listLocalUsers();
+  for (const ownerId of users) {
+    const memberships = await readLocalArray(localTownMembershipsPath(ownerId), townMembershipSchema);
+    const brandIds = memberships
+      .filter((entry) => entry.townRef === input.townId)
+      .map((entry) => entry.brandRef);
+    for (const brandId of brandIds) {
+      const brand = await getAdapter().getBrand(ownerId, brandId);
+      if (!brand || safeLifecycleStatus(brand.status) !== "closed") {
+        continue;
+      }
+      const brandSlug = brand.brandId.trim().toLowerCase();
+      const businessName = brand.businessName.trim().toLowerCase();
+      if (
+        brandSlug === targetSlug ||
+        businessName === targetName ||
+        (businessName !== "" && slugify(businessName) === targetSlug)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export async function createTownInvite(input: {
   townId: string;
   invitedBusiness: string;
   category: string;
   invitedByBrandRef: string;
+  inviteCode?: string;
+  contactPreference?: "sms" | "email";
+  invitedPhone?: string;
   invitedEmail?: string;
+  allowClosedNameReuse?: boolean;
   status?: "pending" | "sent" | "accepted" | "declined";
 }): Promise<z.infer<typeof townInviteRowSchema>> {
   const invitedBusiness = input.invitedBusiness.trim();
   const category = input.category.trim() || "other";
+  const inviteCode = safeInviteCode(input.inviteCode);
+  const contactPreference = input.contactPreference === "sms" || input.contactPreference === "email"
+    ? input.contactPreference
+    : undefined;
+  const invitedPhone = input.invitedPhone?.trim() || undefined;
   const status = safeInviteStatus(input.status ?? "pending");
   const invitedEmail = input.invitedEmail?.trim() || undefined;
+  if (!input.allowClosedNameReuse) {
+    const closedConflict = await hasClosedBusinessNameConflict({
+      townId: input.townId,
+      invitedBusiness,
+    });
+    if (closedConflict) {
+      throw new Error("Closed business name reuse requires town admin confirmation.");
+    }
+  }
   if (getStorageMode() === "supabase") {
     const supabase = getSupabaseAdminClient();
     const table = (name: string): any => supabase.from(name as never);
@@ -640,6 +772,9 @@ export async function createTownInvite(input: {
         invited_business: invitedBusiness,
         invited_by_brand_ref: input.invitedByBrandRef,
         category,
+        invite_code: inviteCode,
+        contact_preference: contactPreference ?? null,
+        invited_phone: invitedPhone ?? null,
         invited_email: invitedEmail ?? null,
         status,
       })
@@ -659,6 +794,9 @@ export async function createTownInvite(input: {
     invitedBusiness,
     invitedByBrandRef: input.invitedByBrandRef,
     category,
+    inviteCode,
+    contactPreference,
+    invitedPhone,
     invitedEmail,
     status,
     createdAt: new Date().toISOString(),
@@ -690,8 +828,172 @@ export async function listTownInvites(input: {
   const rows = await readLocalArray(localTownInvitesPath(), townInviteRowSchema);
   return rows
     .filter((row) => row.townRef === input.townId)
+    .map((row) =>
+      townInviteRowSchema.parse({
+        ...row,
+        inviteCode: normalizeInviteCode(row.inviteCode ?? row.id.slice(0, 12)),
+      }),
+    )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, max);
+}
+
+export async function findTownInviteByCode(input: {
+  townId: string;
+  code: string;
+}): Promise<z.infer<typeof townInviteRowSchema> | null> {
+  const normalizedCode = normalizeInviteCode(input.code);
+  if (!normalizedCode) {
+    return null;
+  }
+  if (getStorageMode() === "supabase") {
+    const supabase = getSupabaseAdminClient();
+    const table = (name: string): any => supabase.from(name as never);
+    const { data, error } = await table("town_invites")
+      .select("*")
+      .eq("town_ref", input.townId)
+      .ilike("invite_code", normalizedCode)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    if (!data) {
+      return null;
+    }
+    return toTownInviteRow(data as SupabaseTownInviteRow);
+  }
+  const rows = await readLocalArray(localTownInvitesPath(), townInviteRowSchema);
+  const found = rows.find((row) => {
+    if (row.townRef !== input.townId) {
+      return false;
+    }
+    const rowCode = normalizeInviteCode(row.inviteCode ?? row.id.slice(0, 12));
+    return rowCode === normalizedCode;
+  });
+  if (!found) {
+    return null;
+  }
+  return townInviteRowSchema.parse({
+    ...found,
+    inviteCode: normalizeInviteCode(found.inviteCode ?? found.id.slice(0, 12)),
+  });
+}
+
+export async function updateTownInvite(input: {
+  inviteId: string;
+  updates: {
+    invitedBusiness?: string;
+    contactPreference?: "sms" | "email";
+    invitedPhone?: string | null;
+    invitedEmail?: string | null;
+    inviteCode?: string;
+    status?: "pending" | "sent" | "accepted" | "declined";
+  };
+}): Promise<z.infer<typeof townInviteRowSchema> | null> {
+  const nextBusiness = input.updates.invitedBusiness?.trim();
+  const nextContactPreference =
+    input.updates.contactPreference === "sms" || input.updates.contactPreference === "email"
+      ? input.updates.contactPreference
+      : undefined;
+  const nextInviteCode = input.updates.inviteCode ? safeInviteCode(input.updates.inviteCode) : undefined;
+  const nextPhone = input.updates.invitedPhone === null ? null : input.updates.invitedPhone?.trim() || undefined;
+  const nextEmail = input.updates.invitedEmail === null ? null : input.updates.invitedEmail?.trim() || undefined;
+  const nextStatus = input.updates.status ? safeInviteStatus(input.updates.status) : undefined;
+
+  if (getStorageMode() === "supabase") {
+    const supabase = getSupabaseAdminClient();
+    const table = (name: string): any => supabase.from(name as never);
+    const patch: Record<string, unknown> = {};
+    if (nextBusiness) patch.invited_business = nextBusiness;
+    if (nextContactPreference) patch.contact_preference = nextContactPreference;
+    if (input.updates.invitedPhone !== undefined) patch.invited_phone = nextPhone ?? null;
+    if (input.updates.invitedEmail !== undefined) patch.invited_email = nextEmail ?? null;
+    if (nextInviteCode) patch.invite_code = nextInviteCode;
+    if (nextStatus) patch.status = nextStatus;
+    if (Object.keys(patch).length === 0) {
+      const { data, error } = await table("town_invites").select("*").eq("id", input.inviteId).maybeSingle();
+      if (error) {
+        throw error;
+      }
+      return data ? toTownInviteRow(data as SupabaseTownInviteRow) : null;
+    }
+    const { data, error } = await table("town_invites")
+      .update(patch)
+      .eq("id", input.inviteId)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    return data ? toTownInviteRow(data as SupabaseTownInviteRow) : null;
+  }
+
+  const filePath = localTownInvitesPath();
+  await ensureDir(path.dirname(filePath));
+  const rows = await readLocalArray(filePath, townInviteRowSchema);
+  const index = rows.findIndex((row) => row.id === input.inviteId);
+  if (index < 0) {
+    return null;
+  }
+  const merged = townInviteRowSchema.parse({
+    ...rows[index],
+    invitedBusiness: nextBusiness ?? rows[index].invitedBusiness,
+    contactPreference: nextContactPreference ?? rows[index].contactPreference,
+    invitedPhone: input.updates.invitedPhone !== undefined ? nextPhone ?? undefined : rows[index].invitedPhone,
+    invitedEmail: input.updates.invitedEmail !== undefined ? nextEmail ?? undefined : rows[index].invitedEmail,
+    inviteCode: nextInviteCode ?? rows[index].inviteCode ?? safeInviteCode(rows[index].id),
+    status: nextStatus ?? rows[index].status,
+  });
+  rows[index] = merged;
+  await atomicWriteJson(filePath, rows.slice(-8000));
+  return merged;
+}
+
+export async function resolveInviterBrandByRef(input: {
+  brandRef: string;
+}): Promise<{ ownerId: string; brandId: string; businessName: string; status: BrandLifecycleStatus } | null> {
+  if (getStorageMode() === "supabase") {
+    const supabase = getSupabaseAdminClient();
+    const table = (name: string): any => supabase.from(name as never);
+    const { data, error } = await table("brands")
+      .select("id, owner_id, brand_id, business_name, status")
+      .eq("id", input.brandRef)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    const row = (data ?? null) as {
+      owner_id?: string;
+      brand_id?: string;
+      business_name?: string;
+      status?: string | null;
+    } | null;
+    if (!row?.owner_id || !row?.brand_id) {
+      return null;
+    }
+    return {
+      ownerId: row.owner_id,
+      brandId: row.brand_id,
+      businessName: typeof row.business_name === "string" ? row.business_name : row.brand_id,
+      status: safeLifecycleStatus(row.status),
+    };
+  }
+  const parsed = parseLocalBrandRef(input.brandRef);
+  if (!parsed) {
+    return null;
+  }
+  const brand = await getAdapter().getBrand(parsed.ownerId, parsed.brandId);
+  if (!brand) {
+    return null;
+  }
+  return {
+    ownerId: parsed.ownerId,
+    brandId: brand.brandId,
+    businessName: brand.businessName,
+    status: safeLifecycleStatus(brand.status),
+  };
 }
 
 export async function listTownPartners(input: {
@@ -756,6 +1058,7 @@ export function townInviteMessage(input: {
   townName: string;
   invitedBusiness: string;
   invitedByBusiness: string;
+  joinUrl?: string;
 }): string {
   return [
     `Hi ${input.invitedBusiness},`,
@@ -767,9 +1070,12 @@ export function townInviteMessage(input: {
     "It is a simple daily assistant built to help local owners stay busy in real life.",
     "",
     `Town: ${input.townName}`,
+    input.joinUrl ? `Join link: ${input.joinUrl}` : "",
     "",
     "If you'd like, we can share a short walkthrough.",
-  ].join("\n");
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
 }
 
 export async function recordTownSuccessSignal(input: {

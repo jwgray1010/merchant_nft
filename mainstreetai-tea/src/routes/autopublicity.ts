@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requirePlan } from "../billing/requirePlan";
-import { brandIdSchema } from "../schemas/brandSchema";
+import { brandIdSchema, brandLifecycleStatusFor } from "../schemas/brandSchema";
 import { autopublicityRequestSchema } from "../schemas/autopublicitySchema";
 import { getOwnerConfidenceForBrand, recordOwnerProgressAction } from "../services/ownerConfidenceService";
 import { getAdapter } from "../storage/getAdapter";
@@ -57,6 +57,11 @@ router.post("/", async (req, res, next) => {
     const brand = await getAdapter().getBrand(ownerId, parsedBrand.brandId);
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrand.brandId}' was not found` });
+    }
+    if (brandLifecycleStatusFor(brand) === "closed") {
+      return res.status(409).json({
+        error: "This business is marked closed. Reactivate it in /admin/businesses before posting.",
+      });
     }
     const planCheck = await requirePlan(ownerId, parsedBrand.brandId, "starter");
     if (!planCheck.ok) {

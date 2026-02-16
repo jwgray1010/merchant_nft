@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { runPrompt } from "../ai/runPrompt";
-import type { BrandProfile } from "../schemas/brandSchema";
+import { brandLifecycleStatusFor, type BrandProfile } from "../schemas/brandSchema";
 import {
   communityEventFormSubmitSchema,
   communityEventNeedSchema,
@@ -33,6 +33,7 @@ type SupabaseBrandRefRow = {
   id: string;
   owner_id: string;
   brand_id: string;
+  status: string | null;
   town_ref: string | null;
 };
 
@@ -513,13 +514,17 @@ async function resolveBrandRefContext(input: {
   if (!brand) {
     return null;
   }
+  if (brandLifecycleStatusFor(brand) !== "active") {
+    return null;
+  }
   if (getStorageMode() === "supabase") {
     const supabase = getSupabaseAdminClient();
     const table = (name: string): any => supabase.from(name as never);
     const { data, error } = await table("brands")
-      .select("id, owner_id, brand_id, town_ref")
+      .select("id, owner_id, brand_id, status, town_ref")
       .eq("owner_id", input.ownerId)
       .eq("brand_id", input.brandId)
+      .eq("status", "active")
       .maybeSingle();
     if (error) {
       throw error;

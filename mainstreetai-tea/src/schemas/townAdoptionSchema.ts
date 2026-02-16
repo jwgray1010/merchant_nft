@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { brandContactPreferenceSchema } from "./brandSchema";
 
 export const townAmbassadorRoleSchema = z.enum([
   "ambassador",
@@ -24,8 +25,11 @@ export const townInviteStatusSchema = z.enum([
 export const townInviteCreateSchema = z.object({
   townId: z.string().min(1),
   businessName: z.string().min(1),
+  phone: z.string().trim().min(7).max(40).optional(),
   email: z.string().email().optional(),
-  category: z.string().min(1),
+  category: z.string().min(1).default("other"),
+  contactPreference: brandContactPreferenceSchema.optional(),
+  confirmClosedReuse: z.boolean().optional(),
 });
 
 export const townInviteRowSchema = z.object({
@@ -34,6 +38,9 @@ export const townInviteRowSchema = z.object({
   invitedBusiness: z.string().min(1),
   invitedByBrandRef: z.string().min(1),
   category: z.string().min(1),
+  inviteCode: z.string().min(4).optional(),
+  contactPreference: brandContactPreferenceSchema.optional(),
+  invitedPhone: z.string().trim().min(7).max(40).optional(),
   invitedEmail: z.string().email().optional(),
   status: townInviteStatusSchema.default("pending"),
   createdAt: z.string().datetime({ offset: true }),

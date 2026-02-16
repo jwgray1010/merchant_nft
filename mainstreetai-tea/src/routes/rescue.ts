@@ -78,6 +78,9 @@ router.post("/", async (req, res, next) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Rescue generation failed";
+    if (message.toLowerCase().includes("marked as closed")) {
+      return res.status(409).json({ error: message });
+    }
     if (message.toLowerCase().includes("not found")) {
       return res.status(404).json({ error: message });
     }

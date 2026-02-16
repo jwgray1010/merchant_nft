@@ -43,6 +43,10 @@ async function processDueAutopilot(): Promise<{
         skipped += 1;
         continue;
       }
+      if (message.toLowerCase().includes("closed")) {
+        skipped += 1;
+        continue;
+      }
       failed += 1;
     }
   }

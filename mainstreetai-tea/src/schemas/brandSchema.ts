@@ -25,6 +25,10 @@ export const brandSupportLevelSchema = z.enum([
   "just_starting",
 ]);
 
+export const brandLifecycleStatusSchema = z.enum(["active", "inactive", "closed"]);
+
+export const brandContactPreferenceSchema = z.enum(["sms", "email"]);
+
 export const brandLocalTrustStyleSchema = z.enum([
   "mainstreet",
   "network",
@@ -75,10 +79,18 @@ export const brandProfileSchema = z.object({
   brandId: brandIdSchema,
   businessName: z.string().min(1),
   location: z.string().min(1),
+  status: brandLifecycleStatusSchema.optional(),
+  statusReason: z.string().trim().min(1).max(240).optional(),
+  statusUpdatedAt: z.string().datetime({ offset: true }).optional(),
+  statusUpdatedBy: z.string().min(1).optional(),
   townRef: z.string().min(1).optional(),
   supportLevel: brandSupportLevelSchema.default("steady"),
   localTrustEnabled: z.boolean().default(true),
   localTrustStyle: brandLocalTrustStyleSchema.default("mainstreet"),
+  contactPreference: brandContactPreferenceSchema.optional(),
+  contactPhone: z.string().trim().min(7).max(40).optional(),
+  contactEmail: z.string().email().optional(),
+  eventContactPreference: brandContactPreferenceSchema.optional(),
   serviceTags: z.array(brandServiceTagSchema).default([]),
   type: businessTypeSchema,
   voice: z.string().min(1),
@@ -103,6 +115,7 @@ export const brandRegistryItemSchema = z.object({
   businessName: z.string().min(1),
   location: z.string().min(1),
   type: businessTypeSchema,
+  status: brandLifecycleStatusSchema.optional(),
 });
 
 export const brandRegistrySchema = z.array(brandRegistryItemSchema);
@@ -111,5 +124,18 @@ export type BrandProfile = z.infer<typeof brandProfileSchema>;
 export type BrandRegistryItem = z.infer<typeof brandRegistryItemSchema>;
 export type CommunityVibeProfile = z.infer<typeof communityVibeProfileSchema>;
 export type BrandSupportLevel = z.infer<typeof brandSupportLevelSchema>;
+export type BrandLifecycleStatus = z.infer<typeof brandLifecycleStatusSchema>;
+export type BrandContactPreference = z.infer<typeof brandContactPreferenceSchema>;
 export type BrandLocalTrustStyle = z.infer<typeof brandLocalTrustStyleSchema>;
 export type BrandServiceTag = z.infer<typeof brandServiceTagSchema>;
+
+export function brandLifecycleStatusFor(
+  brand: Pick<BrandProfile, "status"> | null | undefined,
+): BrandLifecycleStatus {
+  const parsed = brandLifecycleStatusSchema.safeParse(brand?.status);
+  return parsed.success ? parsed.data : "active";
+}
+
+export function isBrandVisibleInTownNetwork(status: BrandLifecycleStatus): boolean {
+  return status === "active";
+}

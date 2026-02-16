@@ -47,7 +47,11 @@ import { getFirstWinStatusForBrand } from "../services/firstWinService";
 import { buildPresenceSignals } from "../presence/presenceSystem";
 import { buildCommunityPresenceLineForBrand } from "../services/communityEventsService";
 import { resolveTownProfileForTown, townHubHeaderLine } from "../services/townProfileService";
-import type { BrandProfile } from "../schemas/brandSchema";
+import {
+  brandLifecycleStatusFor,
+  type BrandLifecycleStatus,
+  type BrandProfile,
+} from "../schemas/brandSchema";
 import { townGraphCategorySchema, type TownGraphCategory } from "../schemas/townGraphSchema";
 import type { LocationRecord } from "../schemas/locationSchema";
 import type { AutopilotSettings } from "../schemas/autopilotSettingsSchema";
@@ -61,6 +65,7 @@ type BrandSummary = {
   businessName: string;
   location: string;
   type: string;
+  status: BrandLifecycleStatus;
 };
 
 type EasyContext = {
@@ -116,6 +121,7 @@ type EasyContext = {
     poweredByLine: string;
     communityFocus?: string;
   } | null;
+  monthlyLifecyclePrompt?: string;
   recentWinMoment?: string;
 };
 
@@ -188,22 +194,25 @@ async function listAccessibleBrands(actorUserId: string): Promise<BrandSummary[]
   const adapter = getAdapter();
   if (getStorageMode() === "local") {
     const brands = await adapter.listBrands(actorUserId);
-    return brands.map((brand) => ({
-      brandId: brand.brandId,
-      businessName: brand.businessName,
-      location: brand.location,
-      type: brand.type,
-    }));
+    return brands
+      .map((brand) => ({
+        brandId: brand.brandId,
+        businessName: brand.businessName,
+        location: brand.location,
+        type: brand.type,
+        status: brandLifecycleStatusFor(brand),
+      }))
+      .filter((brand) => brand.status !== "closed");
   }
 
   const supabase = getSupabaseAdminClient();
   const table = (name: string): any => supabase.from(name as never);
   const [owned, team] = await Promise.all([
     table("brands")
-      .select("brand_id, business_name, location, type")
+      .select("brand_id, business_name, location, type, status")
       .eq("owner_id", actorUserId),
     table("team_members")
-      .select("brands!inner(brand_id, business_name, location, type)")
+      .select("brands!inner(brand_id, business_name, location, type, status)")
       .eq("user_id", actorUserId),
   ]);
 
@@ -225,6 +234,9 @@ async function listAccessibleBrands(actorUserId: string): Promise<BrandSummary[]
       businessName: typeof row.business_name === "string" ? row.business_name : brandId,
       location: typeof row.location === "string" ? row.location : "",
       type: typeof row.type === "string" ? row.type : "other",
+      status: brandLifecycleStatusFor({
+        status: typeof row.status === "string" ? row.status : undefined,
+      }),
     });
   }
   for (const row of (team.data ?? []) as Array<Record<string, unknown>>) {
@@ -238,10 +250,15 @@ async function listAccessibleBrands(actorUserId: string): Promise<BrandSummary[]
       businessName: typeof brands?.business_name === "string" ? brands.business_name : brandId,
       location: typeof brands?.location === "string" ? brands.location : "",
       type: typeof brands?.type === "string" ? brands.type : "other",
+      status: brandLifecycleStatusFor({
+        status: typeof brands?.status === "string" ? brands.status : undefined,
+      }),
     });
   }
 
-  return Array.from(merged.values()).sort((a, b) => a.businessName.localeCompare(b.businessName));
+  return Array.from(merged.values())
+    .filter((brand) => brand.status !== "closed")
+    .sort((a, b) => a.businessName.localeCompare(b.businessName));
 }
 
 function withSelection(
@@ -527,6 +544,10 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
   const bestPostTimeLabel =
     timingModel?.model.bestTimeLabel ??
     `${String(autopilotSettings?.hour ?? 15).padStart(2, "0")}:00`;
+  const monthlyLifecyclePrompt =
+    townRole === "TOWN_ADMIN" && new Date().getDate() <= 7
+      ? "Any businesses closed or temporarily inactive this month?"
+      : undefined;
 
   return {
     actorUserId: authUser.id,
@@ -581,6 +602,7 @@ async function resolveContext(req: Request, res: Response): Promise<EasyContext 
       activeSessionId: firstWinStatus.activeSession?.id,
     },
     townIdentity,
+    monthlyLifecyclePrompt,
     recentWinMoment: winMoments[0]?.message,
   };
 }
@@ -625,8 +647,10 @@ function renderHeader(context: EasyContext, currentPath: string): string {
   const brandOptions = context.brands
     .map((brand) => {
       const selected = brand.brandId === context.selectedBrandId ? "selected" : "";
+      const label =
+        brand.status === "inactive" ? `${brand.businessName} (inactive)` : brand.businessName;
       return `<option value="${escapeHtml(brand.brandId)}" ${selected}>${escapeHtml(
-        brand.businessName,
+        label,
       )}</option>`;
     })
     .join("");
@@ -1213,6 +1237,7 @@ function renderDailyPackSection(
   signUrl: string,
   autopublicityUrl: string,
   eventInterestEndpoint: string,
+  businessProfileEndpoint: string,
 ): string {
   const localBoostSection = pack.localBoost
     ? `<article class="result-card">
@@ -1324,6 +1349,7 @@ function renderDailyPackSection(
             data-event-id="${escapeHtml(pack.communityOpportunity.eventId)}"
             data-interest-type="${escapeHtml(pack.communityOpportunity.suggestedInterestType)}"
             data-endpoint="${escapeHtml(eventInterestEndpoint)}"
+            data-profile-endpoint="${escapeHtml(businessProfileEndpoint)}"
           >I Can Help</button>
           <button class="secondary-button community-later-btn" type="button">Maybe Later</button>
           ${
@@ -1340,6 +1366,27 @@ function renderDailyPackSection(
           }
         </div>
         <p id="daily-community-status" class="muted"></p>
+        <div id="daily-community-profile-prompt" class="output-card" style="display:none;margin-top:10px;">
+          <p class="output-label">One quick setup for event requests</p>
+          <label class="checkbox-row"><input id="community-tag-catering" type="checkbox" /> Catering</label>
+          <label class="checkbox-row"><input id="community-tag-drinks" type="checkbox" /> Drinks</label>
+          <label class="checkbox-row"><input id="community-tag-fundraising" type="checkbox" /> Sponsorship / Fundraising</label>
+          <label class="field-label">Preferred contact for event requests
+            <select id="community-event-contact">
+              <option value="">Choose one</option>
+              <option value="email">Email</option>
+              <option value="sms">SMS</option>
+            </select>
+          </label>
+          <label class="field-label">Email
+            <input id="community-event-email" type="email" placeholder="owner@example.com" />
+          </label>
+          <label class="field-label">Phone
+            <input id="community-event-phone" type="tel" placeholder="(555) 123-4567" />
+          </label>
+          <button id="daily-community-save-profile" class="secondary-button" type="button">Save event preferences</button>
+          <p id="daily-community-profile-status" class="muted"></p>
+        </div>
       </article>`
     : "";
   const firstWinStepsSection = pack.firstWin?.active
@@ -1513,6 +1560,7 @@ router.get("/", async (req, res, next) => {
     const signUrl = withSelection("/app/sign/today", context);
     const autopublicityUrl = withSelection("/app/autopublicity", context);
     const eventInterestEndpoint = withSelection("/api/events/interest", context);
+    const businessProfileEndpoint = withSelection("/api/town/business-profile", context);
     const cameraModeUrl = withSelection("/app/camera", context);
     const pulsePresenceLine = communityPresenceLine
       ? communityPresenceLine
@@ -1539,6 +1587,18 @@ router.get("/", async (req, res, next) => {
     const momentumMessage = context.townMilestone?.momentumLine
       ? `<p class="muted" style="margin-top:6px;">${escapeHtml(context.townMilestone.momentumLine)}</p>`
       : "";
+    const lifecycleStatus = context.selectedBrand ? brandLifecycleStatusFor(context.selectedBrand) : "active";
+    const inactiveNotice =
+      lifecycleStatus === "inactive"
+        ? `<p class="muted" style="margin-top:8px;"><strong>This business is marked inactive.</strong> It stays out of town recommendations until reactivated.</p>`
+        : "";
+    const monthlyLifecycleReviewCard = context.monthlyLifecyclePrompt
+      ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
+          <h3>Monthly Chamber Check</h3>
+          <p class="muted">${escapeHtml(context.monthlyLifecyclePrompt)}</p>
+          <a class="secondary-button" href="/admin/businesses">Review business lifecycle</a>
+        </section>`
+      : "";
     const startFirstWin = context.firstWin.needsFirstWin;
     const dailyHeading = startFirstWin ? "Let's get your first win today." : "Check in with our town";
     const dailySubheading = startFirstWin
@@ -1564,12 +1624,19 @@ router.get("/", async (req, res, next) => {
             ${confidenceLine}
             ${launchFlowMessage}
             ${momentumMessage}
+            ${inactiveNotice}
             <p class="muted" style="margin-top:8px;">Made for local owners. Built for real life.</p>
             ${quickActionButtons}
           </section>
           ${
             latest
-              ? renderDailyPackSection(latest.output, signUrl, autopublicityUrl, eventInterestEndpoint)
+              ? renderDailyPackSection(
+                  latest.output,
+                  signUrl,
+                  autopublicityUrl,
+                  eventInterestEndpoint,
+                  businessProfileEndpoint,
+                )
               : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">No daily pack yet. Ask an owner to tap "${escapeHtml(
                   runDailyLabel,
                 )}".</p></section>`
@@ -1586,6 +1653,7 @@ router.get("/", async (req, res, next) => {
             ${confidenceLine}
             ${launchFlowMessage}
             ${momentumMessage}
+            ${inactiveNotice}
             ${firstWinNote}
             <details style="margin-top:10px;">
               <summary class="muted">Optional note for today</summary>
@@ -1599,7 +1667,13 @@ router.get("/", async (req, res, next) => {
           <section id="daily-pack-wrapper">
             ${
               latest
-                ? renderDailyPackSection(latest.output, signUrl, autopublicityUrl, eventInterestEndpoint)
+                ? renderDailyPackSection(
+                    latest.output,
+                    signUrl,
+                    autopublicityUrl,
+                    eventInterestEndpoint,
+                    businessProfileEndpoint,
+                  )
                 : `<section class="rounded-2xl p-6 shadow-sm bg-white"><p class="muted">Tap "${escapeHtml(
                     runDailyLabel,
                   )}" to create today's special, post, and sign.</p></section>`
@@ -1625,12 +1699,14 @@ router.get("/", async (req, res, next) => {
                   <p class="muted">After today's plan runs, your quick check-in will appear here.</p>
                 </section>`
           }
+          ${monthlyLifecycleReviewCard}
           <script>
             const dailyEndpoint = ${JSON.stringify(withSelection("/api/daily", context))};
             const checkinEndpoint = ${JSON.stringify(withSelection("/api/daily/checkin", context))};
             const signUrl = ${JSON.stringify(signUrl)};
             const autopublicityUrl = ${JSON.stringify(autopublicityUrl)};
             const eventInterestEndpoint = ${JSON.stringify(eventInterestEndpoint)};
+            const businessProfileEndpoint = ${JSON.stringify(businessProfileEndpoint)};
             const firstWinMode = ${JSON.stringify(startFirstWin)};
             function esc(value) {
               return String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
@@ -1702,12 +1778,23 @@ router.get("/", async (req, res, next) => {
                       ? '<div class="divider"><p id="daily-community-message" class="output-value">' + esc(pack.communityOpportunity.suggestedMessage || "") + '</p></div>'
                       : '') +
                     '<div class="button-stack" style="margin-top:10px;">' +
-                      '<button class="primary-button community-interest-btn" type="button" data-event-id="' + esc(pack.communityOpportunity.eventId || "") + '" data-interest-type="' + esc(pack.communityOpportunity.suggestedInterestType || "assist") + '" data-endpoint="' + esc(eventInterestEndpoint) + '">I Can Help</button>' +
+                      '<button class="primary-button community-interest-btn" type="button" data-event-id="' + esc(pack.communityOpportunity.eventId || "") + '" data-interest-type="' + esc(pack.communityOpportunity.suggestedInterestType || "assist") + '" data-endpoint="' + esc(eventInterestEndpoint) + '" data-profile-endpoint="' + esc(businessProfileEndpoint) + '">I Can Help</button>' +
                       '<button class="secondary-button community-later-btn" type="button">Maybe Later</button>' +
                       (pack.communityOpportunity.suggestedMessage ? '<button class="secondary-button" data-copy-target="daily-community-message" type="button">Send Message</button>' : '') +
                       (pack.communityOpportunity.signupUrl ? '<a class="secondary-button" href="' + esc(pack.communityOpportunity.signupUrl) + '" target="_blank" rel="noopener">Open Signup</a>' : '') +
                     '</div>' +
                     '<p id="daily-community-status" class="muted"></p>' +
+                    '<div id="daily-community-profile-prompt" class="output-card" style="display:none;margin-top:10px;">' +
+                      '<p class="output-label">One quick setup for event requests</p>' +
+                      '<label class="checkbox-row"><input id="community-tag-catering" type="checkbox" /> Catering</label>' +
+                      '<label class="checkbox-row"><input id="community-tag-drinks" type="checkbox" /> Drinks</label>' +
+                      '<label class="checkbox-row"><input id="community-tag-fundraising" type="checkbox" /> Sponsorship / Fundraising</label>' +
+                      '<label class="field-label">Preferred contact for event requests<select id="community-event-contact"><option value="">Choose one</option><option value="email">Email</option><option value="sms">SMS</option></select></label>' +
+                      '<label class="field-label">Email<input id="community-event-email" type="email" placeholder="owner@example.com" /></label>' +
+                      '<label class="field-label">Phone<input id="community-event-phone" type="tel" placeholder="(555) 123-4567" /></label>' +
+                      '<button id="daily-community-save-profile" class="secondary-button" type="button">Save event preferences</button>' +
+                      '<p id="daily-community-profile-status" class="muted"></p>' +
+                    '</div>' +
                   '</article>'
                 : '';
               const firstWinStepsSection = pack.firstWin?.active
@@ -1768,11 +1855,73 @@ router.get("/", async (req, res, next) => {
               }
               return base + " Reduced-cost Starter path is available in Billing.";
             }
+            function applyCommunityProfilePrompt(prompt, profileEndpoint) {
+              const wrap = document.getElementById("daily-community-profile-prompt");
+              if (!wrap || !prompt) return;
+              const tags = Array.isArray(prompt.currentServiceTags) ? prompt.currentServiceTags : [];
+              const setChecked = (id, key) => {
+                const node = document.getElementById(id);
+                if (!node) return;
+                node.checked = tags.includes(key);
+              };
+              setChecked("community-tag-catering", "catering");
+              setChecked("community-tag-drinks", "drinks");
+              setChecked("community-tag-fundraising", "fundraising");
+              const eventContact = document.getElementById("community-event-contact");
+              const eventEmail = document.getElementById("community-event-email");
+              const eventPhone = document.getElementById("community-event-phone");
+              if (eventContact) {
+                eventContact.value = prompt.currentEventContactPreference || "";
+              }
+              if (eventEmail) {
+                eventEmail.value = prompt.currentContactEmail || "";
+              }
+              if (eventPhone) {
+                eventPhone.value = prompt.currentContactPhone || "";
+              }
+              const saveBtn = document.getElementById("daily-community-save-profile");
+              if (saveBtn) {
+                saveBtn.setAttribute("data-endpoint", profileEndpoint || businessProfileEndpoint);
+              }
+              const note = document.getElementById("daily-community-profile-status");
+              if (note) note.textContent = "Set service tags + event contact so requests stay simple.";
+              wrap.style.display = "block";
+            }
+            async function saveCommunityProfile(button) {
+              const endpoint = button?.getAttribute("data-endpoint") || businessProfileEndpoint;
+              const status = document.getElementById("daily-community-profile-status");
+              const tags = [];
+              if (document.getElementById("community-tag-catering")?.checked) tags.push("catering");
+              if (document.getElementById("community-tag-drinks")?.checked) tags.push("drinks");
+              if (document.getElementById("community-tag-fundraising")?.checked) tags.push("fundraising");
+              const eventContactPreference = (document.getElementById("community-event-contact")?.value || "").trim();
+              const contactEmail = (document.getElementById("community-event-email")?.value || "").trim();
+              const contactPhone = (document.getElementById("community-event-phone")?.value || "").trim();
+              if (status) status.textContent = "Saving event preferences...";
+              const response = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  serviceTags: tags,
+                  eventContactPreference: eventContactPreference || undefined,
+                  contactPreference: eventContactPreference || undefined,
+                  contactEmail: contactEmail || undefined,
+                  contactPhone: contactPhone || undefined,
+                }),
+              });
+              const json = await response.json().catch(() => ({}));
+              if (!response.ok) {
+                if (status) status.textContent = json.error || "Could not save event preferences.";
+                return;
+              }
+              if (status) status.textContent = "Saved. Future event requests will use this setup.";
+            }
             async function submitCommunityInterest(button) {
               const status = document.getElementById("daily-community-status");
               const eventId = button?.getAttribute("data-event-id") || "";
               const interestType = button?.getAttribute("data-interest-type") || "assist";
               const endpoint = button?.getAttribute("data-endpoint") || eventInterestEndpoint;
+              const profileEndpoint = button?.getAttribute("data-profile-endpoint") || businessProfileEndpoint;
               if (!eventId) {
                 if (status) status.textContent = "Event details are missing.";
                 return;
@@ -1792,6 +1941,10 @@ router.get("/", async (req, res, next) => {
               if (json.message && document.getElementById("daily-community-message")) {
                 document.getElementById("daily-community-message").textContent = json.message;
               }
+              if (json.profilePrompt) {
+                applyCommunityProfilePrompt(json.profilePrompt, profileEndpoint);
+                if (status) status.textContent = "Great - we can help. One quick event setup is ready below.";
+              }
             }
             function setupCommunityOpportunityActions() {
               document.querySelectorAll(".community-interest-btn").forEach((button) => {
@@ -1809,6 +1962,11 @@ router.get("/", async (req, res, next) => {
                   }
                 });
               });
+              const saveButton = document.getElementById("daily-community-save-profile");
+              if (saveButton && saveButton.getAttribute("data-bound") !== "1") {
+                saveButton.setAttribute("data-bound", "1");
+                saveButton.addEventListener("click", () => saveCommunityProfile(saveButton));
+              }
             }
             async function runDailyPack() {
               const status = document.getElementById("daily-status");
@@ -2772,10 +2930,55 @@ router.get("/autopublicity", async (req, res, next) => {
     }
     const autopublicityEndpoint = withSelection("/api/autopublicity", context);
     const uploadEndpoint = withSelection("/api/media/upload-url", context);
+    const profileEndpoint = withSelection("/api/town/business-profile", context);
     const fromDaily = optionalText(req.query.fromDaily) === "1";
     const fromDailyNote = fromDaily
       ? `<p class="muted" style="margin-top:6px;">Using your daily workflow: upload media and post in one step.</p>`
       : "";
+    const integrations =
+      context.ownerUserId && context.selectedBrandId
+        ? await getAdapter().listIntegrations(context.ownerUserId, context.selectedBrandId).catch(() => [])
+        : [];
+    const hasBufferConnected = integrations.some(
+      (entry) => entry.provider === "buffer" && entry.status === "connected",
+    );
+    const hasGoogleConnected = integrations.some(
+      (entry) => entry.provider === "google_business" && entry.status === "connected",
+    );
+    const selectedBrand = context.selectedBrand;
+    const contactReady =
+      Boolean(selectedBrand?.contactPreference) &&
+      ((selectedBrand?.contactPreference === "email" && Boolean(selectedBrand.contactEmail)) ||
+        (selectedBrand?.contactPreference === "sms" && Boolean(selectedBrand.contactPhone)));
+    const triggerOnePrompt =
+      selectedBrand && (!contactReady || !hasBufferConnected || !hasGoogleConnected)
+        ? `<section class="rounded-2xl p-6 shadow-sm bg-white">
+            <h3>Before first Post Everywhere</h3>
+            <p class="muted">Optional: connect Facebook/Instagram/Google. Required: confirm one contact method for login links.</p>
+            <div class="row" style="margin-bottom:10px;">
+              <a class="secondary-button" href="/admin/integrations?brandId=${encodeURIComponent(
+                context.selectedBrandId ?? "",
+              )}">Connect channels</a>
+            </div>
+            <form id="jit-contact-form" style="display:grid;gap:8px;">
+              <label class="field-label">Preferred contact
+                <select id="jit-contact-preference">
+                  <option value="">Choose one</option>
+                  <option value="email" ${selectedBrand.contactPreference === "email" ? "selected" : ""}>Email</option>
+                  <option value="sms" ${selectedBrand.contactPreference === "sms" ? "selected" : ""}>SMS</option>
+                </select>
+              </label>
+              <label class="field-label">Email
+                <input id="jit-contact-email" type="email" value="${escapeHtml(selectedBrand.contactEmail ?? "")}" placeholder="owner@example.com" />
+              </label>
+              <label class="field-label">Phone
+                <input id="jit-contact-phone" type="tel" value="${escapeHtml(selectedBrand.contactPhone ?? "")}" placeholder="(555) 123-4567" />
+              </label>
+              <button class="secondary-button" type="submit">Save contact method</button>
+              <p id="jit-contact-status" class="muted"></p>
+            </form>
+          </section>`
+        : "";
     const body = `<section class="rounded-2xl p-6 shadow-sm bg-white">
       <h2 class="text-xl">Post Everywhere</h2>
       <p class="muted">Upload photo/video once. AI adapts captions for each platform.</p>
@@ -2807,6 +3010,7 @@ router.get("/autopublicity", async (req, res, next) => {
       </form>
       <p id="autopub-status" class="muted" style="margin-top:8px;"></p>
     </section>
+    ${triggerOnePrompt}
     <section id="autopub-output" class="rounded-2xl p-6 shadow-sm bg-white" style="display:none;">
       <div class="output-card"><p class="output-label">Master caption</p><p id="autopub-master" class="output-value"></p><button class="copy-button" data-copy-target="autopub-master">Copy</button></div>
       <div class="output-card"><p class="output-label">Facebook</p><p id="autopub-facebook-caption" class="output-value"></p><button class="copy-button" data-copy-target="autopub-facebook-caption">Copy</button></div>
@@ -2838,6 +3042,35 @@ router.get("/autopublicity", async (req, res, next) => {
         return label + ": " + (item?.status || "queued") + detail;
       }
       const autopubUploadStatus = document.getElementById("autopub-upload-status");
+      const jitContactForm = document.getElementById("jit-contact-form");
+      jitContactForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const statusNode = document.getElementById("jit-contact-status");
+        const preference = (document.getElementById("jit-contact-preference")?.value || "").trim();
+        const email = (document.getElementById("jit-contact-email")?.value || "").trim();
+        const phone = (document.getElementById("jit-contact-phone")?.value || "").trim();
+        if (!preference) {
+          if (statusNode) statusNode.textContent = "Choose email or SMS.";
+          return;
+        }
+        if (statusNode) statusNode.textContent = "Saving contact method...";
+        const response = await fetch(${JSON.stringify(profileEndpoint)}, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contactPreference: preference,
+            contactEmail: email || undefined,
+            contactPhone: phone || undefined,
+            eventContactPreference: preference,
+          })
+        });
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (statusNode) statusNode.textContent = json.error || "Could not save contact method.";
+          return;
+        }
+        if (statusNode) statusNode.textContent = "Saved. You can continue posting.";
+      });
       document.getElementById("autopub-upload-btn")?.addEventListener("click", async () => {
         const fileInput = document.getElementById("autopub-file");
         const file = fileInput?.files?.[0];
@@ -4448,7 +4681,7 @@ router.get("/town/ambassador", async (req, res, next) => {
               (invite) =>
                 `<li><strong>${escapeHtml(invite.invitedBusiness)}</strong> <span class="muted">(${escapeHtml(
                   invite.status,
-                )})</span></li>`,
+                )}${invite.inviteCode ? ` · code ${escapeHtml(invite.inviteCode)}` : ""})</span></li>`,
             )
             .join("")
         : `<li class="muted">No invites yet.</li>`;
@@ -4493,8 +4726,18 @@ router.get("/town/ambassador", async (req, res, next) => {
             <label class="field-label">Category
               <input name="category" required placeholder="cafe" />
             </label>
+            <label class="field-label">Preferred invite delivery (optional)
+              <select name="contactPreference">
+                <option value="">Choose later</option>
+                <option value="email">Email magic link</option>
+                <option value="sms">Text magic link</option>
+              </select>
+            </label>
             <label class="field-label">Email (optional)
               <input name="email" type="email" placeholder="owner@example.com" />
+            </label>
+            <label class="field-label">Phone (optional)
+              <input name="phone" type="tel" placeholder="(555) 123-4567" />
             </label>
             <button class="primary-button" type="submit">Send local invite</button>
             <p id="town-invite-status" class="muted"></p>
@@ -4535,7 +4778,9 @@ router.get("/town/ambassador", async (req, res, next) => {
             townId: ${JSON.stringify(membership.town.id)},
             businessName: String(fd.get("businessName") || ""),
             category: String(fd.get("category") || ""),
+            contactPreference: String(fd.get("contactPreference") || "").trim() || undefined,
             email: String(fd.get("email") || "").trim() || undefined,
+            phone: String(fd.get("phone") || "").trim() || undefined,
           };
           status.textContent = "Sending invite...";
           try {
@@ -4549,7 +4794,17 @@ router.get("/town/ambassador", async (req, res, next) => {
               status.textContent = json?.error || "Could not send invite.";
               return;
             }
-            status.textContent = "Invite recorded. Thank you for supporting your town.";
+            if (json.joinUrl) {
+              status.textContent = "Invite recorded. Share this link:";
+              const link = document.createElement("a");
+              link.href = String(json.joinUrl);
+              link.target = "_blank";
+              link.rel = "noopener";
+              link.textContent = " " + String(json.joinUrl);
+              status.appendChild(link);
+            } else {
+              status.textContent = "Invite recorded. Thank you for supporting your town.";
+            }
             form.reset();
           } catch (_error) {
             status.textContent = "Could not send invite.";

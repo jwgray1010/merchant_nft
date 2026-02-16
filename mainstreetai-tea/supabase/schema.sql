@@ -27,10 +27,18 @@ create table if not exists public.brands (
   brand_id text not null,
   business_name text not null,
   location text not null,
+  status text not null default 'active' check (status in ('active','inactive','closed')),
+  status_reason text,
+  status_updated_at timestamptz,
+  status_updated_by uuid references auth.users(id) on delete set null,
   town_ref uuid references public.towns(id) on delete set null,
   support_level text not null default 'steady' check (support_level in ('growing_fast','steady','struggling','just_starting')),
   local_trust_enabled boolean not null default true,
   local_trust_style text not null default 'mainstreet' check (local_trust_style in ('mainstreet','network')),
+  contact_preference text check (contact_preference in ('sms','email')),
+  contact_phone text,
+  contact_email text,
+  event_contact_preference text check (event_contact_preference in ('sms','email')),
   service_tags jsonb not null default '[]'::jsonb,
   type text not null,
   voice text not null,
@@ -66,6 +74,30 @@ alter table public.brands
   add column if not exists service_tags jsonb not null default '[]'::jsonb;
 
 alter table public.brands
+  add column if not exists status text not null default 'active';
+
+alter table public.brands
+  add column if not exists status_reason text;
+
+alter table public.brands
+  add column if not exists status_updated_at timestamptz;
+
+alter table public.brands
+  add column if not exists status_updated_by uuid references auth.users(id) on delete set null;
+
+alter table public.brands
+  add column if not exists contact_preference text;
+
+alter table public.brands
+  add column if not exists contact_phone text;
+
+alter table public.brands
+  add column if not exists contact_email text;
+
+alter table public.brands
+  add column if not exists event_contact_preference text;
+
+alter table public.brands
   drop constraint if exists brands_support_level_check;
 
 alter table public.brands
@@ -79,8 +111,32 @@ alter table public.brands
   add constraint brands_local_trust_style_check
   check (local_trust_style in ('mainstreet','network'));
 
+alter table public.brands
+  drop constraint if exists brands_status_check;
+
+alter table public.brands
+  add constraint brands_status_check
+  check (status in ('active','inactive','closed'));
+
+alter table public.brands
+  drop constraint if exists brands_contact_preference_check;
+
+alter table public.brands
+  add constraint brands_contact_preference_check
+  check (contact_preference is null or contact_preference in ('sms','email'));
+
+alter table public.brands
+  drop constraint if exists brands_event_contact_preference_check;
+
+alter table public.brands
+  add constraint brands_event_contact_preference_check
+  check (event_contact_preference is null or event_contact_preference in ('sms','email'));
+
 create unique index if not exists brands_owner_brand_id_unique
   on public.brands(owner_id, brand_id);
+
+create index if not exists brands_town_status_updated_idx
+  on public.brands(town_ref, status, updated_at desc);
 
 create unique index if not exists town_profiles_town_ref_unique
   on public.town_profiles(town_ref);
@@ -233,10 +289,36 @@ create table if not exists public.town_invites (
   invited_business text not null,
   invited_by_brand_ref uuid not null references public.brands(id) on delete cascade,
   category text not null default 'other',
+  invite_code text not null default encode(gen_random_bytes(6), 'hex'),
+  contact_preference text check (contact_preference in ('sms','email')),
+  invited_phone text,
   invited_email text,
   status text not null default 'pending' check (status in ('pending','sent','accepted','declined')),
   created_at timestamptz not null default now()
 );
+
+alter table public.town_invites
+  add column if not exists invite_code text;
+
+update public.town_invites
+set invite_code = substring(replace(id::text, '-', ''), 1, 12)
+where invite_code is null;
+
+alter table public.town_invites
+  alter column invite_code set not null;
+
+alter table public.town_invites
+  add column if not exists contact_preference text;
+
+alter table public.town_invites
+  add column if not exists invited_phone text;
+
+alter table public.town_invites
+  drop constraint if exists town_invites_contact_preference_check;
+
+alter table public.town_invites
+  add constraint town_invites_contact_preference_check
+  check (contact_preference is null or contact_preference in ('sms','email'));
 
 create table if not exists public.town_success_signals (
   id uuid primary key default gen_random_uuid(),
@@ -719,6 +801,12 @@ create index if not exists town_invites_town_created_idx
 
 create index if not exists town_invites_town_status_idx
   on public.town_invites(town_ref, status, created_at desc);
+
+create unique index if not exists town_invites_invite_code_unique
+  on public.town_invites(invite_code);
+
+create index if not exists town_invites_town_code_idx
+  on public.town_invites(town_ref, invite_code);
 
 create index if not exists town_success_signals_town_created_idx
   on public.town_success_signals(town_ref, created_at desc);

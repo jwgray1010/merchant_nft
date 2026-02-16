@@ -2,6 +2,7 @@ import { runPrompt } from "../ai/runPrompt";
 import { requirePlan } from "../billing/requirePlan";
 import { FEATURES } from "../config/featureFlags";
 import { isEmailEnabled, isTwilioEnabled } from "../integrations/env";
+import { brandLifecycleStatusFor } from "../schemas/brandSchema";
 import {
   autopilotRunRequestSchema,
   autopilotDailyOutputSchema,
@@ -165,6 +166,9 @@ export async function getOrRefreshInsightsCache(input: {
   const brand = await adapter.getBrand(input.userId, input.brandId);
   if (!brand) {
     throw new Error(`Brand '${input.brandId}' was not found`);
+  }
+  if (brandLifecycleStatusFor(brand) === "closed") {
+    throw new Error("Brand is closed. Autopilot is disabled until the business is reactivated.");
   }
 
   const existing = await adapter.getModelInsightsCache(input.userId, input.brandId, rangeDays);

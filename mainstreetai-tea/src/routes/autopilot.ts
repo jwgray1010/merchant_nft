@@ -163,6 +163,9 @@ router.post("/run", async (req, res, next) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown autopilot error";
+    if (message.toLowerCase().includes("closed")) {
+      return res.status(409).json({ error: message });
+    }
     if (message.toLowerCase().includes("already ran")) {
       return res.status(409).json({ error: message });
     }

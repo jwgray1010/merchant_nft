@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { brandIdSchema } from "../schemas/brandSchema";
+import { brandIdSchema, brandLifecycleStatusFor } from "../schemas/brandSchema";
 import { eventInterestCreateRequestSchema } from "../schemas/communityEventsSchema";
 import {
   buildCommunityOpportunityForBrand,
@@ -60,6 +60,12 @@ router.get("/opportunities", async (req, res, next) => {
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrand.brandId}' was not found` });
     }
+    if (brandLifecycleStatusFor(brand) !== "active") {
+      return res.json({
+        top: null,
+        opportunities: [],
+      });
+    }
     const [top, opportunities] = await Promise.all([
       buildCommunityOpportunityForBrand({
         ownerId,
@@ -102,6 +108,16 @@ router.post("/interest", async (req, res, next) => {
     if (!brand) {
       return res.status(404).json({ error: `Brand '${parsedBrand.brandId}' was not found` });
     }
+    if (brandLifecycleStatusFor(brand) !== "active") {
+      return res.status(409).json({
+        error: "Only active businesses can opt into community opportunities.",
+      });
+    }
+    const hasServiceTags = Array.isArray(brand.serviceTags) && brand.serviceTags.length > 0;
+    const hasEventContact =
+      Boolean(brand.eventContactPreference) &&
+      ((brand.eventContactPreference === "email" && Boolean(brand.contactEmail)) ||
+        (brand.eventContactPreference === "sms" && Boolean(brand.contactPhone)));
     const result = await recordCommunityEventInterest({
       ownerId,
       brandId: parsedBrand.brandId,
@@ -119,6 +135,17 @@ router.post("/interest", async (req, res, next) => {
       interest: result.interest,
       event: result.event,
       message: suggestedMessage,
+      profilePrompt:
+        !hasServiceTags || !hasEventContact
+          ? {
+              neededServiceTags: !hasServiceTags,
+              neededEventContact: !hasEventContact,
+              currentServiceTags: brand.serviceTags ?? [],
+              currentEventContactPreference: brand.eventContactPreference ?? null,
+              currentContactEmail: brand.contactEmail ?? null,
+              currentContactPhone: brand.contactPhone ?? null,
+            }
+          : undefined,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not save interest";

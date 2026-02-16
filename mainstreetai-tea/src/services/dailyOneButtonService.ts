@@ -1,5 +1,6 @@
 import { runPrompt } from "../ai/runPrompt";
 import { isEmailEnabled } from "../integrations/env";
+import { brandLifecycleStatusFor } from "../schemas/brandSchema";
 import {
   dailyCheckinRequestSchema,
   dailyGoalSchema,
@@ -333,6 +334,9 @@ export async function runDailyOneButton(input: {
   const brand = await adapter.getBrand(input.userId, input.brandId);
   if (!brand) {
     throw new Error(`Brand '${input.brandId}' was not found`);
+  }
+  if (brandLifecycleStatusFor(brand) === "closed") {
+    throw new Error("This business is marked as closed. Reactivate it in Business Lifecycle settings to run daily plans.");
   }
   const firstWinStatus = await getFirstWinStatusForBrand({
     ownerId: input.userId,
@@ -978,6 +982,9 @@ export async function runRescueOneButton(input: {
   const brand = await adapter.getBrand(input.userId, input.brandId);
   if (!brand) {
     throw new Error(`Brand '${input.brandId}' was not found`);
+  }
+  if (brandLifecycleStatusFor(brand) === "closed") {
+    throw new Error("This business is marked as closed. Reactivate it in Business Lifecycle settings to use rescue mode.");
   }
   await recordOwnerProgressAction({
     ownerId: input.userId,
